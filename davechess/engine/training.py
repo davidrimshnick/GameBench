@@ -464,10 +464,11 @@ class Trainer:
                 logger.info(f"Reduced LR to {param_group['lr']}")
 
         # Evaluation phase — temporarily move best_network to GPU
-        logger.info("Evaluation phase...")
         eval_start = time.time()
         eval_games = train_cfg.get("eval_games", 40)
-        eval_sims = train_cfg.get("eval_simulations", 50)
+        base_eval_sims = train_cfg.get("eval_simulations", 50)
+        eval_sims = adaptive_simulations(self.best_elo_estimate, min_sims=4, max_sims=base_eval_sims)
+        logger.info(f"Evaluation phase... (adaptive sims: {eval_sims})")
         eval_threshold = train_cfg.get("eval_threshold", 0.55)
         self.best_network.to(self.device)
         eval_results = self.evaluate_network(num_games=eval_games,
