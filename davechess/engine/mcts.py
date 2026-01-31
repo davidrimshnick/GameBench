@@ -195,17 +195,23 @@ class MCTS:
 
         visits = np.array([c.visit_count for c in root.children], dtype=np.float64)
         moves = [c.move for c in root.children]
+        total_visits = visits.sum()
 
-        if self.temperature == 0:
+        if total_visits == 0:
+            # No simulations ran — uniform random fallback
+            best_idx = np.random.randint(len(moves))
+            policy_target = np.ones(len(moves)) / len(moves)
+        elif self.temperature == 0:
             best_idx = np.argmax(visits)
+            policy_target = visits / total_visits
         elif self.temperature == float("inf"):
             best_idx = np.random.randint(len(moves))
+            policy_target = visits / total_visits
         else:
             visits_temp = visits ** (1.0 / self.temperature)
             probs = visits_temp / visits_temp.sum()
             best_idx = np.random.choice(len(moves), p=probs)
-
-        policy_target = visits / visits.sum()
+            policy_target = visits / total_visits
         move_policies = {move_to_policy_index(m): p
                          for m, p in zip(moves, policy_target)}
 

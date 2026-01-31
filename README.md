@@ -23,7 +23,7 @@ An original strategic board game on an 8x8 grid with 8 resource nodes.
 
 **Win conditions (checked in order):**
 1. Checkmate opponent's Commander (no legal escape from check)
-2. Occupy 4+ of 8 resource nodes with your pieces
+2. Occupy 5+ of 8 resource nodes with your pieces
 3. Turn 100: most exclusive nodes, tiebreak by piece count
 
 **Turn structure:** Gain +1 resource per controlled node, then move a piece OR deploy a new piece.

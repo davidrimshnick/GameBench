@@ -295,6 +295,13 @@ def _is_move_legal(state: GameState, move: Move, player: Player) -> bool:
             board[fr][fc] = None
             board[tr][tc] = moving_piece
 
+        # If the moving piece was our Commander and it was removed
+        # (lost a capture or tied), the move is illegal.
+        if moving_piece.piece_type == PieceType.COMMANDER and board[tr][tc] is not moving_piece:
+            board[fr][fc] = moving_piece
+            board[tr][tc] = captured_piece
+            return False
+
         # Check if our Commander is safe
         safe = not is_in_check(state, player)
 
