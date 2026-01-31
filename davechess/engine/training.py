@@ -15,7 +15,7 @@ try:
     import torch
     import torch.nn as nn
     import torch.optim as optim
-    from torch.cuda.amp import GradScaler, autocast
+    from torch.amp import autocast, GradScaler
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
@@ -62,7 +62,7 @@ class Trainer:
             max_size=config.get("selfplay", {}).get("replay_buffer_size", 500_000)
         )
 
-        self.scaler = GradScaler() if HAS_TORCH and device != "cpu" else None
+        self.scaler = GradScaler("cuda") if HAS_TORCH and device != "cpu" else None
         self.training_step = 0
         self.iteration = 0
         self.best_elo_estimate = 0
@@ -167,7 +167,7 @@ class Trainer:
         self.optimizer.zero_grad()
 
         if self.scaler is not None:
-            with autocast():
+            with autocast("cuda"):
                 policy_logits, value_pred = self.network(planes_t)
                 policy_loss = -torch.mean(
                     torch.sum(policies_t * torch.log_softmax(policy_logits, dim=1), dim=1)
@@ -322,8 +322,10 @@ class Trainer:
         # Evaluation phase
         logger.info("Evaluation phase...")
         eval_games = train_cfg.get("eval_games", 40)
+        eval_sims = train_cfg.get("eval_simulations", 50)
         eval_threshold = train_cfg.get("eval_threshold", 0.55)
-        win_rate = self.evaluate_network(num_games=eval_games)
+        win_rate = self.evaluate_network(num_games=eval_games,
+                                          num_simulations=eval_sims)
         logger.info(f"Evaluation win rate: {win_rate:.3f}")
 
         if win_rate >= eval_threshold:

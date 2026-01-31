@@ -1,4 +1,5 @@
 # AlphaZero training configuration
+# Tuned for Jetson Orin Nano Super (8GB shared, CUDA 12.6)
 network:
   num_res_blocks: 5
   num_filters: 64
@@ -6,27 +7,28 @@ network:
   board_size: 8
 
 mcts:
-  num_simulations: 200
+  num_simulations: 50          # Reduced from 200 for Jetson speed
   cpuct: 1.5
   dirichlet_alpha: 0.3
   dirichlet_epsilon: 0.25
-  temperature_threshold: 30  # moves before temperature drops to near-zero
+  temperature_threshold: 30    # moves before temperature drops to near-zero
 
 selfplay:
-  num_games_per_iteration: 100
-  replay_buffer_size: 500000
-  num_workers: 6
+  num_games_per_iteration: 25  # Reduced from 100 for Jetson speed
+  replay_buffer_size: 200000   # Reduced proportionally
+  num_workers: 1               # Sequential GPU inference (no CPU multiprocessing)
 
 training:
-  batch_size: 256
+  batch_size: 128              # Conservative for 8GB shared memory
   learning_rate: 0.01
   momentum: 0.9
   weight_decay: 0.0001
-  steps_per_iteration: 1000
-  checkpoint_interval: 500
-  eval_games: 40
-  eval_threshold: 0.55  # win rate to accept new network
-  max_iterations: 200
+  steps_per_iteration: 200     # Reduced to match smaller data generation
+  checkpoint_interval: 200
+  eval_games: 10               # Reduced for speed
+  eval_simulations: 50
+  eval_threshold: 0.55         # win rate to accept new network
+  max_iterations: 100
 
 paths:
   checkpoint_dir: "checkpoints"

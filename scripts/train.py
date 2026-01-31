@@ -55,7 +55,7 @@ def main():
     elif torch.cuda.is_available():
         device = "cuda"
         logger.info(f"CUDA device: {torch.cuda.get_device_name()}")
-        logger.info(f"CUDA memory: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB")
+        logger.info(f"CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
     else:
         device = "cpu"
 
