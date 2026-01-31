@@ -43,6 +43,18 @@ from davechess.game.rules import generate_legal_moves, apply_move
 logger = logging.getLogger("davechess.training")
 
 
+def adaptive_simulations(elo: float, min_sims: int = 2, max_sims: int = 200,
+                         elo_min: float = 0, elo_max: float = 2000) -> int:
+    """Compute MCTS sim count from ELO via log-scale interpolation.
+
+    At elo_min → min_sims, at elo_max → max_sims.
+    Clamped to [min_sims, max_sims].
+    """
+    t = max(0.0, min(1.0, (elo - elo_min) / (elo_max - elo_min)))
+    sims = min_sims * (max_sims / min_sims) ** t
+    return max(min_sims, min(max_sims, int(round(sims))))
+
+
 def win_rate_to_elo_diff(win_rate: float) -> float:
     """Convert a win rate to an ELO difference.
 
@@ -363,12 +375,14 @@ class Trainer:
         # Self-play phase — use current training network (not best_network)
         # This ensures self-play data always matches the network being trained,
         # avoiding distribution mismatch that causes eval regression.
-        logger.info("Self-play phase...")
+        base_sims = mcts_cfg.get("num_simulations", 200)
+        num_sims = adaptive_simulations(self.best_elo_estimate, min_sims=2, max_sims=base_sims)
+        logger.info(f"Self-play phase... (adaptive sims: {num_sims}, ELO={self.best_elo_estimate:.0f})")
         selfplay_start = time.time()
         examples, sp_stats = run_selfplay_batch(
             network=self.network,
             num_games=sp_cfg.get("num_games_per_iteration", 100),
-            num_simulations=mcts_cfg.get("num_simulations", 200),
+            num_simulations=num_sims,
             temperature_threshold=mcts_cfg.get("temperature_threshold", 30),
             device=self.device,
         )
@@ -399,6 +413,7 @@ class Trainer:
             "selfplay/black_wins": sp_stats["black_wins"],
             "selfplay/draws": sp_stats["draws"],
             "selfplay/white_win_pct": sp_stats["white_win_pct"],
+            "selfplay/num_simulations": num_sims,
         }
         if self.use_wandb:
             wandb.log(sp_metrics, step=self.training_step)

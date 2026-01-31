@@ -1,0 +1,44 @@
+{
+  "os":  "Linux-5.15.148-tegra-aarch64-with-glibc2.35",
+  "python":  "CPython 3.10.12",
+  "startedAt":  "2026-01-31T20:27:19.769819Z",
+  "args":  [
+    "--config",
+    "/home/david/repos/GameBench/configs/training.yaml",
+    "--device",
+    "cuda"
+  ],
+  "program":  "/home/david/repos/GameBench/scripts/train.py",
+  "codePath":  "scripts/train.py",
+  "codePathLocal":  "scripts/train.py",
+  "git":  {
+    "remote":  "git@github.com:davidrimshnick/GameBench.git",
+    "commit":  "3738f1f2ebb41dc60f2ce853d1a1ffbaee701b22"
+  },
+  "email":  "david.rimshnick@gmail.com",
+  "root":  "/home/david/repos/GameBench",
+  "host":  "jetson",
+  "executable":  "/usr/bin/python",
+  "cpu_count":  6,
+  "cpu_count_logical":  6,
+  "gpu":  "Orin (nvgpu)",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "983351140352",
+      "used":  "79099367424"
+    }
+  },
+  "memory":  {
+    "total":  "7989911552"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "Orin (nvgpu)",
+      "architecture":  "Ampere",
+      "uuid":  "01b71809-6d86-5b99-962b-dd339145e9b5"
+    }
+  ],
+  "cudaVersion":  "12.6",
+  "writerId":  "g6f5qcqvjkspjhdwedyza1towv59297e"
+}

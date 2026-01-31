@@ -1,0 +1,261 @@
+2026-01-31 10:27:39,570 [davechess.train] INFO: W&B logging enabled — dashboard at https://wandb.ai
+2026-01-31 10:27:41,069 [davechess.training] INFO: TensorBoard logging to logs/tensorboard
+2026-01-31 10:27:41,070 [davechess.train] INFO: Network parameters: 670,343
+2026-01-31 10:27:41,072 [davechess.train] INFO: TensorBoard started at http://0.0.0.0:6006
+2026-01-31 10:27:41,074 [davechess.training] INFO: Starting fresh training
+2026-01-31 10:27:41,090 [davechess.training] INFO: Saved best model: checkpoints/best.pt
+2026-01-31 10:27:41,442 [davechess.training] INFO: === Iteration 1 ===
+2026-01-31 10:27:41,443 [davechess.training] INFO: Self-play phase...
+2026-01-31 10:28:03,544 [davechess.selfplay] INFO:   Self-play game 1/20: 32 moves, 32 total positions
+2026-01-31 10:29:15,391 [davechess.selfplay] INFO:   Self-play game 2/20: 92 moves, 124 total positions
+2026-01-31 10:31:42,349 [davechess.selfplay] INFO:   Self-play game 3/20: 185 moves, 309 total positions
+2026-01-31 10:34:16,217 [davechess.selfplay] INFO:   Self-play game 4/20: 200 moves, 509 total positions
+2026-01-31 10:35:26,281 [davechess.selfplay] INFO:   Self-play game 5/20: 89 moves, 598 total positions
+2026-01-31 10:36:00,204 [davechess.selfplay] INFO:   Self-play game 6/20: 43 moves, 641 total positions
+2026-01-31 10:37:55,110 [davechess.selfplay] INFO:   Self-play game 7/20: 141 moves, 782 total positions
+2026-01-31 10:40:03,958 [davechess.selfplay] INFO:   Self-play game 8/20: 163 moves, 945 total positions
+2026-01-31 10:41:23,453 [davechess.selfplay] INFO:   Self-play game 9/20: 96 moves, 1041 total positions
+2026-01-31 10:42:26,977 [davechess.selfplay] INFO:   Self-play game 10/20: 77 moves, 1118 total positions
+2026-01-31 10:43:42,607 [davechess.selfplay] INFO:   Self-play game 11/20: 94 moves, 1212 total positions
+2026-01-31 10:45:12,203 [davechess.selfplay] INFO:   Self-play game 12/20: 105 moves, 1317 total positions
+2026-01-31 10:46:13,920 [davechess.selfplay] INFO:   Self-play game 13/20: 77 moves, 1394 total positions
+2026-01-31 10:47:32,243 [davechess.selfplay] INFO:   Self-play game 14/20: 97 moves, 1491 total positions
+2026-01-31 10:49:01,907 [davechess.selfplay] INFO:   Self-play game 15/20: 118 moves, 1609 total positions
+2026-01-31 10:50:29,953 [davechess.selfplay] INFO:   Self-play game 16/20: 116 moves, 1725 total positions
+2026-01-31 10:51:37,870 [davechess.selfplay] INFO:   Self-play game 17/20: 88 moves, 1813 total positions
+2026-01-31 10:52:38,327 [davechess.selfplay] INFO:   Self-play game 18/20: 77 moves, 1890 total positions
+2026-01-31 10:53:35,543 [davechess.selfplay] INFO:   Self-play game 19/20: 78 moves, 1968 total positions
+2026-01-31 10:54:30,621 [davechess.selfplay] INFO:   Self-play game 20/20: 71 moves, 2039 total positions
+2026-01-31 10:54:31,133 [davechess.training] INFO: Generated 2039 training examples. Buffer size: 2039
+2026-01-31 10:54:31,134 [davechess.training] INFO: Self-play stats: W:13 B:7 D:0 white_win%=65.0% lengths=32-200 avg=102
+2026-01-31 10:54:31,136 [davechess.training] INFO: Buffer size 2039 < 3000, skipping training this iteration
+2026-01-31 10:54:31,164 [davechess.training] INFO: Saved checkpoint: checkpoints/step_0.pt
+2026-01-31 10:54:31,467 [davechess.training] INFO: === Iteration 2 ===
+2026-01-31 10:54:31,468 [davechess.training] INFO: Self-play phase...
+2026-01-31 10:55:34,011 [davechess.selfplay] INFO:   Self-play game 1/20: 79 moves, 79 total positions
+2026-01-31 10:57:07,761 [davechess.selfplay] INFO:   Self-play game 2/20: 119 moves, 198 total positions
+2026-01-31 10:59:44,692 [davechess.selfplay] INFO:   Self-play game 3/20: 200 moves, 398 total positions
+2026-01-31 11:00:48,216 [davechess.selfplay] INFO:   Self-play game 4/20: 77 moves, 475 total positions
+2026-01-31 11:01:17,486 [davechess.selfplay] INFO:   Self-play game 5/20: 38 moves, 513 total positions
+2026-01-31 11:02:15,893 [davechess.selfplay] INFO:   Self-play game 6/20: 75 moves, 588 total positions
+2026-01-31 11:04:11,268 [davechess.selfplay] INFO:   Self-play game 7/20: 143 moves, 731 total positions
+2026-01-31 11:04:51,718 [davechess.selfplay] INFO:   Self-play game 8/20: 53 moves, 784 total positions
+2026-01-31 11:05:54,878 [davechess.selfplay] INFO:   Self-play game 9/20: 82 moves, 866 total positions
+2026-01-31 11:07:56,764 [davechess.selfplay] INFO:   Self-play game 10/20: 162 moves, 1028 total positions
+2026-01-31 11:08:09,543 [davechess.selfplay] INFO:   Self-play game 11/20: 20 moves, 1048 total positions
+2026-01-31 11:08:45,099 [davechess.selfplay] INFO:   Self-play game 12/20: 46 moves, 1094 total positions
+2026-01-31 11:09:28,010 [davechess.selfplay] INFO:   Self-play game 13/20: 55 moves, 1149 total positions
+2026-01-31 11:11:06,150 [davechess.selfplay] INFO:   Self-play game 14/20: 120 moves, 1269 total positions
+2026-01-31 11:12:21,964 [davechess.selfplay] INFO:   Self-play game 15/20: 97 moves, 1366 total positions
+2026-01-31 11:13:58,464 [davechess.selfplay] INFO:   Self-play game 16/20: 120 moves, 1486 total positions
+2026-01-31 11:15:46,702 [davechess.selfplay] INFO:   Self-play game 17/20: 140 moves, 1626 total positions
+2026-01-31 11:18:05,008 [davechess.selfplay] INFO:   Self-play game 18/20: 169 moves, 1795 total positions
+2026-01-31 11:19:30,332 [davechess.selfplay] INFO:   Self-play game 19/20: 109 moves, 1904 total positions
+2026-01-31 11:21:19,244 [davechess.selfplay] INFO:   Self-play game 20/20: 135 moves, 2039 total positions
+2026-01-31 11:21:19,725 [davechess.training] INFO: Generated 2039 training examples. Buffer size: 4078
+2026-01-31 11:21:19,727 [davechess.training] INFO: Self-play stats: W:13 B:7 D:0 white_win%=65.0% lengths=20-200 avg=102
+2026-01-31 11:21:19,729 [davechess.training] INFO: Training phase...
+2026-01-31 11:21:25,108 [davechess.training] INFO: Saved checkpoint: checkpoints/step_100.pt
+2026-01-31 11:21:25,696 [davechess.training] INFO: Training: {'avg_total_loss': 7.8313986110687255, 'avg_policy_loss': 7.550996646881104, 'avg_value_loss': 0.2804019781388342}
+2026-01-31 11:21:25,697 [davechess.training] INFO: Evaluation phase...
+2026-01-31 11:46:47,650 [davechess.training] INFO: Evaluation: win_rate=0.444 (W:4 L:5 D:1) avg_length=192
+2026-01-31 11:46:47,651 [davechess.training] INFO: New network rejected, keeping previous best.
+2026-01-31 11:46:48,027 [davechess.training] INFO: Saved checkpoint: checkpoints/step_100.pt
+2026-01-31 11:46:48,705 [davechess.training] INFO: === Iteration 3 ===
+2026-01-31 11:46:48,706 [davechess.training] INFO: Self-play phase...
+2026-01-31 11:47:56,257 [davechess.selfplay] INFO:   Self-play game 1/20: 85 moves, 85 total positions
+2026-01-31 11:50:34,917 [davechess.selfplay] INFO:   Self-play game 2/20: 200 moves, 285 total positions
+2026-01-31 11:53:20,928 [davechess.selfplay] INFO:   Self-play game 3/20: 200 moves, 485 total positions
+2026-01-31 11:54:05,071 [davechess.selfplay] INFO:   Self-play game 4/20: 59 moves, 544 total positions
+2026-01-31 11:55:57,327 [davechess.selfplay] INFO:   Self-play game 5/20: 140 moves, 684 total positions
+2026-01-31 11:58:39,799 [davechess.selfplay] INFO:   Self-play game 6/20: 200 moves, 884 total positions
+2026-01-31 12:01:03,349 [davechess.selfplay] INFO:   Self-play game 7/20: 176 moves, 1060 total positions
+2026-01-31 12:03:41,568 [davechess.selfplay] INFO:   Self-play game 8/20: 200 moves, 1260 total positions
+2026-01-31 12:04:45,512 [davechess.selfplay] INFO:   Self-play game 9/20: 83 moves, 1343 total positions
+2026-01-31 12:07:33,081 [davechess.selfplay] INFO:   Self-play game 10/20: 200 moves, 1543 total positions
+2026-01-31 12:07:55,252 [davechess.selfplay] INFO:   Self-play game 11/20: 29 moves, 1572 total positions
+2026-01-31 12:08:56,651 [davechess.selfplay] INFO:   Self-play game 12/20: 78 moves, 1650 total positions
+2026-01-31 12:11:41,053 [davechess.selfplay] INFO:   Self-play game 13/20: 200 moves, 1850 total positions
+2026-01-31 12:14:18,835 [davechess.selfplay] INFO:   Self-play game 14/20: 200 moves, 2050 total positions
+2026-01-31 12:15:45,384 [davechess.selfplay] INFO:   Self-play game 15/20: 107 moves, 2157 total positions
+2026-01-31 12:18:25,970 [davechess.selfplay] INFO:   Self-play game 16/20: 200 moves, 2357 total positions
+2026-01-31 12:20:14,547 [davechess.selfplay] INFO:   Self-play game 17/20: 129 moves, 2486 total positions
+2026-01-31 12:21:13,619 [davechess.selfplay] INFO:   Self-play game 18/20: 72 moves, 2558 total positions
+2026-01-31 12:23:02,178 [davechess.selfplay] INFO:   Self-play game 19/20: 133 moves, 2691 total positions
+2026-01-31 12:24:32,192 [davechess.selfplay] INFO:   Self-play game 20/20: 112 moves, 2803 total positions
+2026-01-31 12:24:32,703 [davechess.training] INFO: Generated 2803 training examples. Buffer size: 6881
+2026-01-31 12:24:32,704 [davechess.training] INFO: Self-play stats: W:6 B:14 D:0 white_win%=30.0% lengths=29-200 avg=140
+2026-01-31 12:24:32,706 [davechess.training] INFO: Training phase...
+2026-01-31 12:24:37,735 [davechess.training] INFO: Saved checkpoint: checkpoints/step_200.pt
+2026-01-31 12:24:38,874 [davechess.training] INFO: Training: {'avg_total_loss': 7.183473062515259, 'avg_policy_loss': 7.037524194717407, 'avg_value_loss': 0.1459488813020289}
+2026-01-31 12:24:38,875 [davechess.training] INFO: Evaluation phase...
+2026-01-31 12:45:12,193 [davechess.training] INFO: Evaluation: win_rate=0.400 (W:4 L:6 D:0) avg_length=152
+2026-01-31 12:45:12,194 [davechess.training] INFO: New network rejected, keeping previous best.
+2026-01-31 12:45:12,507 [davechess.training] INFO: Saved checkpoint: checkpoints/step_200.pt
+2026-01-31 12:45:13,475 [davechess.training] INFO: === Iteration 4 ===
+2026-01-31 12:45:13,476 [davechess.training] INFO: Self-play phase...
+2026-01-31 12:46:12,501 [davechess.selfplay] INFO:   Self-play game 1/20: 73 moves, 73 total positions
+2026-01-31 12:47:10,024 [davechess.selfplay] INFO:   Self-play game 2/20: 75 moves, 148 total positions
+2026-01-31 12:47:41,212 [davechess.selfplay] INFO:   Self-play game 3/20: 39 moves, 187 total positions
+2026-01-31 12:48:46,535 [davechess.selfplay] INFO:   Self-play game 4/20: 81 moves, 268 total positions
+2026-01-31 12:50:36,347 [davechess.selfplay] INFO:   Self-play game 5/20: 141 moves, 409 total positions
+2026-01-31 12:52:03,829 [davechess.selfplay] INFO:   Self-play game 6/20: 104 moves, 513 total positions
+2026-01-31 12:52:47,223 [davechess.selfplay] INFO:   Self-play game 7/20: 55 moves, 568 total positions
+2026-01-31 12:53:51,890 [davechess.selfplay] INFO:   Self-play game 8/20: 79 moves, 647 total positions
+2026-01-31 12:55:13,247 [davechess.selfplay] INFO:   Self-play game 9/20: 99 moves, 746 total positions
+2026-01-31 12:56:34,352 [davechess.selfplay] INFO:   Self-play game 10/20: 99 moves, 845 total positions
+2026-01-31 12:57:20,931 [davechess.selfplay] INFO:   Self-play game 11/20: 58 moves, 903 total positions
+2026-01-31 12:58:29,885 [davechess.selfplay] INFO:   Self-play game 12/20: 86 moves, 989 total positions
+2026-01-31 12:59:39,852 [davechess.selfplay] INFO:   Self-play game 13/20: 87 moves, 1076 total positions
+2026-01-31 13:00:23,457 [davechess.selfplay] INFO:   Self-play game 14/20: 55 moves, 1131 total positions
+2026-01-31 13:01:33,617 [davechess.selfplay] INFO:   Self-play game 15/20: 88 moves, 1219 total positions
+2026-01-31 13:02:42,708 [davechess.selfplay] INFO:   Self-play game 16/20: 87 moves, 1306 total positions
+2026-01-31 13:03:31,385 [davechess.selfplay] INFO:   Self-play game 17/20: 59 moves, 1365 total positions
+2026-01-31 13:04:12,118 [davechess.selfplay] INFO:   Self-play game 18/20: 51 moves, 1416 total positions
+2026-01-31 13:05:08,201 [davechess.selfplay] INFO:   Self-play game 19/20: 71 moves, 1487 total positions
+2026-01-31 13:06:00,913 [davechess.selfplay] INFO:   Self-play game 20/20: 66 moves, 1553 total positions
+2026-01-31 13:06:01,449 [davechess.training] INFO: Generated 1553 training examples. Buffer size: 8434
+2026-01-31 13:06:01,450 [davechess.training] INFO: Self-play stats: W:15 B:5 D:0 white_win%=75.0% lengths=39-141 avg=78
+2026-01-31 13:06:01,452 [davechess.training] INFO: Training phase...
+2026-01-31 13:06:06,484 [davechess.training] INFO: Saved checkpoint: checkpoints/step_300.pt
+2026-01-31 13:06:07,647 [davechess.training] INFO: Training: {'avg_total_loss': 6.442909865379334, 'avg_policy_loss': 6.297701826095581, 'avg_value_loss': 0.14520805094391107}
+2026-01-31 13:06:07,648 [davechess.training] INFO: Evaluation phase...
+2026-01-31 13:30:19,907 [davechess.training] INFO: Evaluation: win_rate=0.600 (W:6 L:4 D:0) avg_length=175
+2026-01-31 13:30:19,908 [davechess.training] INFO: New best network accepted!
+2026-01-31 13:30:19,934 [davechess.training] INFO: Saved best model: checkpoints/best.pt
+2026-01-31 13:30:22,063 [davechess.training] INFO: Uploaded best model to W&B artifacts
+2026-01-31 13:30:22,399 [davechess.training] INFO: Saved checkpoint: checkpoints/step_300.pt
+2026-01-31 13:30:23,759 [davechess.training] INFO: === Iteration 5 ===
+2026-01-31 13:30:23,760 [davechess.training] INFO: Self-play phase...
+2026-01-31 13:31:24,840 [davechess.selfplay] INFO:   Self-play game 1/20: 76 moves, 76 total positions
+2026-01-31 13:32:23,218 [davechess.selfplay] INFO:   Self-play game 2/20: 74 moves, 150 total positions
+2026-01-31 13:32:50,523 [davechess.selfplay] INFO:   Self-play game 3/20: 34 moves, 184 total positions
+2026-01-31 13:34:28,552 [davechess.selfplay] INFO:   Self-play game 4/20: 117 moves, 301 total positions
+2026-01-31 13:35:24,422 [davechess.selfplay] INFO:   Self-play game 5/20: 68 moves, 369 total positions
+2026-01-31 13:36:13,197 [davechess.selfplay] INFO:   Self-play game 6/20: 61 moves, 430 total positions
+2026-01-31 13:37:23,360 [davechess.selfplay] INFO:   Self-play game 7/20: 87 moves, 517 total positions
+2026-01-31 13:38:09,413 [davechess.selfplay] INFO:   Self-play game 8/20: 56 moves, 573 total positions
+2026-01-31 13:39:08,283 [davechess.selfplay] INFO:   Self-play game 9/20: 74 moves, 647 total positions
+2026-01-31 13:40:13,914 [davechess.selfplay] INFO:   Self-play game 10/20: 80 moves, 727 total positions
+2026-01-31 13:41:27,728 [davechess.selfplay] INFO:   Self-play game 11/20: 94 moves, 821 total positions
+2026-01-31 13:42:30,819 [davechess.selfplay] INFO:   Self-play game 12/20: 76 moves, 897 total positions
+2026-01-31 13:43:26,439 [davechess.selfplay] INFO:   Self-play game 13/20: 69 moves, 966 total positions
+2026-01-31 13:44:42,789 [davechess.selfplay] INFO:   Self-play game 14/20: 98 moves, 1064 total positions
+2026-01-31 13:45:49,202 [davechess.selfplay] INFO:   Self-play game 15/20: 83 moves, 1147 total positions
+2026-01-31 13:48:09,741 [davechess.selfplay] INFO:   Self-play game 16/20: 174 moves, 1321 total positions
+2026-01-31 13:49:21,951 [davechess.selfplay] INFO:   Self-play game 17/20: 88 moves, 1409 total positions
+2026-01-31 13:50:34,450 [davechess.selfplay] INFO:   Self-play game 18/20: 90 moves, 1499 total positions
+2026-01-31 13:51:33,100 [davechess.selfplay] INFO:   Self-play game 19/20: 77 moves, 1576 total positions
+2026-01-31 13:52:40,237 [davechess.selfplay] INFO:   Self-play game 20/20: 83 moves, 1659 total positions
+2026-01-31 13:52:40,877 [davechess.training] INFO: Generated 1659 training examples. Buffer size: 10093
+2026-01-31 13:52:40,878 [davechess.training] INFO: Self-play stats: W:7 B:13 D:0 white_win%=35.0% lengths=34-174 avg=83
+2026-01-31 13:52:40,880 [davechess.training] INFO: Training phase...
+2026-01-31 13:52:45,863 [davechess.training] INFO: Saved checkpoint: checkpoints/step_400.pt
+2026-01-31 13:52:47,485 [davechess.training] INFO: Training: {'avg_total_loss': 5.947806973457336, 'avg_policy_loss': 5.7897310018539425, 'avg_value_loss': 0.15807598154991864}
+2026-01-31 13:52:47,486 [davechess.training] INFO: Evaluation phase...
+2026-01-31 14:02:59,814 [davechess.training] INFO: Evaluation: win_rate=0.600 (W:6 L:4 D:0) avg_length=74
+2026-01-31 14:02:59,815 [davechess.training] INFO: New best network accepted!
+2026-01-31 14:02:59,840 [davechess.training] INFO: Saved best model: checkpoints/best.pt
+2026-01-31 14:03:00,066 [davechess.training] INFO: Uploaded best model to W&B artifacts
+2026-01-31 14:03:00,441 [davechess.training] INFO: Saved checkpoint: checkpoints/step_400.pt
+2026-01-31 14:03:01,822 [davechess.training] INFO: === Iteration 6 ===
+2026-01-31 14:03:01,823 [davechess.training] INFO: Self-play phase...
+2026-01-31 14:04:25,203 [davechess.selfplay] INFO:   Self-play game 1/20: 99 moves, 99 total positions
+2026-01-31 14:04:42,603 [davechess.selfplay] INFO:   Self-play game 2/20: 23 moves, 122 total positions
+2026-01-31 14:05:23,751 [davechess.selfplay] INFO:   Self-play game 3/20: 51 moves, 173 total positions
+2026-01-31 14:06:18,277 [davechess.selfplay] INFO:   Self-play game 4/20: 67 moves, 240 total positions
+2026-01-31 14:07:03,934 [davechess.selfplay] INFO:   Self-play game 5/20: 58 moves, 298 total positions
+2026-01-31 14:07:37,286 [davechess.selfplay] INFO:   Self-play game 6/20: 41 moves, 339 total positions
+2026-01-31 14:08:32,221 [davechess.selfplay] INFO:   Self-play game 7/20: 65 moves, 404 total positions
+2026-01-31 14:09:35,963 [davechess.selfplay] INFO:   Self-play game 8/20: 79 moves, 483 total positions
+2026-01-31 14:10:20,423 [davechess.selfplay] INFO:   Self-play game 9/20: 53 moves, 536 total positions
+2026-01-31 14:11:04,108 [davechess.selfplay] INFO:   Self-play game 10/20: 52 moves, 588 total positions
+2026-01-31 14:11:39,980 [davechess.selfplay] INFO:   Self-play game 11/20: 45 moves, 633 total positions
+2026-01-31 14:12:43,792 [davechess.selfplay] INFO:   Self-play game 12/20: 79 moves, 712 total positions
+2026-01-31 14:13:21,386 [davechess.selfplay] INFO:   Self-play game 13/20: 47 moves, 759 total positions
+2026-01-31 14:14:47,375 [davechess.selfplay] INFO:   Self-play game 14/20: 106 moves, 865 total positions
+2026-01-31 14:15:34,309 [davechess.selfplay] INFO:   Self-play game 15/20: 57 moves, 922 total positions
+2026-01-31 14:16:31,680 [davechess.selfplay] INFO:   Self-play game 16/20: 71 moves, 993 total positions
+2026-01-31 14:17:46,385 [davechess.selfplay] INFO:   Self-play game 17/20: 93 moves, 1086 total positions
+2026-01-31 14:18:44,251 [davechess.selfplay] INFO:   Self-play game 18/20: 70 moves, 1156 total positions
+2026-01-31 14:19:33,416 [davechess.selfplay] INFO:   Self-play game 19/20: 61 moves, 1217 total positions
+2026-01-31 14:20:10,264 [davechess.selfplay] INFO:   Self-play game 20/20: 47 moves, 1264 total positions
+2026-01-31 14:20:10,935 [davechess.training] INFO: Generated 1264 training examples. Buffer size: 11357
+2026-01-31 14:20:10,936 [davechess.training] INFO: Self-play stats: W:16 B:4 D:0 white_win%=80.0% lengths=23-106 avg=63
+2026-01-31 14:20:10,938 [davechess.training] INFO: Training phase...
+2026-01-31 14:20:15,979 [davechess.training] INFO: Saved checkpoint: checkpoints/step_500.pt
+2026-01-31 14:20:17,529 [davechess.training] INFO: Training: {'avg_total_loss': 5.629881615638733, 'avg_policy_loss': 5.447859306335449, 'avg_value_loss': 0.18202231176197528}
+2026-01-31 14:20:17,530 [davechess.training] INFO: Evaluation phase...
+2026-01-31 14:28:20,934 [davechess.training] INFO: Evaluation: win_rate=0.600 (W:6 L:4 D:0) avg_length=59
+2026-01-31 14:28:20,935 [davechess.training] INFO: New best network accepted!
+2026-01-31 14:28:20,960 [davechess.training] INFO: Saved best model: checkpoints/best.pt
+2026-01-31 14:28:21,520 [davechess.training] INFO: Uploaded best model to W&B artifacts
+2026-01-31 14:28:21,885 [davechess.training] INFO: Saved checkpoint: checkpoints/step_500.pt
+2026-01-31 14:28:23,451 [davechess.training] INFO: === Iteration 7 ===
+2026-01-31 14:28:23,452 [davechess.training] INFO: Self-play phase...
+2026-01-31 14:29:30,377 [davechess.selfplay] INFO:   Self-play game 1/20: 82 moves, 82 total positions
+2026-01-31 14:30:16,489 [davechess.selfplay] INFO:   Self-play game 2/20: 59 moves, 141 total positions
+2026-01-31 14:30:54,198 [davechess.selfplay] INFO:   Self-play game 3/20: 47 moves, 188 total positions
+2026-01-31 14:31:55,572 [davechess.selfplay] INFO:   Self-play game 4/20: 75 moves, 263 total positions
+2026-01-31 14:32:53,071 [davechess.selfplay] INFO:   Self-play game 5/20: 72 moves, 335 total positions
+2026-01-31 14:33:28,758 [davechess.selfplay] INFO:   Self-play game 6/20: 46 moves, 381 total positions
+2026-01-31 14:34:19,090 [davechess.selfplay] INFO:   Self-play game 7/20: 63 moves, 444 total positions
+2026-01-31 14:35:08,942 [davechess.selfplay] INFO:   Self-play game 8/20: 62 moves, 506 total positions
+2026-01-31 14:36:18,258 [davechess.selfplay] INFO:   Self-play game 9/20: 86 moves, 592 total positions
+2026-01-31 14:37:49,936 [davechess.selfplay] INFO:   Self-play game 10/20: 116 moves, 708 total positions
+2026-01-31 14:38:59,148 [davechess.selfplay] INFO:   Self-play game 11/20: 83 moves, 791 total positions
+2026-01-31 14:39:52,863 [davechess.selfplay] INFO:   Self-play game 12/20: 66 moves, 857 total positions
+2026-01-31 14:40:35,575 [davechess.selfplay] INFO:   Self-play game 13/20: 52 moves, 909 total positions
+2026-01-31 14:41:19,847 [davechess.selfplay] INFO:   Self-play game 14/20: 54 moves, 963 total positions
+2026-01-31 14:42:22,332 [davechess.selfplay] INFO:   Self-play game 15/20: 75 moves, 1038 total positions
+2026-01-31 14:43:06,534 [davechess.selfplay] INFO:   Self-play game 16/20: 54 moves, 1092 total positions
+2026-01-31 14:44:33,467 [davechess.selfplay] INFO:   Self-play game 17/20: 106 moves, 1198 total positions
+2026-01-31 14:45:12,414 [davechess.selfplay] INFO:   Self-play game 18/20: 48 moves, 1246 total positions
+2026-01-31 14:46:15,934 [davechess.selfplay] INFO:   Self-play game 19/20: 77 moves, 1323 total positions
+2026-01-31 14:46:56,434 [davechess.selfplay] INFO:   Self-play game 20/20: 49 moves, 1372 total positions
+2026-01-31 14:46:57,010 [davechess.training] INFO: Generated 1372 training examples. Buffer size: 12729
+2026-01-31 14:46:57,012 [davechess.training] INFO: Self-play stats: W:7 B:13 D:0 white_win%=35.0% lengths=46-116 avg=69
+2026-01-31 14:46:57,016 [davechess.training] INFO: Training phase...
+2026-01-31 14:47:02,056 [davechess.training] INFO: Saved checkpoint: checkpoints/step_600.pt
+2026-01-31 14:47:04,083 [davechess.training] INFO: Training: {'avg_total_loss': 5.410678219795227, 'avg_policy_loss': 5.230224552154541, 'avg_value_loss': 0.1804536511003971}
+2026-01-31 14:47:04,084 [davechess.training] INFO: Evaluation phase...
+2026-01-31 14:54:40,257 [davechess.training] INFO: Evaluation: win_rate=0.600 (W:6 L:4 D:0) avg_length=55
+2026-01-31 14:54:40,258 [davechess.training] INFO: New best network accepted!
+2026-01-31 14:54:40,284 [davechess.training] INFO: Saved best model: checkpoints/best.pt
+2026-01-31 14:54:40,601 [davechess.training] INFO: Uploaded best model to W&B artifacts
+2026-01-31 14:54:40,961 [davechess.training] INFO: Saved checkpoint: checkpoints/step_600.pt
+2026-01-31 14:54:42,985 [davechess.training] INFO: === Iteration 8 ===
+2026-01-31 14:54:42,986 [davechess.training] INFO: Self-play phase...
+2026-01-31 14:55:30,063 [davechess.selfplay] INFO:   Self-play game 1/20: 59 moves, 59 total positions
+2026-01-31 14:56:18,006 [davechess.selfplay] INFO:   Self-play game 2/20: 61 moves, 120 total positions
+2026-01-31 14:56:56,686 [davechess.selfplay] INFO:   Self-play game 3/20: 48 moves, 168 total positions
+2026-01-31 14:58:25,270 [davechess.selfplay] INFO:   Self-play game 4/20: 104 moves, 272 total positions
+2026-01-31 14:58:58,627 [davechess.selfplay] INFO:   Self-play game 5/20: 41 moves, 313 total positions
+2026-01-31 14:59:39,949 [davechess.selfplay] INFO:   Self-play game 6/20: 49 moves, 362 total positions
+2026-01-31 15:00:40,530 [davechess.selfplay] INFO:   Self-play game 7/20: 71 moves, 433 total positions
+2026-01-31 15:01:52,421 [davechess.selfplay] INFO:   Self-play game 8/20: 86 moves, 519 total positions
+2026-01-31 15:03:07,013 [davechess.selfplay] INFO:   Self-play game 9/20: 85 moves, 604 total positions
+2026-01-31 15:05:20,558 [davechess.selfplay] INFO:   Self-play game 10/20: 157 moves, 761 total positions
+2026-01-31 15:06:30,376 [davechess.selfplay] INFO:   Self-play game 11/20: 83 moves, 844 total positions
+2026-01-31 15:08:03,040 [davechess.selfplay] INFO:   Self-play game 12/20: 110 moves, 954 total positions
+2026-01-31 15:08:36,173 [davechess.selfplay] INFO:   Self-play game 13/20: 43 moves, 997 total positions
+2026-01-31 15:10:04,185 [davechess.selfplay] INFO:   Self-play game 14/20: 109 moves, 1106 total positions
+2026-01-31 15:10:49,332 [davechess.selfplay] INFO:   Self-play game 15/20: 57 moves, 1163 total positions
+2026-01-31 15:11:54,344 [davechess.selfplay] INFO:   Self-play game 16/20: 80 moves, 1243 total positions
+2026-01-31 15:12:49,017 [davechess.selfplay] INFO:   Self-play game 17/20: 66 moves, 1309 total positions
+2026-01-31 15:13:32,618 [davechess.selfplay] INFO:   Self-play game 18/20: 52 moves, 1361 total positions
+2026-01-31 15:14:14,688 [davechess.selfplay] INFO:   Self-play game 19/20: 50 moves, 1411 total positions
+2026-01-31 15:16:11,429 [davechess.selfplay] INFO:   Self-play game 20/20: 141 moves, 1552 total positions
+2026-01-31 15:16:12,077 [davechess.training] INFO: Generated 1552 training examples. Buffer size: 14281
+2026-01-31 15:16:12,078 [davechess.training] INFO: Self-play stats: W:12 B:8 D:0 white_win%=60.0% lengths=41-157 avg=78
+2026-01-31 15:16:12,080 [davechess.training] INFO: Training phase...
+2026-01-31 15:16:17,066 [davechess.training] INFO: Saved checkpoint: checkpoints/step_700.pt
+2026-01-31 15:16:19,005 [davechess.training] INFO: Training: {'avg_total_loss': 5.235006704330444, 'avg_policy_loss': 5.068521990776062, 'avg_value_loss': 0.1664847331494093}
+2026-01-31 15:16:19,006 [davechess.training] INFO: Evaluation phase...
+2026-01-31 15:24:33,055 [davechess.training] INFO: Evaluation: win_rate=0.500 (W:5 L:5 D:0) avg_length=58
+2026-01-31 15:24:33,056 [davechess.training] INFO: New best network accepted!
+2026-01-31 15:24:33,082 [davechess.training] INFO: Saved best model: checkpoints/best.pt
+2026-01-31 15:24:33,330 [davechess.training] INFO: Uploaded best model to W&B artifacts
+2026-01-31 15:24:33,791 [davechess.training] INFO: Saved checkpoint: checkpoints/step_700.pt
+2026-01-31 15:24:35,818 [davechess.training] INFO: === Iteration 9 ===
+2026-01-31 15:24:35,819 [davechess.training] INFO: Self-play phase...

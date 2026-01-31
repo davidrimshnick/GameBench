@@ -1,0 +1,5 @@
+2026-01-31 15:25:57,241 [davechess.train] INFO: W&B logging enabled — dashboard at https://wandb.ai
+2026-01-31 15:25:58,772 [davechess.training] INFO: TensorBoard logging to logs/tensorboard
+2026-01-31 15:25:58,773 [davechess.train] INFO: Network parameters: 670,343
+2026-01-31 15:25:58,775 [davechess.train] INFO: TensorBoard started at http://0.0.0.0:6006
+2026-01-31 15:25:58,776 [davechess.training] INFO: Loading checkpoint: checkpoints/step_700.pt
