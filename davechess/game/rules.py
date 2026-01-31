@@ -490,7 +490,7 @@ def apply_move(state: GameState, move: Move) -> GameState:
     # Check resource domination win (occupy 5+ of 8 resource nodes)
     if not state.done:
         occupied = _count_occupied_nodes(state, player)
-        if occupied >= 4:
+        if occupied >= 5:
             state.done = True
             state.winner = player
 
@@ -602,7 +602,7 @@ def apply_move_fast(state: GameState, move: Move) -> GameState:
 
     if not state.done:
         occupied = _count_occupied_nodes(state, player)
-        if occupied >= 4:
+        if occupied >= 5:
             state.done = True
             state.winner = player
 
