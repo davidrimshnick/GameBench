@@ -346,18 +346,18 @@ class Trainer:
         iteration_start = time.time()
         logger.info(f"=== Iteration {self.iteration} ===")
 
-        # Self-play phase — temporarily move best_network to GPU
+        # Self-play phase — use current training network (not best_network)
+        # This ensures self-play data always matches the network being trained,
+        # avoiding distribution mismatch that causes eval regression.
         logger.info("Self-play phase...")
         selfplay_start = time.time()
-        self.best_network.to(self.device)
         examples, sp_stats = run_selfplay_batch(
-            network=self.best_network,
+            network=self.network,
             num_games=sp_cfg.get("num_games_per_iteration", 100),
             num_simulations=mcts_cfg.get("num_simulations", 200),
             temperature_threshold=mcts_cfg.get("temperature_threshold", 30),
             device=self.device,
         )
-        self.best_network.to("cpu")
         selfplay_elapsed = time.time() - selfplay_start
 
         num_new_examples = len(examples)
@@ -443,7 +443,9 @@ class Trainer:
                     f"(W:{eval_results['wins']} L:{eval_results['losses']} D:{eval_results['draws']}) "
                     f"avg_length={eval_results['avg_game_length']:.0f}")
 
-        accepted = win_rate >= eval_threshold
+        # Lower threshold for early iterations to bootstrap learning
+        effective_threshold = 0.5 if self.iteration <= 10 else eval_threshold
+        accepted = win_rate >= effective_threshold
         if accepted:
             logger.info("New best network accepted!")
             self.best_network.load_state_dict(self.network.state_dict())
