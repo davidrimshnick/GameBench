@@ -51,19 +51,19 @@ class Trainer:
         self.use_wandb = use_wandb and HAS_WANDB
         self.tb_writer = None
 
+        # Create networks on CPU first — moved to GPU after checkpoint loading
         net_cfg = config.get("network", {})
         self.network = DaveChessNetwork(
             num_res_blocks=net_cfg.get("num_res_blocks", 5),
             num_filters=net_cfg.get("num_filters", 64),
             input_planes=net_cfg.get("input_planes", 12),
-        ).to(device)
+        )  # CPU initially, moved to GPU in train()
 
-        # Keep best_network on CPU to save GPU memory on Jetson (shared memory)
         self.best_network = DaveChessNetwork(
             num_res_blocks=net_cfg.get("num_res_blocks", 5),
             num_filters=net_cfg.get("num_filters", 64),
             input_planes=net_cfg.get("input_planes", 12),
-        )  # CPU only
+        )  # CPU always
         self.best_network.load_state_dict(self.network.state_dict())
 
         train_cfg = config.get("training", {})
@@ -147,10 +147,9 @@ class Trainer:
             path = str(checkpoints[-1])
 
         logger.info(f"Loading checkpoint: {path}")
-        # Load to CPU first to avoid GPU memory spike, then copy
+        # Load everything on CPU — network moves to GPU later in train()
         checkpoint = torch.load(path, map_location="cpu", weights_only=False)
         self.network.load_state_dict(checkpoint["network_state"])
-        self.network.to(self.device)
         self.optimizer.load_state_dict(checkpoint["optimizer_state"])
         self.training_step = checkpoint["training_step"]
         self.iteration = checkpoint["iteration"]
@@ -351,7 +350,7 @@ class Trainer:
         logger.info("Self-play phase...")
         selfplay_start = time.time()
         self.best_network.to(self.device)
-        examples = run_selfplay_batch(
+        examples, sp_stats = run_selfplay_batch(
             network=self.best_network,
             num_games=sp_cfg.get("num_games_per_iteration", 100),
             num_simulations=mcts_cfg.get("num_simulations", 200),
@@ -370,12 +369,22 @@ class Trainer:
             torch.cuda.empty_cache()
         logger.info(f"Generated {num_new_examples} training examples. "
                     f"Buffer size: {len(self.replay_buffer)}")
+        logger.info(f"Self-play stats: W:{sp_stats['white_wins']} B:{sp_stats['black_wins']} "
+                    f"D:{sp_stats['draws']} white_win%={sp_stats['white_win_pct']:.1%} "
+                    f"lengths={sp_stats['min_game_length']}-{sp_stats['max_game_length']} "
+                    f"avg={sp_stats['avg_game_length']:.0f}")
 
         sp_metrics = {
             "selfplay/num_examples": num_new_examples,
             "selfplay/buffer_size": len(self.replay_buffer),
             "selfplay/elapsed_sec": selfplay_elapsed,
-            "selfplay/avg_game_length": num_new_examples / max(sp_cfg.get("num_games_per_iteration", 1), 1),
+            "selfplay/avg_game_length": sp_stats["avg_game_length"],
+            "selfplay/min_game_length": sp_stats["min_game_length"],
+            "selfplay/max_game_length": sp_stats["max_game_length"],
+            "selfplay/white_wins": sp_stats["white_wins"],
+            "selfplay/black_wins": sp_stats["black_wins"],
+            "selfplay/draws": sp_stats["draws"],
+            "selfplay/white_win_pct": sp_stats["white_win_pct"],
         }
         if self.use_wandb:
             wandb.log(sp_metrics, step=self.training_step)
@@ -492,12 +501,30 @@ class Trainer:
         """Run the full training loop."""
         max_iter = max_iterations or self.config.get("training", {}).get("max_iterations", 200)
 
-        # Try to resume
+        # Try to resume (everything on CPU at this point)
         if self.load_checkpoint():
             logger.info(f"Resumed from step {self.training_step}, iteration {self.iteration}")
         else:
             logger.info("Starting fresh training")
             self.save_best()  # Save initial model as best
+
+        # Now move training network to GPU
+        self.network.to(self.device)
+        # Rebuild optimizer to point at GPU params
+        train_cfg = self.config.get("training", {})
+        old_state = self.optimizer.state_dict()
+        self.optimizer = optim.SGD(
+            self.network.parameters(),
+            lr=train_cfg.get("learning_rate", 0.01),
+            momentum=train_cfg.get("momentum", 0.9),
+            weight_decay=train_cfg.get("weight_decay", 1e-4),
+        )
+        try:
+            self.optimizer.load_state_dict(old_state)
+        except Exception:
+            pass  # Fresh optimizer if state doesn't match
+        del old_state
+        gc.collect()
 
         while self.iteration < max_iter:
             try:

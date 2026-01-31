@@ -143,7 +143,7 @@ def play_selfplay_game(mcts_engine: MCTS,
 
 def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
                        temperature_threshold: int = 30,
-                       device: str = "cpu") -> list[tuple[np.ndarray, np.ndarray, float]]:
+                       device: str = "cpu") -> tuple[list, dict]:
     """Run a batch of self-play games sequentially.
 
     Args:
@@ -154,16 +154,55 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
         device: Torch device string.
 
     Returns:
-        All training examples from all games.
+        (all_examples, stats) where stats has game-level statistics.
     """
     all_examples = []
     mcts = MCTS(network, num_simulations=num_simulations, device=device)
+    white_wins = 0
+    black_wins = 0
+    draws = 0
+    game_lengths = []
 
     for game_idx in range(num_games):
         examples = play_selfplay_game(mcts, temperature_threshold)
+        game_len = len(examples)
         all_examples.extend(examples)
+        game_lengths.append(game_len)
+
+        # Determine winner from value targets: last position's value
+        # tells us the outcome (1.0 = that player won, -1.0 = lost, 0 = draw)
+        if examples:
+            last_value = examples[-1][2]  # value_target of last position
+            last_player = 0  # We need to check who moved last
+            # Even positions (0, 2, 4...) = White's turn, odd = Black's
+            if game_len % 2 == 1:  # odd length = White moved last
+                if last_value > 0:
+                    white_wins += 1
+                elif last_value < 0:
+                    black_wins += 1
+                else:
+                    draws += 1
+            else:  # even length = Black moved last
+                if last_value > 0:
+                    black_wins += 1
+                elif last_value < 0:
+                    white_wins += 1
+                else:
+                    draws += 1
+
         logger.info(f"  Self-play game {game_idx+1}/{num_games}: "
-                    f"{len(examples)} moves, {len(all_examples)} total positions")
+                    f"{game_len} moves, {len(all_examples)} total positions")
         gc.collect()  # Free MCTS tree circular references
 
-    return all_examples
+    stats = {
+        "white_wins": white_wins,
+        "black_wins": black_wins,
+        "draws": draws,
+        "white_win_pct": white_wins / max(white_wins + black_wins, 1),
+        "game_lengths": game_lengths,
+        "avg_game_length": sum(game_lengths) / len(game_lengths) if game_lengths else 0,
+        "min_game_length": min(game_lengths) if game_lengths else 0,
+        "max_game_length": max(game_lengths) if game_lengths else 0,
+    }
+
+    return all_examples, stats
