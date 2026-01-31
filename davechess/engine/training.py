@@ -230,24 +230,26 @@ class Trainer:
         }
 
         if self.training_step % 10 == 0:
+            lr = self.optimizer.param_groups[0]["lr"]
+            step_metrics = {
+                "train/total_loss": losses["total_loss"],
+                "train/policy_loss": losses["policy_loss"],
+                "train/value_loss": losses["value_loss"],
+                "train/learning_rate": lr,
+            }
             if self.use_wandb:
-                wandb.log({
-                    "train/total_loss": losses["total_loss"],
-                    "train/policy_loss": losses["policy_loss"],
-                    "train/value_loss": losses["value_loss"],
-                }, step=self.training_step)
+                wandb.log(step_metrics, step=self.training_step)
             if self.tb_writer:
-                self.tb_writer.add_scalar("train/total_loss", losses["total_loss"], self.training_step)
-                self.tb_writer.add_scalar("train/policy_loss", losses["policy_loss"], self.training_step)
-                self.tb_writer.add_scalar("train/value_loss", losses["value_loss"], self.training_step)
+                for k, v in step_metrics.items():
+                    self.tb_writer.add_scalar(k, v, self.training_step)
 
         return losses
 
     def evaluate_network(self, num_games: int = 40,
-                         num_simulations: int = 100) -> float:
+                         num_simulations: int = 100) -> dict:
         """Evaluate current network against best network.
 
-        Returns win rate of current network.
+        Returns dict with win_rate and detailed results.
         """
         current_mcts = MCTS(self.network, num_simulations=num_simulations,
                             temperature=0.1, device=self.device)
@@ -257,11 +259,12 @@ class Trainer:
         wins = 0
         losses = 0
         draws = 0
+        game_lengths = []
 
         for game_idx in range(num_games):
             state = GameState()
-            # Alternate colors
             current_is_white = (game_idx % 2 == 0)
+            move_count = 0
 
             while not state.done:
                 moves = generate_legal_moves(state)
@@ -279,6 +282,9 @@ class Trainer:
                     move, _ = best_mcts.get_move(state, add_noise=False)
 
                 apply_move(state, move)
+                move_count += 1
+
+            game_lengths.append(move_count)
 
             if state.winner is not None:
                 current_won = (
@@ -293,9 +299,15 @@ class Trainer:
                 draws += 1
 
         total_decisive = wins + losses
-        if total_decisive == 0:
-            return 0.5
-        return wins / total_decisive
+        win_rate = wins / total_decisive if total_decisive > 0 else 0.5
+
+        return {
+            "win_rate": win_rate,
+            "wins": wins,
+            "losses": losses,
+            "draws": draws,
+            "avg_game_length": sum(game_lengths) / len(game_lengths) if game_lengths else 0,
+        }
 
     def log_metrics(self, metrics: dict):
         """Append metrics to the training log and wandb."""
@@ -332,6 +344,7 @@ class Trainer:
         mcts_cfg = self.config.get("mcts", {})
 
         self.iteration += 1
+        iteration_start = time.time()
         logger.info(f"=== Iteration {self.iteration} ===")
 
         # Self-play phase — temporarily move best_network to GPU
@@ -412,11 +425,14 @@ class Trainer:
         eval_sims = train_cfg.get("eval_simulations", 50)
         eval_threshold = train_cfg.get("eval_threshold", 0.55)
         self.best_network.to(self.device)
-        win_rate = self.evaluate_network(num_games=eval_games,
-                                          num_simulations=eval_sims)
+        eval_results = self.evaluate_network(num_games=eval_games,
+                                              num_simulations=eval_sims)
         self.best_network.to("cpu")
         eval_elapsed = time.time() - eval_start
-        logger.info(f"Evaluation win rate: {win_rate:.3f}")
+        win_rate = eval_results["win_rate"]
+        logger.info(f"Evaluation: win_rate={win_rate:.3f} "
+                    f"(W:{eval_results['wins']} L:{eval_results['losses']} D:{eval_results['draws']}) "
+                    f"avg_length={eval_results['avg_game_length']:.0f}")
 
         accepted = win_rate >= eval_threshold
         if accepted:
@@ -428,6 +444,10 @@ class Trainer:
 
         eval_metrics = {
             "eval/win_rate": win_rate,
+            "eval/wins": eval_results["wins"],
+            "eval/losses": eval_results["losses"],
+            "eval/draws": eval_results["draws"],
+            "eval/avg_game_length": eval_results["avg_game_length"],
             "eval/accepted": int(accepted),
             "eval/elapsed_sec": eval_elapsed,
         }
@@ -454,12 +474,14 @@ class Trainer:
                     self.tb_writer.add_scalar(k, v, self.training_step)
 
         # Log metrics
+        iteration_elapsed = time.time() - iteration_start
         self.log_metrics({
             "phase": "iteration",
             "num_examples": num_new_examples,
             "buffer_size": len(self.replay_buffer),
             "eval_win_rate": win_rate,
             "accepted": int(accepted),
+            "elapsed_sec": iteration_elapsed,
             **avg_losses,
         })
 

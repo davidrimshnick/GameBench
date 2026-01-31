@@ -108,8 +108,9 @@ def main():
     param_count = sum(p.numel() for p in trainer.network.parameters())
     logger.info(f"Network parameters: {param_count:,}")
 
-    # Start TensorBoard server in background
-    tb_dir = os.path.join(config.get("paths", {}).get("log_dir", "logs"), "tensorboard")
+    # Start TensorBoard server in background (use absolute path)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tb_dir = os.path.join(project_root, config.get("paths", {}).get("log_dir", "logs"), "tensorboard")
     if os.path.isdir(tb_dir):
         try:
             import subprocess
