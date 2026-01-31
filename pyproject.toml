@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gamebench"
+version = "0.1.0"
+description = "Benchmark measuring how efficiently LLMs learn novel strategic reasoning from examples"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "numpy",
+    "pyyaml",
+    "openai",
+    "matplotlib",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+train = ["torch"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["davechess*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

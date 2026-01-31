@@ -1,0 +1,22 @@
+# Benchmark configuration
+api:
+  base_url: "https://api.openai.com/v1"
+  # api_key set via OPENAI_API_KEY environment variable
+  model: "gpt-4"
+  temperature: 0.3
+  max_tokens: 256
+
+benchmark:
+  n_values: [0, 1, 5, 10, 25, 50, 100, 250, 500]
+  games_per_opponent: 50
+  max_retries: 3  # retries on illegal move before forfeit
+  opponent_levels: [0, 1, 2, 3, 4, 5, 6]
+
+scoring:
+  max_n: 500
+  random_elo: 400
+  max_elo: 2700
+
+output:
+  results_dir: "results"
+  charts_dir: "results/charts"

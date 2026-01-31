@@ -1,0 +1,33 @@
+# Game generation configuration
+levels:
+  - name: "random"
+    mcts_sims: 0
+    estimated_elo: 400
+  - name: "level1"
+    mcts_sims: 1
+    estimated_elo: 800
+  - name: "level2"
+    mcts_sims: 10
+    estimated_elo: 1200
+  - name: "level3"
+    mcts_sims: 50
+    estimated_elo: 1600
+  - name: "level4"
+    mcts_sims: 200
+    estimated_elo: 2000
+  - name: "level5"
+    mcts_sims: 800
+    estimated_elo: 2400
+  - name: "level6"
+    mcts_sims: 1600
+    estimated_elo: 2700
+
+generation:
+  num_grandmaster_games: 10000
+  min_game_length: 20
+  discard_draws: true
+  output_dir: "data/games"
+
+calibration:
+  games_per_pair: 200
+  rating_system: "glicko2"
