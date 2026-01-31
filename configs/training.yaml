@@ -7,27 +7,28 @@ network:
   board_size: 8
 
 mcts:
-  num_simulations: 25          # Low sims OK for self-play with NN guidance
+  num_simulations: 100         # Need enough depth for meaningful policy targets
   cpuct: 1.5
   dirichlet_alpha: 0.3
   dirichlet_epsilon: 0.25
   temperature_threshold: 30    # moves before temperature drops to near-zero
 
 selfplay:
-  num_games_per_iteration: 15  # Conservative for 8GB Jetson memory
-  replay_buffer_size: 100000   # Conservative for memory
+  num_games_per_iteration: 20  # More games = more diverse training data
+  replay_buffer_size: 100000
   num_workers: 1               # Sequential GPU inference (no CPU multiprocessing)
+  min_buffer_size: 3000        # Don't train until buffer has enough data
 
 training:
-  batch_size: 128              # Conservative for 8GB shared memory
-  learning_rate: 0.01
+  batch_size: 128
+  learning_rate: 0.002         # Lower LR for more stable learning
   momentum: 0.9
   weight_decay: 0.0001
-  steps_per_iteration: 200     # Reduced to match smaller data generation
-  checkpoint_interval: 200
-  eval_games: 6                 # Reduced for speed (saves ~20 min/iteration)
-  eval_simulations: 25
-  eval_threshold: 0.55         # win rate to accept new network
+  steps_per_iteration: 100     # Fewer steps to reduce overfitting (~1 epoch)
+  checkpoint_interval: 100
+  eval_games: 10               # More eval games for reliable signal
+  eval_simulations: 100        # Match self-play sim count
+  eval_threshold: 0.55
   max_iterations: 100
 
 paths:

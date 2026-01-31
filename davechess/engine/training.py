@@ -392,7 +392,14 @@ class Trainer:
             for k, v in sp_metrics.items():
                 self.tb_writer.add_scalar(k, v, self.training_step)
 
-        # Training phase
+        # Training phase — skip if buffer too small
+        min_buffer = sp_cfg.get("min_buffer_size", 0)
+        if len(self.replay_buffer) < min_buffer:
+            logger.info(f"Buffer size {len(self.replay_buffer)} < {min_buffer}, "
+                        "skipping training this iteration")
+            self.save_checkpoint()
+            return
+
         logger.info("Training phase...")
         batch_size = train_cfg.get("batch_size", 256)
         steps = train_cfg.get("steps_per_iteration", 1000)
