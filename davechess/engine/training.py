@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import json
 import logging
+import math
 import os
 import time
 from pathlib import Path
@@ -40,6 +41,18 @@ from davechess.game.state import GameState, Player
 from davechess.game.rules import generate_legal_moves, apply_move
 
 logger = logging.getLogger("davechess.training")
+
+
+def win_rate_to_elo_diff(win_rate: float) -> float:
+    """Convert a win rate to an ELO difference.
+
+    ELO_diff = -400 * log10(1/win_rate - 1)
+    """
+    if win_rate <= 0.0:
+        return -400.0
+    if win_rate >= 1.0:
+        return 400.0
+    return -400.0 * math.log10(1.0 / win_rate - 1.0)
 
 
 class Trainer:
@@ -82,6 +95,7 @@ class Trainer:
         self.training_step = 0
         self.iteration = 0
         self.best_elo_estimate = 0
+        self.elo_estimate = 0  # Current network's estimated ELO (baseline=0)
 
         # Paths
         paths = config.get("paths", {})
@@ -450,11 +464,13 @@ class Trainer:
                     f"(W:{eval_results['wins']} L:{eval_results['losses']} D:{eval_results['draws']}) "
                     f"avg_length={eval_results['avg_game_length']:.0f}")
 
-        # Lower threshold for early iterations to bootstrap learning
-        effective_threshold = 0.5 if self.iteration <= 10 else eval_threshold
-        accepted = win_rate >= effective_threshold
-        if accepted:
-            logger.info("New best network accepted!")
+        # Update ELO estimate: current network vs best network
+        elo_diff = win_rate_to_elo_diff(win_rate)
+        if accepted := (win_rate >= (0.5 if self.iteration <= 10 else eval_threshold)):
+            # ELO gain relative to previous best
+            self.elo_estimate = self.best_elo_estimate + elo_diff
+            self.best_elo_estimate = self.elo_estimate
+            logger.info(f"New best network accepted! ELO: {self.elo_estimate:.0f} (+{elo_diff:.0f})")
             self.best_network.load_state_dict(self.network.state_dict())
             self.save_best()
             # Backup best model to W&B
@@ -482,6 +498,7 @@ class Trainer:
             "eval/avg_game_length": eval_results["avg_game_length"],
             "eval/accepted": int(accepted),
             "eval/elapsed_sec": eval_elapsed,
+            "eval/elo": self.elo_estimate,
         }
         if self.use_wandb:
             wandb.log(eval_metrics, step=self.training_step)
