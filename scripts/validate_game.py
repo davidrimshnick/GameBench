@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from davechess.game.state import GameState, Player, PieceType, MoveStep, Deploy, BombardAttack
 from davechess.game.rules import (
     generate_legal_moves, apply_move, check_winner,
-    get_resource_income, _count_controlled_nodes,
+    get_resource_income, _count_controlled_nodes, _count_occupied_nodes,
 )
 from davechess.game.notation import move_to_dcn
 from davechess.engine.mcts_lite import MCTSLite
@@ -83,21 +83,17 @@ def play_mcts_game(args):
     done, winner = check_winner(state)
 
     if done and winner is not None:
-        # Check what caused the win
-        # Commander capture: game ended mid-turn via capture
-        last_move = state.move_history[-1] if state.move_history else None
-        if isinstance(last_move, (MoveStep, BombardAttack)):
-            win_condition = "commander_capture"
+        # Determine win condition by checking state
+        win_player = winner
+        # Check resource domination first (occupation-based)
+        occupied = _count_occupied_nodes(state, win_player)
+        if occupied >= 4:
+            win_condition = "resource_domination"
+        elif state.turn > 100:
+            win_condition = "turn_limit"
         else:
-            # Check if resource domination
-            win_player = winner
-            exclusive = _count_controlled_nodes(state, win_player)
-            if exclusive >= 6:
-                win_condition = "resource_domination"
-            elif state.turn > 200:
-                win_condition = "turn_limit"
-            else:
-                win_condition = "commander_capture"
+            # Must be commander capture (checkmate or direct capture)
+            win_condition = "commander_capture"
     elif done and winner is None:
         win_condition = "draw"
     else:

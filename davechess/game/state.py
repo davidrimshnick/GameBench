@@ -34,7 +34,7 @@ PIECE_NAMES = {v: k for k, v in PIECE_CHARS.items()}
 
 # Base strength per piece type
 BASE_STRENGTH = {
-    PieceType.COMMANDER: 1,
+    PieceType.COMMANDER: 2,
     PieceType.WARRIOR: 1,
     PieceType.RIDER: 2,
     PieceType.BOMBARD: 0,

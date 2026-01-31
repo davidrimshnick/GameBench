@@ -17,16 +17,20 @@ RESOURCE_NODES: list[tuple[int, int]] = [
 # White on rows 0-1 (bottom), Black on rows 6-7 (top)
 # Symmetrical layout: Commander center, Warriors flanking, Rider on wing
 STARTING_POSITIONS: dict[tuple[int, int], tuple[str, int]] = {
-    # White (player 0) - row 0
+    # White (player 0) - rows 0-1
     (0, 2): ("W", 0),
     (0, 3): ("C", 0),
     (0, 4): ("R", 0),
     (0, 5): ("W", 0),
-    # Black (player 1) - row 7
+    (1, 3): ("W", 0),  # defensive screen
+    (1, 4): ("W", 0),  # defensive screen
+    # Black (player 1) - rows 6-7 (mirrors White's layout)
     (7, 2): ("W", 1),
-    (7, 3): ("R", 1),
-    (7, 4): ("C", 1),
+    (7, 3): ("C", 1),
+    (7, 4): ("R", 1),
     (7, 5): ("W", 1),
+    (6, 3): ("W", 1),  # defensive screen
+    (6, 4): ("W", 1),  # defensive screen
 }
 
 # Column labels for notation

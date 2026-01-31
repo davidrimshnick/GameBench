@@ -2,7 +2,7 @@
 
 import pytest
 
-from davechess.game.state import GameState, Player, Piece, PieceType, MoveStep
+from davechess.game.state import GameState, Player, Piece, PieceType, MoveStep, BombardAttack
 from davechess.game.rules import generate_legal_moves, apply_move
 from davechess.engine.mcts_lite import MCTSLite, play_random_game
 
@@ -17,19 +17,23 @@ class TestMCTSLite:
         assert move in legal
 
     def test_finds_obvious_win(self):
-        """MCTS should find an immediate winning capture."""
+        """MCTS should find an immediate winning Warrior capture on Commander."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
-        # White Rider can capture Black Commander
-        state.board[3][3] = Piece(PieceType.RIDER, Player.WHITE)
-        state.board[3][4] = Piece(PieceType.COMMANDER, Player.BLACK)
-        state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
+        # Constrained position: attacker at (1,1) with 3 adjacent Warriors
+        # gives strength 1+3=4 > Commander str 2 → attacker wins
+        state.board[1][1] = Piece(PieceType.WARRIOR, Player.WHITE)  # attacker
+        state.board[0][1] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent (above)
+        state.board[2][1] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent (below)
+        state.board[1][0] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent (left)
+        state.board[1][2] = Piece(PieceType.COMMANDER, Player.BLACK)  # target (right)
+        state.board[7][7] = Piece(PieceType.COMMANDER, Player.WHITE)  # safe
 
-        mcts = MCTSLite(num_simulations=200)
+        mcts = MCTSLite(num_simulations=300)
         move = mcts.search(state)
         # Should capture the Commander
         assert isinstance(move, MoveStep)
-        assert move.to_rc == (3, 4)
+        assert move.to_rc == (1, 2)
         assert move.is_capture
 
     def test_single_move(self):
@@ -105,11 +109,16 @@ class TestMCTSWithNetwork:
 
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
-        state.board[3][3] = Piece(PieceType.RIDER, Player.WHITE)
-        state.board[3][4] = Piece(PieceType.COMMANDER, Player.BLACK)
-        state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
+        # Constrained position: attacker at (1,1) with 3 adjacent Warriors
+        # gives strength 1+3=4 > Commander str 2 → attacker wins
+        state.board[1][1] = Piece(PieceType.WARRIOR, Player.WHITE)  # attacker
+        state.board[0][1] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent (above)
+        state.board[2][1] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent (below)
+        state.board[1][0] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent (left)
+        state.board[1][2] = Piece(PieceType.COMMANDER, Player.BLACK)  # target (right)
+        state.board[7][7] = Piece(PieceType.COMMANDER, Player.WHITE)  # safe
 
         move, _ = mcts.get_move(state, add_noise=False)
         # Should find the Commander capture
         assert isinstance(move, MoveStep)
-        assert move.to_rc == (3, 4)
+        assert move.to_rc == (1, 2)

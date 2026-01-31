@@ -14,15 +14,17 @@ An original strategic board game on an 8x8 grid with 8 resource nodes.
 
 | Piece | Symbol | Move | Strength | Deploy Cost |
 |-------|--------|------|----------|-------------|
-| Commander | C | 1-2 squares, any direction | 1 | -- (starts on board) |
+| Commander | C | 1 square, any direction | 2 | -- (starts on board) |
 | Warrior | W | 1 square, orthogonal | 1 (+1 per adjacent friendly Warrior) | 2 |
-| Rider | R | Up to 3 squares, straight line | 2 | 4 |
-| Bombard | B | 1 square any dir; ranged attack at 2 squares | 0 (melee) | 5 |
+| Rider | R | Up to 2 squares, straight line | 2 | 4 |
+| Bombard | B | 1 square any dir; ranged attack at 2 squares (not vs Commander) | 0 (melee) | 5 |
+
+**Check:** If your Commander is under attack, you must resolve it (move, block, or capture). Cannot leave your Commander in check.
 
 **Win conditions (checked in order):**
-1. Capture opponent's Commander
-2. Exclusively control 6+ of 8 resource nodes
-3. Turn 200: most exclusive nodes, tiebreak by piece count
+1. Checkmate opponent's Commander (no legal escape from check)
+2. Occupy 4+ of 8 resource nodes with your pieces
+3. Turn 100: most exclusive nodes, tiebreak by piece count
 
 **Turn structure:** Gain +1 resource per controlled node, then move a piece OR deploy a new piece.
 

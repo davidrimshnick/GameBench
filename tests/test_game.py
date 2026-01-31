@@ -35,8 +35,8 @@ class TestBoard:
         """Verify starting positions are correct."""
         white_pieces = [(r, c, pt) for (r, c), (pt, p) in STARTING_POSITIONS.items() if p == 0]
         black_pieces = [(r, c, pt) for (r, c), (pt, p) in STARTING_POSITIONS.items() if p == 1]
-        assert len(white_pieces) == 4  # C + 2W + R
-        assert len(black_pieces) == 4
+        assert len(white_pieces) == 6  # C + 4W + R
+        assert len(black_pieces) == 6
 
     def test_notation_conversion(self):
         assert rc_to_notation(0, 0) == "a1"
@@ -74,8 +74,8 @@ class TestGameState:
         assert piece.piece_type == PieceType.COMMANDER
         assert piece.player == Player.WHITE
 
-        # Black Commander at e8 (row 7, col 4)
-        piece = state.get_piece_at(7, 4)
+        # Black Commander at d8 (row 7, col 3)
+        piece = state.get_piece_at(7, 3)
         assert piece is not None
         assert piece.piece_type == PieceType.COMMANDER
         assert piece.player == Player.BLACK
@@ -141,7 +141,7 @@ class TestLegalMoves:
         assert (2, 2) not in destinations
 
     def test_commander_moves(self):
-        """Commander moves 1-2 squares, any direction."""
+        """Commander moves 1 square, any direction."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
         state.board[3][3] = Piece(PieceType.COMMANDER, Player.WHITE)
@@ -153,12 +153,15 @@ class TestLegalMoves:
         # Distance 1 in all 8 directions
         assert (4, 3) in destinations
         assert (4, 4) in destinations
-        # Distance 2
-        assert (5, 3) in destinations
-        assert (5, 5) in destinations
+        assert (2, 3) in destinations
+        assert (3, 4) in destinations
+        # Should NOT have distance 2 moves
+        assert (5, 3) not in destinations
+        assert (5, 5) not in destinations
+        assert len(destinations) == 8  # 8 adjacent squares
 
     def test_rider_moves(self):
-        """Rider moves up to 3 squares in straight line."""
+        """Rider moves up to 2 squares in straight line."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
         state.board[3][3] = Piece(PieceType.RIDER, Player.WHITE)
@@ -168,11 +171,14 @@ class TestLegalMoves:
         moves = generate_legal_moves(state)
         rider_moves = [m for m in moves if isinstance(m, MoveStep) and m.from_rc == (3, 3)]
         destinations = {m.to_rc for m in rider_moves}
-        # Can reach up to 3 squares away
-        assert (6, 3) in destinations  # 3 up
-        assert (0, 3) in destinations  # 3 down (but commander blocks at 0,0)
-        assert (3, 6) in destinations  # 3 right
-        assert (6, 6) in destinations  # 3 diagonal
+        # Can reach up to 2 squares away
+        assert (5, 3) in destinations  # 2 up
+        assert (1, 3) in destinations  # 2 down
+        assert (3, 5) in destinations  # 2 right
+        assert (5, 5) in destinations  # 2 diagonal
+        # Cannot reach 3 squares away
+        assert (6, 3) not in destinations
+        assert (3, 6) not in destinations
 
     def test_rider_blocked(self):
         """Rider cannot jump over pieces."""
@@ -330,10 +336,15 @@ class TestCapture:
 
 class TestWinConditions:
     def test_commander_capture_wins(self):
-        """Capturing Commander ends the game."""
+        """Capturing Commander ends the game (via massed Warrior attack)."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
-        state.board[3][3] = Piece(PieceType.RIDER, Player.WHITE)
+        # 3 adjacent friendly Warriors give attacker strength 1+3=4 > Commander str 2
+        # Attacker wins → Commander captured
+        state.board[3][3] = Piece(PieceType.WARRIOR, Player.WHITE)  # attacker
+        state.board[3][2] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent
+        state.board[2][3] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent
+        state.board[4][3] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent
         state.board[3][4] = Piece(PieceType.COMMANDER, Player.BLACK)
         state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
 
@@ -343,7 +354,7 @@ class TestWinConditions:
         assert state.winner == Player.WHITE
 
     def test_resource_domination_wins(self):
-        """Controlling 6+ exclusive resource nodes wins."""
+        """Occupying 4+ resource nodes wins."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
         # Place white pieces adjacent to 6 resource nodes
@@ -362,11 +373,11 @@ class TestWinConditions:
         assert state.winner == Player.WHITE
 
     def test_turn_limit_draw(self):
-        """Turn 200+ with equal control results in tiebreak."""
+        """Turn 100+ with equal control results in tiebreak."""
         state = GameState()
-        state.turn = 200
+        state.turn = 100
         state.current_player = Player.BLACK
-        # Black makes a move to trigger turn 201 check
+        # Black makes a move to trigger turn 101 check
         state.board = [[None] * 8 for _ in range(8)]
         state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
         state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)

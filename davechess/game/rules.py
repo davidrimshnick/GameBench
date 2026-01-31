@@ -18,6 +18,7 @@ ALL_DIRS = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)
 STRAIGHT_DIRS = ALL_DIRS
 
 _RESOURCE_SET = frozenset(RESOURCE_NODES)
+_ORTHOGONAL_SET = frozenset(ORTHOGONAL)
 
 
 def _in_bounds(r: int, c: int) -> bool:
@@ -57,12 +58,26 @@ def _count_controlled_nodes(state: GameState, player: Player) -> int:
     """Count resource nodes exclusively controlled by player.
 
     A node is exclusively controlled if the player controls it and the opponent does not.
+    Used for turn-limit tiebreaking.
     """
     opponent = Player(1 - player)
     count = 0
     for nr, nc in RESOURCE_NODES:
         if _player_controls_node(state, player, nr, nc) and \
            not _player_controls_node(state, opponent, nr, nc):
+            count += 1
+    return count
+
+
+def _count_occupied_nodes(state: GameState, player: Player) -> int:
+    """Count resource nodes physically occupied by player's pieces.
+
+    Used for the resource domination win condition.
+    """
+    count = 0
+    for nr, nc in RESOURCE_NODES:
+        piece = state.board[nr][nc]
+        if piece is not None and piece.player == player:
             count += 1
     return count
 
@@ -103,15 +118,61 @@ def _get_piece_strength(state: GameState, row: int, col: int) -> int:
     return BASE_STRENGTH[piece.piece_type]
 
 
-def generate_legal_moves(state: GameState) -> list[Move]:
-    """Generate all legal moves for the current player."""
-    if state.done:
-        return []
+def _find_commander(state: GameState, player: Player) -> tuple[int, int] | None:
+    """Find the Commander's position for a player."""
+    for row in range(BOARD_SIZE):
+        for col in range(BOARD_SIZE):
+            p = state.board[row][col]
+            if p is not None and p.player == player and p.piece_type == PieceType.COMMANDER:
+                return (row, col)
+    return None
 
+
+def _is_square_attacked(state: GameState, tr: int, tc: int, by_player: Player) -> bool:
+    """Check if any piece of by_player can attack the square (tr, tc).
+
+    Checks outward from the target square along attack patterns.
+    """
+    board = state.board
+
+    # Check all 8 adjacent squares and 2-square Rider reach in one pass
+    for dr, dc in ALL_DIRS:
+        # Distance 1: Commander, Warrior (ortho only), Bombard melee, Rider
+        r1, c1 = tr + dr, tc + dc
+        if _in_bounds(r1, c1):
+            p = board[r1][c1]
+            if p is not None and p.player == by_player:
+                pt = p.piece_type
+                if pt == PieceType.COMMANDER or pt == PieceType.BOMBARD or pt == PieceType.RIDER:
+                    return True
+                if pt == PieceType.WARRIOR and (dr == 0 or dc == 0):
+                    return True
+
+        # Distance 2: Rider only (straight line, clear path)
+        r2, c2 = tr + dr * 2, tc + dc * 2
+        if _in_bounds(r2, c2):
+            p2 = board[r2][c2]
+            if p2 is not None and p2.player == by_player and p2.piece_type == PieceType.RIDER:
+                if _in_bounds(r1, c1) and board[r1][c1] is None:
+                    return True
+
+    return False
+
+
+def is_in_check(state: GameState, player: Player) -> bool:
+    """Check if the given player's Commander is under attack."""
+    cmd_pos = _find_commander(state, player)
+    if cmd_pos is None:
+        return False  # Commander already captured
+    opponent = Player(1 - player)
+    return _is_square_attacked(state, cmd_pos[0], cmd_pos[1], opponent)
+
+
+def _generate_pseudo_legal_moves(state: GameState) -> list[Move]:
+    """Generate all pseudo-legal moves (ignoring check)."""
     player = state.current_player
     moves: list[Move] = []
 
-    # Movement/capture moves for each piece
     for row in range(BOARD_SIZE):
         for col in range(BOARD_SIZE):
             piece = state.board[row][col]
@@ -127,33 +188,152 @@ def generate_legal_moves(state: GameState) -> list[Move]:
             elif piece.piece_type == PieceType.BOMBARD:
                 _gen_bombard_moves(state, row, col, player, moves)
 
-    # Deployment moves
     _gen_deploy_moves(state, player, moves)
-
     return moves
+
+
+def _apply_move_no_checks(state: GameState, move: Move) -> GameState:
+    """Apply a move without win-condition or turn-switching logic.
+
+    Used internally for check detection (just updates the board).
+    Modifies state in place.
+    """
+    player = state.current_player
+
+    if isinstance(move, MoveStep):
+        fr, fc = move.from_rc
+        tr, tc = move.to_rc
+        attacker = state.board[fr][fc]
+
+        if move.is_capture:
+            defender = state.board[tr][tc]
+            atk_str = _get_piece_strength(state, fr, fc)
+            def_str = _get_piece_strength(state, tr, tc)
+
+            if atk_str > def_str:
+                state.board[tr][tc] = attacker
+                state.board[fr][fc] = None
+            elif atk_str < def_str:
+                state.board[fr][fc] = None
+            else:
+                state.board[fr][fc] = None
+                state.board[tr][tc] = None
+        else:
+            state.board[tr][tc] = attacker
+            state.board[fr][fc] = None
+
+    elif isinstance(move, Deploy):
+        tr, tc = move.to_rc
+        state.board[tr][tc] = Piece(move.piece_type, player)
+
+    elif isinstance(move, BombardAttack):
+        tr, tc = move.target_rc
+        state.board[tr][tc] = None
+
+    return state
+
+
+def generate_legal_moves(state: GameState) -> list[Move]:
+    """Generate all legal moves for the current player.
+
+    Filters out moves that leave the player's own Commander in check.
+    Uses make/unmake optimization to avoid full state cloning.
+    Also detects checkmate/stalemate: if no legal moves exist, sets state.done.
+    """
+    if state.done:
+        return []
+
+    player = state.current_player
+    pseudo_moves = _generate_pseudo_legal_moves(state)
+
+    legal_moves = []
+    for move in pseudo_moves:
+        if _is_move_legal(state, move, player):
+            legal_moves.append(move)
+
+    # Detect checkmate/stalemate
+    if not legal_moves:
+        state.done = True
+        if is_in_check(state, player):
+            # Checkmate: current player loses
+            state.winner = Player(1 - player)
+        else:
+            # Stalemate: draw
+            state.winner = None
+
+    return legal_moves
+
+
+def _is_move_legal(state: GameState, move: Move, player: Player) -> bool:
+    """Check if a move is legal (doesn't leave own Commander in check).
+
+    Uses make/unmake on the board to avoid cloning.
+    """
+    board = state.board
+
+    if isinstance(move, MoveStep):
+        fr, fc = move.from_rc
+        tr, tc = move.to_rc
+        moving_piece = board[fr][fc]
+        captured_piece = board[tr][tc]
+
+        if move.is_capture:
+            atk_str = _get_piece_strength(state, fr, fc)
+            def_str = _get_piece_strength(state, tr, tc)
+            if atk_str > def_str:
+                # Attacker wins: piece moves to target
+                board[fr][fc] = None
+                board[tr][tc] = moving_piece
+            elif atk_str < def_str:
+                # Attacker loses: attacker removed
+                board[fr][fc] = None
+            else:
+                # Tie: both removed
+                board[fr][fc] = None
+                board[tr][tc] = None
+        else:
+            board[fr][fc] = None
+            board[tr][tc] = moving_piece
+
+        # Check if our Commander is safe
+        safe = not is_in_check(state, player)
+
+        # Unmake
+        board[fr][fc] = moving_piece
+        board[tr][tc] = captured_piece
+        return safe
+
+    elif isinstance(move, Deploy):
+        tr, tc = move.to_rc
+        # Deploy adds a piece; doesn't move anything
+        board[tr][tc] = Piece(move.piece_type, player)
+        safe = not is_in_check(state, player)
+        board[tr][tc] = None  # unmake
+        return safe
+
+    elif isinstance(move, BombardAttack):
+        tr, tc = move.target_rc
+        captured_piece = board[tr][tc]
+        board[tr][tc] = None  # target removed
+        safe = not is_in_check(state, player)
+        board[tr][tc] = captured_piece  # unmake
+        return safe
+
+    return True
 
 
 def _gen_commander_moves(state: GameState, row: int, col: int, player: Player,
                          moves: list[Move]):
-    """Commander: 1-2 squares, any direction."""
+    """Commander: 1 square, any direction."""
     for dr, dc in ALL_DIRS:
-        for dist in (1, 2):
-            r2, c2 = row + dr * dist, col + dc * dist
-            if not _in_bounds(r2, c2):
-                break
-            target = state.board[r2][c2]
-            if target is None:
-                moves.append(MoveStep((row, col), (r2, c2)))
-            elif target.player != player:
-                moves.append(MoveStep((row, col), (r2, c2), is_capture=True))
-                break  # Can't jump over enemy
-            else:
-                break  # Blocked by friendly piece
-            # For dist=1, if we could move there, try dist=2
-            # But if dist=1 was a capture, we already broke
-            # Check if path is clear for dist=2
-            if dist == 1 and target is not None:
-                break
+        r2, c2 = row + dr, col + dc
+        if not _in_bounds(r2, c2):
+            continue
+        target = state.board[r2][c2]
+        if target is None:
+            moves.append(MoveStep((row, col), (r2, c2)))
+        elif target.player != player:
+            moves.append(MoveStep((row, col), (r2, c2), is_capture=True))
 
 
 def _gen_warrior_moves(state: GameState, row: int, col: int, player: Player,
@@ -172,9 +352,9 @@ def _gen_warrior_moves(state: GameState, row: int, col: int, player: Player,
 
 def _gen_rider_moves(state: GameState, row: int, col: int, player: Player,
                      moves: list[Move]):
-    """Rider: up to 3 squares, straight line, no jumping."""
+    """Rider: up to 2 squares, straight line, no jumping."""
     for dr, dc in STRAIGHT_DIRS:
-        for dist in range(1, 4):
+        for dist in range(1, 3):
             r2, c2 = row + dr * dist, col + dc * dist
             if not _in_bounds(r2, c2):
                 break
@@ -216,7 +396,8 @@ def _gen_bombard_moves(state: GameState, row: int, col: int, player: Player,
         if not _in_bounds(target_r, target_c):
             continue
         target = state.board[target_r][target_c]
-        if target is not None and target.player != player:
+        if target is not None and target.player != player \
+                and target.piece_type != PieceType.COMMANDER:
             moves.append(BombardAttack((row, col), (target_r, target_c)))
 
 
@@ -306,10 +487,10 @@ def apply_move(state: GameState, move: Move) -> GameState:
 
     state.move_history.append(move)
 
-    # Check resource domination win (if not already won)
+    # Check resource domination win (occupy 5+ of 8 resource nodes)
     if not state.done:
-        exclusive = _count_controlled_nodes(state, player)
-        if exclusive >= 6:
+        occupied = _count_occupied_nodes(state, player)
+        if occupied >= 4:
             state.done = True
             state.winner = player
 
@@ -324,7 +505,7 @@ def apply_move(state: GameState, move: Move) -> GameState:
         state.resources[state.current_player] += income
 
         # Check turn limit
-        if state.turn > 200:
+        if state.turn > 100:
             state.done = True
             white_nodes = _count_controlled_nodes(state, Player.WHITE)
             black_nodes = _count_controlled_nodes(state, Player.BLACK)
@@ -342,6 +523,114 @@ def apply_move(state: GameState, move: Move) -> GameState:
                     state.winner = Player.BLACK
                 else:
                     state.winner = None  # Draw
+
+    # Checkmate/stalemate detection is handled lazily by generate_legal_moves()
+    # when the next player tries to move and has no legal moves.
+
+    return state
+
+
+def generate_pseudo_legal_moves(state: GameState) -> list[Move]:
+    """Generate pseudo-legal moves (no check filtering). For fast rollouts."""
+    if state.done:
+        return []
+    return _generate_pseudo_legal_moves(state)
+
+
+def apply_move_fast(state: GameState, move: Move) -> GameState:
+    """Apply a move without checkmate/stalemate detection. For fast rollouts.
+
+    Still handles captures, win conditions, resource income, and turn switching,
+    but skips the expensive check for whether the opponent has legal moves.
+    """
+    player = state.current_player
+    opponent = Player(1 - player)
+
+    if isinstance(move, MoveStep):
+        fr, fc = move.from_rc
+        tr, tc = move.to_rc
+        attacker = state.board[fr][fc]
+
+        if move.is_capture:
+            defender = state.board[tr][tc]
+            atk_str = _get_piece_strength(state, fr, fc)
+            def_str = _get_piece_strength(state, tr, tc)
+
+            if atk_str > def_str:
+                state.board[tr][tc] = attacker
+                state.board[fr][fc] = None
+                if defender.piece_type == PieceType.COMMANDER:
+                    state.done = True
+                    state.winner = player
+            elif atk_str < def_str:
+                state.board[fr][fc] = None
+                if attacker.piece_type == PieceType.COMMANDER:
+                    state.done = True
+                    state.winner = opponent
+            else:
+                state.board[fr][fc] = None
+                state.board[tr][tc] = None
+                if attacker.piece_type == PieceType.COMMANDER:
+                    state.done = True
+                    state.winner = opponent
+                if defender.piece_type == PieceType.COMMANDER:
+                    state.done = True
+                    if attacker.piece_type == PieceType.COMMANDER:
+                        state.winner = opponent
+                    else:
+                        state.winner = player
+        else:
+            state.board[tr][tc] = attacker
+            state.board[fr][fc] = None
+
+    elif isinstance(move, Deploy):
+        tr, tc = move.to_rc
+        cost = DEPLOY_COST[move.piece_type]
+        state.resources[player] -= cost
+        state.board[tr][tc] = Piece(move.piece_type, player)
+
+    elif isinstance(move, BombardAttack):
+        tr, tc = move.target_rc
+        defender = state.board[tr][tc]
+        state.board[tr][tc] = None
+        if defender is not None and defender.piece_type == PieceType.COMMANDER:
+            state.done = True
+            state.winner = player
+
+    # Skip move_history for fast rollouts
+    # state.move_history.append(move)
+
+    if not state.done:
+        occupied = _count_occupied_nodes(state, player)
+        if occupied >= 4:
+            state.done = True
+            state.winner = player
+
+    if not state.done:
+        state.current_player = opponent
+        if player == Player.BLACK:
+            state.turn += 1
+
+        income = get_resource_income(state, state.current_player)
+        state.resources[state.current_player] += income
+
+        if state.turn > 100:
+            state.done = True
+            white_nodes = _count_controlled_nodes(state, Player.WHITE)
+            black_nodes = _count_controlled_nodes(state, Player.BLACK)
+            if white_nodes > black_nodes:
+                state.winner = Player.WHITE
+            elif black_nodes > white_nodes:
+                state.winner = Player.BLACK
+            else:
+                white_pieces = _count_pieces(state, Player.WHITE)
+                black_pieces = _count_pieces(state, Player.BLACK)
+                if white_pieces > black_pieces:
+                    state.winner = Player.WHITE
+                elif black_pieces > white_pieces:
+                    state.winner = Player.BLACK
+                else:
+                    state.winner = None
 
     return state
 

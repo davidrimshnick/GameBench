@@ -17,7 +17,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from davechess.game.state import GameState, Player, Move
-from davechess.game.rules import generate_legal_moves, apply_move, check_winner
+from davechess.game.rules import (
+    generate_legal_moves, apply_move, check_winner,
+    generate_pseudo_legal_moves, apply_move_fast,
+)
 
 
 @dataclass
@@ -128,16 +131,21 @@ class MCTSLite:
         return child
 
     def _rollout(self, node: MCTSNode) -> Optional[Player]:
-        """Random rollout from node's state. Returns the winner (or None for draw)."""
+        """Random rollout from node's state. Returns the winner (or None for draw).
+
+        Uses pseudo-legal moves and fast apply for performance (skips check
+        enforcement in random rollouts — doesn't significantly affect value
+        estimates).
+        """
         state = node.state.clone()
         depth = 0
 
         while not state.done and depth < self.max_rollout_depth:
-            moves = generate_legal_moves(state)
+            moves = generate_pseudo_legal_moves(state)
             if not moves:
                 break
             move = random.choice(moves)
-            apply_move(state, move)
+            apply_move_fast(state, move)
             depth += 1
 
         return state.winner  # Player enum or None

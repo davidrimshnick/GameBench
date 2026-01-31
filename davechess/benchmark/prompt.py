@@ -16,14 +16,14 @@ RULES_TEXT = """# DaveChess Rules
 ## Pieces
 | Piece | Symbol | Move | Base Strength | Deploy Cost |
 |-------|--------|------|---------------|-------------|
-| Commander | C | 1-2 squares, any direction | 1 | Cannot be deployed |
+| Commander | C | 1 square, any direction | 2 | Cannot be deployed |
 | Warrior | W | 1 square, orthogonal only | 1 (+1 per adjacent friendly Warrior) | 2 resources |
-| Rider | R | Up to 3 squares, straight line (no jumping) | 2 | 4 resources |
+| Rider | R | Up to 2 squares, straight line (no jumping) | 2 | 4 resources |
 | Bombard | B | 1 square, any direction | 0 (melee) | 5 resources |
 
 ## Starting Position
-White (row 1): W at c1, C at d1, R at e1, W at f1
-Black (row 8): W at c8, R at d8, C at e8, W at f8
+White (rows 1-2): W at c1, C at d1, R at e1, W at f1, W at d2, W at e2
+Black (rows 7-8): W at c8, C at d8, R at e8, W at f8, W at d7, W at e7
 
 ## Turn Structure
 1. Gain resources: +1 per resource node you have a piece on or orthogonally adjacent to
@@ -31,7 +31,7 @@ Black (row 8): W at c8, R at d8, C at e8, W at f8
 
 ## Capture
 Attacker moves onto defender. Compare total strength. Higher wins. Tie = both removed.
-Bombard special: ranged capture at exactly 2 squares distance, straight line, clear path. Target is simply removed (Bombard stays). Bombard melee capture uses strength 0.
+Bombard special: ranged capture at exactly 2 squares distance, straight line, clear path. Target is simply removed (Bombard stays). Commanders cannot be targeted by ranged attacks. Bombard melee capture uses strength 0.
 
 ## Notation (DCN)
 - Move: `Wa2-a3` (Warrior moves from a2 to a3)
@@ -41,10 +41,16 @@ Bombard special: ranged capture at exactly 2 squares distance, straight line, cl
 
 Move numbering: `1. <White move> <Black move>  2. <White move> <Black move> ...`
 
+## Check
+If your Commander is under attack (an opponent piece could capture it), you are in check.
+You MUST resolve check on your turn (move Commander, block, or capture the attacker).
+If you cannot resolve check, it is checkmate and you lose.
+You cannot make a move that leaves your own Commander in check.
+
 ## Win Conditions (checked in order)
-1. Capture opponent's Commander → you win
-2. Control 6+ of 8 resource nodes exclusively (you control it, opponent doesn't) → you win
-3. Turn 200 → most exclusive resource nodes wins, tiebreak by piece count, then draw
+1. Checkmate opponent's Commander (they have no legal move to escape check) → you win
+2. Occupy 4+ of 8 resource nodes (have your pieces physically on them) → you win
+3. Turn 100 → most exclusive resource nodes wins, tiebreak by piece count, then draw
 
 ## Result
 - `1-0` = White wins, `0-1` = Black wins, `1/2-1/2` = Draw
