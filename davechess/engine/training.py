@@ -376,7 +376,7 @@ class Trainer:
         # This ensures self-play data always matches the network being trained,
         # avoiding distribution mismatch that causes eval regression.
         base_sims = mcts_cfg.get("num_simulations", 200)
-        num_sims = adaptive_simulations(self.best_elo_estimate, min_sims=2, max_sims=base_sims)
+        num_sims = adaptive_simulations(self.best_elo_estimate, min_sims=10, max_sims=base_sims)
         logger.info(f"Self-play phase... (adaptive sims: {num_sims}, ELO={self.best_elo_estimate:.0f})")
         selfplay_start = time.time()
         examples, sp_stats = run_selfplay_batch(
@@ -467,7 +467,7 @@ class Trainer:
         eval_start = time.time()
         eval_games = train_cfg.get("eval_games", 40)
         base_eval_sims = train_cfg.get("eval_simulations", 50)
-        eval_sims = adaptive_simulations(self.best_elo_estimate, min_sims=4, max_sims=base_eval_sims)
+        eval_sims = adaptive_simulations(self.best_elo_estimate, min_sims=15, max_sims=base_eval_sims)
         logger.info(f"Evaluation phase... (adaptive sims: {eval_sims})")
         eval_threshold = train_cfg.get("eval_threshold", 0.55)
         self.best_network.to(self.device)
