@@ -448,6 +448,20 @@ class Trainer:
             logger.info("New best network accepted!")
             self.best_network.load_state_dict(self.network.state_dict())
             self.save_best()
+            # Backup best model to W&B
+            if self.use_wandb:
+                artifact = wandb.Artifact(
+                    f"best-model-iter{self.iteration}",
+                    type="model",
+                    metadata={
+                        "iteration": self.iteration,
+                        "training_step": self.training_step,
+                        "eval_win_rate": win_rate,
+                    },
+                )
+                artifact.add_file(str(self.checkpoint_dir / "best.pt"))
+                wandb.log_artifact(artifact)
+                logger.info("Uploaded best model to W&B artifacts")
         else:
             logger.info("New network rejected, keeping previous best.")
 
