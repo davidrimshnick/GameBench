@@ -10,6 +10,9 @@ import logging
 import os
 import sys
 
+# Reduce CUDA memory on Jetson (shared CPU/GPU memory)
+os.environ.setdefault("CUDA_MODULE_LOADING", "LAZY")
+
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

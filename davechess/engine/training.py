@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import json
 import logging
 import os
@@ -43,11 +44,12 @@ class Trainer:
             input_planes=net_cfg.get("input_planes", 12),
         ).to(device)
 
+        # Keep best_network on CPU to save GPU memory on Jetson (shared memory)
         self.best_network = DaveChessNetwork(
             num_res_blocks=net_cfg.get("num_res_blocks", 5),
             num_filters=net_cfg.get("num_filters", 64),
             input_planes=net_cfg.get("input_planes", 12),
-        ).to(device)
+        )  # CPU only
         self.best_network.load_state_dict(self.network.state_dict())
 
         train_cfg = config.get("training", {})
@@ -125,8 +127,10 @@ class Trainer:
             path = str(checkpoints[-1])
 
         logger.info(f"Loading checkpoint: {path}")
-        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        # Load to CPU first to avoid GPU memory spike, then copy
+        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
         self.network.load_state_dict(checkpoint["network_state"])
+        self.network.to(self.device)
         self.optimizer.load_state_dict(checkpoint["optimizer_state"])
         self.training_step = checkpoint["training_step"]
         self.iteration = checkpoint["iteration"]
@@ -135,18 +139,26 @@ class Trainer:
         if self.scaler is not None and "scaler_state" in checkpoint:
             self.scaler.load_state_dict(checkpoint["scaler_state"])
 
+        del checkpoint
+        gc.collect()
+        if self.device != "cpu":
+            torch.cuda.empty_cache()
+
         # Try loading replay buffer
         buf_path = path.replace(".pt", "_buffer.npz")
         if os.path.exists(buf_path):
             self.replay_buffer.load_data(buf_path)
             logger.info(f"Loaded replay buffer: {len(self.replay_buffer)} positions")
 
-        # Load best network if exists
+        # Load best network on CPU (moved to GPU only when needed)
         best_path = self.checkpoint_dir / "best.pt"
         if best_path.exists():
-            best_ckpt = torch.load(str(best_path), map_location=self.device, weights_only=False)
+            best_ckpt = torch.load(str(best_path), map_location="cpu", weights_only=False)
             self.best_network.load_state_dict(best_ckpt["network_state"])
+            del best_ckpt
+            gc.collect()
 
+        logger.info(f"Resumed from step {self.training_step}, iteration {self.iteration}")
         return True
 
     def train_step(self, batch_size: int) -> dict:
@@ -269,8 +281,9 @@ class Trainer:
         self.iteration += 1
         logger.info(f"=== Iteration {self.iteration} ===")
 
-        # Self-play phase
+        # Self-play phase — temporarily move best_network to GPU
         logger.info("Self-play phase...")
+        self.best_network.to(self.device)
         examples = run_selfplay_batch(
             network=self.best_network,
             num_games=sp_cfg.get("num_games_per_iteration", 100),
@@ -278,10 +291,16 @@ class Trainer:
             temperature_threshold=mcts_cfg.get("temperature_threshold", 30),
             device=self.device,
         )
+        self.best_network.to("cpu")
 
+        num_new_examples = len(examples)
         for planes, policy, value in examples:
             self.replay_buffer.push(planes, policy, value)
-        logger.info(f"Generated {len(examples)} training examples. "
+        del examples
+        gc.collect()
+        if self.device != "cpu":
+            torch.cuda.empty_cache()
+        logger.info(f"Generated {num_new_examples} training examples. "
                     f"Buffer size: {len(self.replay_buffer)}")
 
         # Training phase
@@ -319,13 +338,15 @@ class Trainer:
                 param_group["lr"] *= 0.5
                 logger.info(f"Reduced LR to {param_group['lr']}")
 
-        # Evaluation phase
+        # Evaluation phase — temporarily move best_network to GPU
         logger.info("Evaluation phase...")
         eval_games = train_cfg.get("eval_games", 40)
         eval_sims = train_cfg.get("eval_simulations", 50)
         eval_threshold = train_cfg.get("eval_threshold", 0.55)
+        self.best_network.to(self.device)
         win_rate = self.evaluate_network(num_games=eval_games,
                                           num_simulations=eval_sims)
+        self.best_network.to("cpu")
         logger.info(f"Evaluation win rate: {win_rate:.3f}")
 
         if win_rate >= eval_threshold:
@@ -335,10 +356,14 @@ class Trainer:
         else:
             logger.info("New network rejected, keeping previous best.")
 
+        gc.collect()
+        if self.device != "cpu":
+            torch.cuda.empty_cache()
+
         # Log metrics
         self.log_metrics({
             "phase": "iteration",
-            "num_examples": len(examples),
+            "num_examples": num_new_examples,
             "buffer_size": len(self.replay_buffer),
             "eval_win_rate": win_rate,
             **avg_losses,

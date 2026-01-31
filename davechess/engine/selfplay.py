@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import gc
+import logging
 import os
 import json
 import random
 import numpy as np
 from typing import Optional
 from collections import deque
+
+logger = logging.getLogger("davechess.selfplay")
 
 try:
     import torch
@@ -158,5 +162,8 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
     for game_idx in range(num_games):
         examples = play_selfplay_game(mcts, temperature_threshold)
         all_examples.extend(examples)
+        logger.info(f"  Self-play game {game_idx+1}/{num_games}: "
+                    f"{len(examples)} moves, {len(all_examples)} total positions")
+        gc.collect()  # Free MCTS tree circular references
 
     return all_examples

@@ -7,15 +7,15 @@ network:
   board_size: 8
 
 mcts:
-  num_simulations: 50          # Reduced from 200 for Jetson speed
+  num_simulations: 25          # Low sims OK for self-play with NN guidance
   cpuct: 1.5
   dirichlet_alpha: 0.3
   dirichlet_epsilon: 0.25
   temperature_threshold: 30    # moves before temperature drops to near-zero
 
 selfplay:
-  num_games_per_iteration: 25  # Reduced from 100 for Jetson speed
-  replay_buffer_size: 200000   # Reduced proportionally
+  num_games_per_iteration: 15  # Conservative for 8GB Jetson memory
+  replay_buffer_size: 100000   # Conservative for memory
   num_workers: 1               # Sequential GPU inference (no CPU multiprocessing)
 
 training:
@@ -25,8 +25,8 @@ training:
   weight_decay: 0.0001
   steps_per_iteration: 200     # Reduced to match smaller data generation
   checkpoint_interval: 200
-  eval_games: 10               # Reduced for speed
-  eval_simulations: 50
+  eval_games: 6                 # Reduced for speed (saves ~20 min/iteration)
+  eval_simulations: 25
   eval_threshold: 0.55         # win rate to accept new network
   max_iterations: 100
 
