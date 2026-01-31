@@ -108,6 +108,24 @@ def main():
     param_count = sum(p.numel() for p in trainer.network.parameters())
     logger.info(f"Network parameters: {param_count:,}")
 
+    # Start TensorBoard server in background
+    tb_dir = os.path.join(config.get("paths", {}).get("log_dir", "logs"), "tensorboard")
+    if os.path.isdir(tb_dir):
+        try:
+            import subprocess
+            tb_port = 6006
+            tb_proc = subprocess.Popen(
+                ["tensorboard", "--logdir", tb_dir, "--port", str(tb_port),
+                 "--bind_all", "--reload_interval", "30"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            logger.info(f"TensorBoard started at http://0.0.0.0:{tb_port}")
+        except Exception as e:
+            tb_proc = None
+            logger.warning(f"Could not start TensorBoard: {e}")
+    else:
+        tb_proc = None
+
     try:
         trainer.train(max_iterations=args.max_iterations)
         logger.info("Training complete!")
@@ -115,6 +133,8 @@ def main():
         if use_wandb:
             import wandb
             wandb.finish()
+        if tb_proc is not None:
+            tb_proc.terminate()
 
 
 if __name__ == "__main__":

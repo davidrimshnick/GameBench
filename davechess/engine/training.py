@@ -27,6 +27,12 @@ try:
 except ImportError:
     HAS_WANDB = False
 
+try:
+    from torch.utils.tensorboard import SummaryWriter
+    HAS_TB = True
+except ImportError:
+    HAS_TB = False
+
 from davechess.engine.network import DaveChessNetwork, POLICY_SIZE
 from davechess.engine.selfplay import ReplayBuffer, run_selfplay_batch
 from davechess.engine.mcts import MCTS
@@ -43,6 +49,7 @@ class Trainer:
         self.config = config
         self.device = device
         self.use_wandb = use_wandb and HAS_WANDB
+        self.tb_writer = None
 
         net_cfg = config.get("network", {})
         self.network = DaveChessNetwork(
@@ -84,6 +91,12 @@ class Trainer:
 
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+
+        if HAS_TB:
+            tb_dir = self.log_dir / "tensorboard"
+            tb_dir.mkdir(exist_ok=True)
+            self.tb_writer = SummaryWriter(log_dir=str(tb_dir))
+            logger.info(f"TensorBoard logging to {tb_dir}")
 
     def save_checkpoint(self, tag: str = ""):
         """Save a training checkpoint."""
@@ -216,12 +229,17 @@ class Trainer:
             "value_loss": value_loss.item(),
         }
 
-        if self.use_wandb and self.training_step % 10 == 0:
-            wandb.log({
-                "train/total_loss": losses["total_loss"],
-                "train/policy_loss": losses["policy_loss"],
-                "train/value_loss": losses["value_loss"],
-            }, step=self.training_step)
+        if self.training_step % 10 == 0:
+            if self.use_wandb:
+                wandb.log({
+                    "train/total_loss": losses["total_loss"],
+                    "train/policy_loss": losses["policy_loss"],
+                    "train/value_loss": losses["value_loss"],
+                }, step=self.training_step)
+            if self.tb_writer:
+                self.tb_writer.add_scalar("train/total_loss", losses["total_loss"], self.training_step)
+                self.tb_writer.add_scalar("train/policy_loss", losses["policy_loss"], self.training_step)
+                self.tb_writer.add_scalar("train/value_loss", losses["value_loss"], self.training_step)
 
         return losses
 
@@ -288,9 +306,8 @@ class Trainer:
         with open(self.training_log_path, "a") as f:
             f.write(json.dumps(metrics) + "\n")
 
+        phase = metrics.get("phase", "")
         if self.use_wandb:
-            # Flatten for wandb — prefix with phase for clarity
-            phase = metrics.get("phase", "")
             wb_metrics = {}
             for k, v in metrics.items():
                 if k in ("timestamp", "phase"):
@@ -298,6 +315,15 @@ class Trainer:
                 if isinstance(v, (int, float)):
                     wb_metrics[f"{phase}/{k}" if phase else k] = v
             wandb.log(wb_metrics, step=self.training_step)
+
+        if self.tb_writer:
+            for k, v in metrics.items():
+                if k in ("timestamp", "phase"):
+                    continue
+                if isinstance(v, (int, float)):
+                    tag = f"{phase}/{k}" if phase else k
+                    self.tb_writer.add_scalar(tag, v, self.training_step)
+            self.tb_writer.flush()
 
     def run_iteration(self):
         """Run one training iteration: self-play + training + evaluation."""
@@ -332,13 +358,17 @@ class Trainer:
         logger.info(f"Generated {num_new_examples} training examples. "
                     f"Buffer size: {len(self.replay_buffer)}")
 
+        sp_metrics = {
+            "selfplay/num_examples": num_new_examples,
+            "selfplay/buffer_size": len(self.replay_buffer),
+            "selfplay/elapsed_sec": selfplay_elapsed,
+            "selfplay/avg_game_length": num_new_examples / max(sp_cfg.get("num_games_per_iteration", 1), 1),
+        }
         if self.use_wandb:
-            wandb.log({
-                "selfplay/num_examples": num_new_examples,
-                "selfplay/buffer_size": len(self.replay_buffer),
-                "selfplay/elapsed_sec": selfplay_elapsed,
-                "selfplay/avg_game_length": num_new_examples / max(sp_cfg.get("num_games_per_iteration", 1), 1),
-            }, step=self.training_step)
+            wandb.log(sp_metrics, step=self.training_step)
+        if self.tb_writer:
+            for k, v in sp_metrics.items():
+                self.tb_writer.add_scalar(k, v, self.training_step)
 
         # Training phase
         logger.info("Training phase...")
@@ -396,23 +426,32 @@ class Trainer:
         else:
             logger.info("New network rejected, keeping previous best.")
 
+        eval_metrics = {
+            "eval/win_rate": win_rate,
+            "eval/accepted": int(accepted),
+            "eval/elapsed_sec": eval_elapsed,
+        }
         if self.use_wandb:
-            wandb.log({
-                "eval/win_rate": win_rate,
-                "eval/accepted": int(accepted),
-                "eval/elapsed_sec": eval_elapsed,
-            }, step=self.training_step)
+            wandb.log(eval_metrics, step=self.training_step)
+        if self.tb_writer:
+            for k, v in eval_metrics.items():
+                self.tb_writer.add_scalar(k, v, self.training_step)
 
         gc.collect()
         if self.device != "cpu":
             torch.cuda.empty_cache()
 
         # Log GPU memory stats
-        if self.use_wandb and self.device != "cpu":
-            wandb.log({
+        if self.device != "cpu":
+            gpu_metrics = {
                 "system/gpu_allocated_mb": torch.cuda.memory_allocated() / 1e6,
                 "system/gpu_reserved_mb": torch.cuda.memory_reserved() / 1e6,
-            }, step=self.training_step)
+            }
+            if self.use_wandb:
+                wandb.log(gpu_metrics, step=self.training_step)
+            if self.tb_writer:
+                for k, v in gpu_metrics.items():
+                    self.tb_writer.add_scalar(k, v, self.training_step)
 
         # Log metrics
         self.log_metrics({
