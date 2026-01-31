@@ -21,6 +21,12 @@ try:
 except ImportError:
     HAS_TORCH = False
 
+try:
+    import wandb
+    HAS_WANDB = True
+except ImportError:
+    HAS_WANDB = False
+
 from davechess.engine.network import DaveChessNetwork, POLICY_SIZE
 from davechess.engine.selfplay import ReplayBuffer, run_selfplay_batch
 from davechess.engine.mcts import MCTS
@@ -33,9 +39,10 @@ logger = logging.getLogger("davechess.training")
 class Trainer:
     """AlphaZero training loop."""
 
-    def __init__(self, config: dict, device: str = "cpu"):
+    def __init__(self, config: dict, device: str = "cpu", use_wandb: bool = False):
         self.config = config
         self.device = device
+        self.use_wandb = use_wandb and HAS_WANDB
 
         net_cfg = config.get("network", {})
         self.network = DaveChessNetwork(
@@ -203,11 +210,20 @@ class Trainer:
 
         self.training_step += 1
 
-        return {
+        losses = {
             "total_loss": total_loss.item(),
             "policy_loss": policy_loss.item(),
             "value_loss": value_loss.item(),
         }
+
+        if self.use_wandb and self.training_step % 10 == 0:
+            wandb.log({
+                "train/total_loss": losses["total_loss"],
+                "train/policy_loss": losses["policy_loss"],
+                "train/value_loss": losses["value_loss"],
+            }, step=self.training_step)
+
+        return losses
 
     def evaluate_network(self, num_games: int = 40,
                          num_simulations: int = 100) -> float:
@@ -264,13 +280,24 @@ class Trainer:
         return wins / total_decisive
 
     def log_metrics(self, metrics: dict):
-        """Append metrics to the training log."""
+        """Append metrics to the training log and wandb."""
         metrics["timestamp"] = time.time()
         metrics["training_step"] = self.training_step
         metrics["iteration"] = self.iteration
 
         with open(self.training_log_path, "a") as f:
             f.write(json.dumps(metrics) + "\n")
+
+        if self.use_wandb:
+            # Flatten for wandb — prefix with phase for clarity
+            phase = metrics.get("phase", "")
+            wb_metrics = {}
+            for k, v in metrics.items():
+                if k in ("timestamp", "phase"):
+                    continue
+                if isinstance(v, (int, float)):
+                    wb_metrics[f"{phase}/{k}" if phase else k] = v
+            wandb.log(wb_metrics, step=self.training_step)
 
     def run_iteration(self):
         """Run one training iteration: self-play + training + evaluation."""
@@ -283,6 +310,7 @@ class Trainer:
 
         # Self-play phase — temporarily move best_network to GPU
         logger.info("Self-play phase...")
+        selfplay_start = time.time()
         self.best_network.to(self.device)
         examples = run_selfplay_batch(
             network=self.best_network,
@@ -292,6 +320,7 @@ class Trainer:
             device=self.device,
         )
         self.best_network.to("cpu")
+        selfplay_elapsed = time.time() - selfplay_start
 
         num_new_examples = len(examples)
         for planes, policy, value in examples:
@@ -302,6 +331,14 @@ class Trainer:
             torch.cuda.empty_cache()
         logger.info(f"Generated {num_new_examples} training examples. "
                     f"Buffer size: {len(self.replay_buffer)}")
+
+        if self.use_wandb:
+            wandb.log({
+                "selfplay/num_examples": num_new_examples,
+                "selfplay/buffer_size": len(self.replay_buffer),
+                "selfplay/elapsed_sec": selfplay_elapsed,
+                "selfplay/avg_game_length": num_new_examples / max(sp_cfg.get("num_games_per_iteration", 1), 1),
+            }, step=self.training_step)
 
         # Training phase
         logger.info("Training phase...")
@@ -340,6 +377,7 @@ class Trainer:
 
         # Evaluation phase — temporarily move best_network to GPU
         logger.info("Evaluation phase...")
+        eval_start = time.time()
         eval_games = train_cfg.get("eval_games", 40)
         eval_sims = train_cfg.get("eval_simulations", 50)
         eval_threshold = train_cfg.get("eval_threshold", 0.55)
@@ -347,18 +385,34 @@ class Trainer:
         win_rate = self.evaluate_network(num_games=eval_games,
                                           num_simulations=eval_sims)
         self.best_network.to("cpu")
+        eval_elapsed = time.time() - eval_start
         logger.info(f"Evaluation win rate: {win_rate:.3f}")
 
-        if win_rate >= eval_threshold:
+        accepted = win_rate >= eval_threshold
+        if accepted:
             logger.info("New best network accepted!")
             self.best_network.load_state_dict(self.network.state_dict())
             self.save_best()
         else:
             logger.info("New network rejected, keeping previous best.")
 
+        if self.use_wandb:
+            wandb.log({
+                "eval/win_rate": win_rate,
+                "eval/accepted": int(accepted),
+                "eval/elapsed_sec": eval_elapsed,
+            }, step=self.training_step)
+
         gc.collect()
         if self.device != "cpu":
             torch.cuda.empty_cache()
+
+        # Log GPU memory stats
+        if self.use_wandb and self.device != "cpu":
+            wandb.log({
+                "system/gpu_allocated_mb": torch.cuda.memory_allocated() / 1e6,
+                "system/gpu_reserved_mb": torch.cuda.memory_reserved() / 1e6,
+            }, step=self.training_step)
 
         # Log metrics
         self.log_metrics({
@@ -366,6 +420,7 @@ class Trainer:
             "num_examples": num_new_examples,
             "buffer_size": len(self.replay_buffer),
             "eval_win_rate": win_rate,
+            "accepted": int(accepted),
             **avg_losses,
         })
 

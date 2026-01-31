@@ -3,6 +3,7 @@
 
 Usage:
     python scripts/train.py [--config configs/training.yaml] [--device cuda]
+    python scripts/train.py --no-wandb   # disable W&B logging
 """
 
 import argparse
@@ -35,6 +36,32 @@ def setup_logging(log_dir: str):
     )
 
 
+def init_wandb(config: dict, device: str) -> bool:
+    """Initialize Weights & Biases. Returns True if successful."""
+    try:
+        import wandb
+    except ImportError:
+        return False
+
+    try:
+        wandb.init(
+            project="davechess",
+            config={
+                "network": config.get("network", {}),
+                "mcts": config.get("mcts", {}),
+                "selfplay": config.get("selfplay", {}),
+                "training": config.get("training", {}),
+                "device": device,
+            },
+            tags=["alphazero", "jetson"],
+            save_code=False,
+        )
+        return True
+    except Exception as e:
+        logging.getLogger("davechess.train").warning(f"W&B init failed: {e}")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="Train DaveChess AlphaZero")
     parser.add_argument("--config", type=str, default="configs/training.yaml",
@@ -43,6 +70,8 @@ def main():
                         help="Device (cpu/cuda, auto-detected if not specified)")
     parser.add_argument("--max-iterations", type=int, default=None,
                         help="Override max training iterations")
+    parser.add_argument("--no-wandb", action="store_true",
+                        help="Disable Weights & Biases logging")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -65,14 +94,27 @@ def main():
     logger.info(f"Using device: {device}")
     logger.info(f"Config: {args.config}")
 
-    trainer = Trainer(config, device=device)
+    # Initialize W&B
+    use_wandb = False
+    if not args.no_wandb:
+        use_wandb = init_wandb(config, device)
+        if use_wandb:
+            logger.info("W&B logging enabled — dashboard at https://wandb.ai")
+        else:
+            logger.info("W&B not available — logging to file only")
+
+    trainer = Trainer(config, device=device, use_wandb=use_wandb)
 
     param_count = sum(p.numel() for p in trainer.network.parameters())
     logger.info(f"Network parameters: {param_count:,}")
 
-    trainer.train(max_iterations=args.max_iterations)
-
-    logger.info("Training complete!")
+    try:
+        trainer.train(max_iterations=args.max_iterations)
+        logger.info("Training complete!")
+    finally:
+        if use_wandb:
+            import wandb
+            wandb.finish()
 
 
 if __name__ == "__main__":
