@@ -31,6 +31,9 @@ data/generated/
 .venv/
 venv/
 
+# W&B
+wandb/
+
 # OS
 .DS_Store
 Thumbs.db
