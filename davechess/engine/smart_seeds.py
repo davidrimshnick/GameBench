@@ -96,12 +96,12 @@ def generate_smart_seeds(num_games: int = 50, verbose: bool = False) -> ReplayBu
     """Generate seed games using smart heuristic strategies."""
     buffer = ReplayBuffer(max_size=100000)
 
-    # Mix of strategies for diverse games
+    # Mostly CommanderHunter matchups since those actually finish
     players = [
         ("Commander Hunter", CommanderHunter()),
-        ("Aggressive", HeuristicPlayer(exploration=0.05, aggression=0.9)),
-        ("Balanced", HeuristicPlayer(exploration=0.1, aggression=0.6)),
-        ("Smart MCTS", SmartMCTS(num_simulations=15)),
+        ("Commander Hunter", CommanderHunter()),
+        ("Commander Hunter", CommanderHunter()),
+        ("Aggressive", HeuristicPlayer(exploration=0.05, aggression=0.95)),
     ]
 
     game_count = 0
@@ -112,7 +112,6 @@ def generate_smart_seeds(num_games: int = 50, verbose: bool = False) -> ReplayBu
         print(f"Generating {num_games} smart seed games...")
 
     while game_count < num_games:
-        # Pick two players
         white_name, white_player = random.choice(players)
         black_name, black_player = random.choice(players)
 
@@ -122,6 +121,8 @@ def generate_smart_seeds(num_games: int = 50, verbose: bool = False) -> ReplayBu
         # Skip games that hit max length
         if len(moves) >= 100:
             skipped += 1
+            if verbose:
+                print(f"  [skip {skipped}] {white_name} vs {black_name}: {len(moves)} moves (max length) | {game_count}/{num_games} done", flush=True)
             continue
 
         # Convert to training examples
@@ -144,8 +145,9 @@ def generate_smart_seeds(num_games: int = 50, verbose: bool = False) -> ReplayBu
 
         game_count += 1
 
-        if verbose and (game_count % 10 == 0 or game_count == num_games):
-            print(f"  Generated {game_count}/{num_games} games ({total_positions} positions)")
+        if verbose:
+            winner_str = "White" if winner == Player.WHITE else "Black" if winner == Player.BLACK else "Draw"
+            print(f"  [game {game_count}/{num_games}] {white_name} vs {black_name}: {len(moves)} moves, {winner_str} | {total_positions} positions, {skipped} skipped", flush=True)
 
     if verbose:
         print(f"Complete: {game_count} games, {total_positions} positions, {skipped} skipped")
