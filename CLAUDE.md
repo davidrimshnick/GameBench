@@ -13,7 +13,7 @@ GameBench is a benchmark measuring how efficiently LLMs learn novel strategic re
 # Install with development dependencies
 pip install -e ".[dev]"
 
-# Run all tests (110 tests across 5 suites)
+# Run all tests (142 tests across 6 suites)
 pytest
 
 # Run specific test suite
@@ -40,6 +40,21 @@ python scripts/train.py --config configs/training.yaml  # Automatically resumes
 
 # If W&B fails to connect, check credentials:
 wandb login  # API key is in ~/.netrc
+```
+
+### Agentic Benchmark
+```bash
+# Run agentic benchmark (single budget)
+python scripts/run_agentic_benchmark.py --model gpt-4 --provider openai --budget 100000
+
+# Run at multiple budget levels (100K, 1M, 10M)
+python scripts/run_agentic_benchmark.py --model claude-3-5-sonnet-20241022 --provider anthropic --multi-budget
+
+# Use config file
+python scripts/run_agentic_benchmark.py --config configs/agentic_benchmark.yaml
+
+# Calibrate opponent pool (generates checkpoints/calibration.json)
+python scripts/calibrate_opponents.py --checkpoint checkpoints/best.pt
 ```
 
 ### Game Analysis & Seed Generation
@@ -126,12 +141,41 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 - Replay buffer at 100K positions uses ~1.1GB RAM — must load arrays sequentially to avoid OOM
 - Always call `torch.cuda.empty_cache()` before switching between self-play and training phases
 
+### Agentic Benchmark Architecture
+
+The agentic benchmark gives an LLM a token budget and tools, then measures ELO achieved through autonomous learning:
+
+1. **Learning Phase**: Agent autonomously studies GM games and plays practice games using 4 tools:
+   - `study_games(n)` — retrieve N grandmaster games in DCN notation
+   - `start_practice_game(opponent_elo)` — start a game against calibrated opponent
+   - `play_move(game_id, move_dcn)` — play a move, get opponent's response
+   - `get_game_state(game_id)` — view board, legal moves, history
+
+2. **Evaluation Phase**: Sequential Glicko-2 testing against calibrated opponents. Harness controls opponent selection (near estimated ELO for max info gain). Stops when rating deviation < 50 or max 200 games.
+
+3. **Scoring**: Log-scale AUC across budget levels (100K/1M/10M tokens), normalized to 0-100.
+
+Key design decisions:
+- **Rolling context window** (20 messages): forces agents to use external memory at large budgets
+- **Eval from same budget**: agent must budget tokens wisely between learning and evaluation
+- **Opponent pool**: ELO-to-MCTS-sims mapping with log-space interpolation between calibrated points
+- **Move-by-move play**: agent plays each move individually via tool calls (not pre-committed strategies)
+
+Key files:
+- `davechess/benchmark/agent_harness.py` — Core agentic loop with rolling window
+- `davechess/benchmark/sequential_eval.py` — Glicko-2 adaptive ELO measurement
+- `davechess/benchmark/agentic_protocol.py` — Orchestrator (learning → eval → scoring)
+- `davechess/benchmark/tools.py` — Tool definitions and executor
+- `davechess/benchmark/opponent_pool.py` — Calibrated opponent ELO interpolation
+- `davechess/benchmark/token_tracker.py` — Token budget tracking
+- `configs/agentic_benchmark.yaml` — Full configuration
+
 ## File Structure Notes
 
 - `davechess/game/` - Core game engine, state representation, rules
 - `davechess/engine/` - Neural network, MCTS, training loop, heuristic players
 - `davechess/data/` - Game generation, ELO calibration
-- `davechess/benchmark/` - LLM evaluation framework
+- `davechess/benchmark/` - LLM evaluation framework (legacy static + agentic)
 - `configs/` - YAML configurations for all components
 - `checkpoints/` - Model checkpoints and seed game storage (gitignored, use W&B artifacts)
 - `wandb/` - Weights & Biases tracking (auto-generated, gitignored)
