@@ -153,6 +153,19 @@ class Trainer:
         if save_buffer:
             buf_path = self.checkpoint_dir / f"{name}_buffer.npz"
             self.replay_buffer.save_data(str(buf_path))
+            # Backup buffer to W&B so it survives OOM crashes
+            if self.use_wandb:
+                artifact = wandb.Artifact(
+                    "replay-buffer",
+                    type="replay-buffer",
+                    metadata={
+                        "step": self.training_step,
+                        "iteration": self.iteration,
+                        "size": len(self.replay_buffer),
+                    },
+                )
+                artifact.add_file(str(buf_path))
+                wandb.log_artifact(artifact)
 
         return path
 
@@ -197,11 +210,24 @@ class Trainer:
         if self.device != "cpu":
             torch.cuda.empty_cache()
 
-        # Try loading replay buffer
+        # Try loading replay buffer (local file first, then W&B artifact fallback)
         buf_path = path.replace(".pt", "_buffer.npz")
         if os.path.exists(buf_path):
             self.replay_buffer.load_data(buf_path)
             logger.info(f"Loaded replay buffer: {len(self.replay_buffer)} positions")
+        elif self.use_wandb:
+            try:
+                artifact = wandb.use_artifact("replay-buffer:latest")
+                artifact_dir = artifact.download()
+                # Find the npz file in the artifact
+                for f in os.listdir(artifact_dir):
+                    if f.endswith("_buffer.npz"):
+                        self.replay_buffer.load_data(os.path.join(artifact_dir, f))
+                        logger.info(f"Loaded replay buffer from W&B artifact: "
+                                    f"{len(self.replay_buffer)} positions")
+                        break
+            except Exception as e:
+                logger.warning(f"Could not load replay buffer from W&B: {e}")
 
         # Load best network on CPU (moved to GPU only when needed)
         best_path = self.checkpoint_dir / "best.pt"
