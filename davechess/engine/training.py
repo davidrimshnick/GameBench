@@ -146,6 +146,8 @@ class Trainer:
         }
         if self.scaler is not None:
             checkpoint["scaler_state"] = self.scaler.state_dict()
+        if self.use_wandb:
+            checkpoint["wandb_run_id"] = wandb.run.id
 
         torch.save(checkpoint, path)
         logger.info(f"Saved checkpoint: {path}")

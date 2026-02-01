@@ -36,16 +36,38 @@ def setup_logging(log_dir: str):
     )
 
 
+def get_wandb_run_id(checkpoint_dir: str) -> str | None:
+    """Try to recover W&B run ID from the latest checkpoint."""
+    from pathlib import Path
+    checkpoints = sorted(Path(checkpoint_dir).glob("step_*.pt"),
+                         key=lambda p: p.stat().st_mtime)
+    if not checkpoints:
+        return None
+    try:
+        ckpt = torch.load(str(checkpoints[-1]), map_location="cpu", weights_only=False)
+        return ckpt.get("wandb_run_id")
+    except Exception:
+        return None
+
+
 def init_wandb(config: dict, device: str) -> bool:
-    """Initialize Weights & Biases. Returns True if successful."""
+    """Initialize Weights & Biases. Returns True if successful.
+
+    Resumes the previous W&B run if a run ID is found in the latest checkpoint.
+    """
     try:
         import wandb
     except ImportError:
         return False
 
+    checkpoint_dir = config.get("paths", {}).get("checkpoint_dir", "checkpoints")
+    run_id = get_wandb_run_id(checkpoint_dir)
+
     try:
         wandb.init(
             project="davechess",
+            id=run_id,
+            resume="allow",
             config={
                 "network": config.get("network", {}),
                 "mcts": config.get("mcts", {}),
