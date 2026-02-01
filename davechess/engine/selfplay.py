@@ -65,13 +65,39 @@ class ReplayBuffer:
             json.dump(meta, f)
 
     def save_data(self, path: str):
-        """Save full buffer data to disk."""
-        np.savez_compressed(
-            path,
-            planes=np.stack(list(self.planes)) if self.planes else np.empty((0, 12, 8, 8)),
-            policies=np.stack(list(self.policies)) if self.policies else np.empty((0, POLICY_SIZE)),
-            values=np.array(list(self.values), dtype=np.float32) if self.values else np.empty(0),
-        )
+        """Save full buffer data to disk, one array at a time to limit peak memory.
+
+        Uses a temp directory with individual .npy files, then combines into a
+        single compressed .npz to avoid holding multiple large arrays at once.
+        """
+        import tempfile
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # Save each array individually so only one is in memory at a time
+            arr = np.stack(list(self.planes)) if self.planes else np.empty((0, 12, 8, 8))
+            planes_path = os.path.join(tmp, "planes.npy")
+            np.save(planes_path, arr)
+            del arr
+            gc.collect()
+
+            arr = np.stack(list(self.policies)) if self.policies else np.empty((0, POLICY_SIZE))
+            policies_path = os.path.join(tmp, "policies.npy")
+            np.save(policies_path, arr)
+            del arr
+            gc.collect()
+
+            arr = np.array(list(self.values), dtype=np.float32) if self.values else np.empty(0)
+            values_path = os.path.join(tmp, "values.npy")
+            np.save(values_path, arr)
+            del arr
+            gc.collect()
+
+            # Combine into compressed npz (same format as savez_compressed)
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(planes_path, "planes.npy")
+                zf.write(policies_path, "policies.npy")
+                zf.write(values_path, "values.npy")
 
     def load_data(self, path: str):
         """Load buffer data from disk, one array at a time to limit peak memory.
@@ -80,7 +106,6 @@ class ReplayBuffer:
         By loading/consuming/deleting one key at a time, peak memory is
         ~max(single_array + deque) rather than all arrays at once.
         """
-        import gc
         data = np.load(path)
 
         values_arr = data["values"]

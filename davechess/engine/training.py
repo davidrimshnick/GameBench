@@ -126,8 +126,14 @@ class Trainer:
             self.tb_writer = SummaryWriter(log_dir=str(tb_dir))
             logger.info(f"TensorBoard logging to {tb_dir}")
 
-    def save_checkpoint(self, tag: str = ""):
-        """Save a training checkpoint."""
+    def save_checkpoint(self, tag: str = "", save_buffer: bool = False):
+        """Save a training checkpoint.
+
+        Args:
+            tag: Optional tag for the checkpoint name.
+            save_buffer: If True, also save the replay buffer (expensive on Jetson).
+                Only set this for end-of-iteration or error checkpoints.
+        """
         name = f"step_{self.training_step}" if not tag else tag
         path = self.checkpoint_dir / f"{name}.pt"
 
@@ -144,9 +150,9 @@ class Trainer:
         torch.save(checkpoint, path)
         logger.info(f"Saved checkpoint: {path}")
 
-        # Save replay buffer data alongside
-        buf_path = self.checkpoint_dir / f"{name}_buffer.npz"
-        self.replay_buffer.save_data(str(buf_path))
+        if save_buffer:
+            buf_path = self.checkpoint_dir / f"{name}_buffer.npz"
+            self.replay_buffer.save_data(str(buf_path))
 
         return path
 
@@ -505,7 +511,7 @@ class Trainer:
         if len(self.replay_buffer) < min_buffer:
             logger.info(f"Buffer size {len(self.replay_buffer)} < {min_buffer}, "
                         "skipping training this iteration")
-            self.save_checkpoint()
+            self.save_checkpoint(save_buffer=True)
             return
 
         logger.info("Training phase...")
@@ -632,8 +638,8 @@ class Trainer:
             **avg_losses,
         })
 
-        # Save checkpoint at end of iteration
-        self.save_checkpoint()
+        # Save checkpoint at end of iteration (with buffer for full resume)
+        self.save_checkpoint(save_buffer=True)
 
     def train(self, max_iterations: Optional[int] = None):
         """Run the full training loop."""
@@ -694,9 +700,9 @@ class Trainer:
                 self.run_iteration()
             except KeyboardInterrupt:
                 logger.info("Training interrupted. Saving checkpoint...")
-                self.save_checkpoint(tag="interrupted")
+                self.save_checkpoint(tag="interrupted", save_buffer=True)
                 break
             except Exception as e:
                 logger.error(f"Error during iteration {self.iteration}: {e}")
-                self.save_checkpoint(tag="error")
+                self.save_checkpoint(tag="error", save_buffer=True)
                 raise
