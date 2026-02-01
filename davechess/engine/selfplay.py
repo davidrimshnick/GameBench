@@ -42,8 +42,8 @@ class ReplayBuffer:
 
     def push(self, planes: np.ndarray, policy: np.ndarray, value: float):
         """Add a single training example."""
-        self.planes.append(planes)
-        self.policies.append(policy)
+        self.planes.append(planes.astype(np.float32, copy=False))
+        self.policies.append(policy.astype(np.float32, copy=False))
         self.values.append(value)
 
     def sample(self, batch_size: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -64,50 +64,66 @@ class ReplayBuffer:
         with open(path, "w") as f:
             json.dump(meta, f)
 
-    def save_data(self, path: str):
-        """Save full buffer data to disk, one array at a time to limit peak memory.
+    def save_data(self, path: str, chunk_size: int = 5000):
+        """Save full buffer data to disk using chunked writes to limit peak memory.
 
-        Uses a temp directory with individual .npy files, then combines into a
-        single compressed .npz to avoid holding multiple large arrays at once.
+        Writes arrays in chunks to avoid allocating the full buffer as a single
+        contiguous array. Peak temp memory is ~chunk_size worth of data (~85MB
+        for 5K positions) instead of the full buffer (~1GB+ at 60K positions).
         """
         import tempfile
         import zipfile
 
+        n = len(self)
+        if n == 0:
+            np.savez_compressed(path, planes=np.empty((0, 15, 8, 8)),
+                                policies=np.empty((0, POLICY_SIZE)),
+                                values=np.empty(0))
+            return
+
         with tempfile.TemporaryDirectory() as tmp:
-            # Save each array individually so only one is in memory at a time
-            arr = np.stack(list(self.planes)) if self.planes else np.empty((0, 15, 8, 8))
+            # Write each array in chunks using memory-mapped files
             planes_path = os.path.join(tmp, "planes.npy")
-            np.save(planes_path, arr)
-            del arr
+            planes_mmap = np.lib.format.open_memmap(
+                planes_path, mode="w+", dtype=np.float32, shape=(n, 15, 8, 8))
+            for start in range(0, n, chunk_size):
+                end = min(start + chunk_size, n)
+                chunk = np.stack([self.planes[i] for i in range(start, end)])
+                planes_mmap[start:end] = chunk
+            del planes_mmap, chunk
             gc.collect()
 
-            arr = np.stack(list(self.policies)) if self.policies else np.empty((0, POLICY_SIZE))
             policies_path = os.path.join(tmp, "policies.npy")
-            np.save(policies_path, arr)
-            del arr
+            policies_mmap = np.lib.format.open_memmap(
+                policies_path, mode="w+", dtype=np.float32, shape=(n, POLICY_SIZE))
+            for start in range(0, n, chunk_size):
+                end = min(start + chunk_size, n)
+                chunk = np.stack([self.policies[i] for i in range(start, end)])
+                policies_mmap[start:end] = chunk
+            del policies_mmap, chunk
             gc.collect()
 
-            arr = np.array(list(self.values), dtype=np.float32) if self.values else np.empty(0)
             values_path = os.path.join(tmp, "values.npy")
+            arr = np.array(list(self.values), dtype=np.float32)
             np.save(values_path, arr)
             del arr
             gc.collect()
 
-            # Combine into compressed npz (same format as savez_compressed)
+            # Combine into compressed npz
             with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
                 zf.write(planes_path, "planes.npy")
                 zf.write(policies_path, "policies.npy")
                 zf.write(values_path, "values.npy")
 
-    def load_data(self, path: str):
-        """Load buffer data from disk, one array at a time to limit peak memory.
+    def load_data(self, path: str, chunk_size: int = 5000):
+        """Load buffer data from disk using chunked reads to limit peak memory.
 
-        For compressed NPZ, each data[key] access decompresses the full array.
-        By loading/consuming/deleting one key at a time, peak memory is
-        ~max(single_array + deque) rather than all arrays at once.
+        Processes each array in chunks, deleting consumed slices to keep peak
+        memory at ~chunk_size worth of data rather than the full array.
         """
         data = np.load(path)
 
+        # Values are small — load all at once
         values_arr = data["values"]
         n = len(values_arr)
         for i in range(n):
@@ -115,15 +131,25 @@ class ReplayBuffer:
         del values_arr
         gc.collect()
 
+        # Planes: load full array then consume in chunks to free memory gradually
         planes_arr = data["planes"]
-        for i in range(n):
-            self.planes.append(planes_arr[i])
+        for start in range(0, n, chunk_size):
+            end = min(start + chunk_size, n)
+            chunk = planes_arr[start:end]
+            for i in range(len(chunk)):
+                self.planes.append(chunk[i].astype(np.float32, copy=False))
+            del chunk
         del planes_arr
         gc.collect()
 
+        # Policies: same chunked approach
         policies_arr = data["policies"]
-        for i in range(n):
-            self.policies.append(policies_arr[i])
+        for start in range(0, n, chunk_size):
+            end = min(start + chunk_size, n)
+            chunk = policies_arr[start:end]
+            for i in range(len(chunk)):
+                self.policies.append(chunk[i].astype(np.float32, copy=False))
+            del chunk
         del policies_arr
         del data
         gc.collect()

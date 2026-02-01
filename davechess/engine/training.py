@@ -45,6 +45,24 @@ from davechess.engine.smart_seeds import generate_smart_seeds
 logger = logging.getLogger("davechess.training")
 
 
+def _log_memory(label: str):
+    """Log current RSS and GPU memory at a phase transition point."""
+    try:
+        import resource
+        rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # Linux: KB→MB
+        msg = f"[mem] {label}: RSS={rss_mb:.0f}MB"
+    except Exception:
+        msg = f"[mem] {label}"
+    try:
+        if torch.cuda.is_available():
+            alloc = torch.cuda.memory_allocated() / 1e6
+            reserved = torch.cuda.memory_reserved() / 1e6
+            msg += f", GPU alloc={alloc:.0f}MB, reserved={reserved:.0f}MB"
+    except Exception:
+        pass
+    logger.info(msg)
+
+
 def adaptive_simulations(elo: float, min_sims: int = 2, max_sims: int = 200,
                          elo_min: float = 0, elo_max: float = 2000) -> int:
     """Compute MCTS sim count from ELO via log-scale interpolation.
@@ -362,6 +380,10 @@ class Trainer:
         total_decisive = wins + losses
         win_rate = wins / total_decisive if total_decisive > 0 else 0.5
 
+        # Explicitly free MCTS trees (circular parent↔child refs)
+        del current_mcts, best_mcts
+        gc.collect()
+
         return {
             "win_rate": win_rate,
             "wins": wins,
@@ -426,13 +448,15 @@ class Trainer:
                     pickle.dump(smart_buffer, f)
                 logger.info(f"Saved seed games to {seed_file}")
 
-            # Copy smart seeds to our replay buffer
+            # Copy smart seeds to our replay buffer, then free the pickle data
             for i in range(total_positions):
                 self.replay_buffer.push(
                     smart_buffer.planes[i],
                     smart_buffer.policies[i],
                     smart_buffer.values[i]
                 )
+            del smart_buffer
+            gc.collect()
 
             logger.info(f"Added {total_positions} positions from smart seed games")
         else:
@@ -479,11 +503,15 @@ class Trainer:
         self.iteration += 1
         iteration_start = time.time()
         logger.info(f"=== Iteration {self.iteration} ===")
+        _log_memory("iteration_start")
 
         # Periodic high-quality game injection (every 5 iterations)
+        # Explicitly free the pickle after copying to avoid holding 233MB
         if self.iteration > 1 and self.iteration % 5 == 0:
-            logger.info(f"Adding high-quality MCTS games at iteration {self.iteration}")
+            logger.info(f"Adding high-quality seed games at iteration {self.iteration}")
             self.seed_buffer(num_games=20)
+            gc.collect()
+            _log_memory("after_seed_injection")
 
         # Self-play phase — use current training network (not best_network)
         # This ensures self-play data always matches the network being trained,
@@ -508,6 +536,7 @@ class Trainer:
         gc.collect()
         if self.device != "cpu":
             torch.cuda.empty_cache()
+        _log_memory("after_selfplay")
         logger.info(f"Generated {num_new_examples} training examples. "
                     f"Buffer size: {len(self.replay_buffer)}")
         logger.info(f"Self-play stats: W:{sp_stats['white_wins']} B:{sp_stats['black_wins']} "
@@ -587,12 +616,18 @@ class Trainer:
                 logger.info(f"Reduced LR to {param_group['lr']}")
 
         # Evaluation phase — temporarily move best_network to GPU
+        # Networks are ~3MB each, so dual-GPU is fine. Clear cache first
+        # to defragment after training phase.
         eval_start = time.time()
         eval_games = train_cfg.get("eval_games", 40)
         base_eval_sims = train_cfg.get("eval_simulations", 50)
         eval_sims = adaptive_simulations(self.best_elo_estimate, min_sims=30, max_sims=base_eval_sims)
+        _log_memory("before_eval")
         logger.info(f"Evaluation phase... (adaptive sims: {eval_sims})")
         eval_threshold = train_cfg.get("eval_threshold", 0.55)
+        gc.collect()
+        if self.device != "cpu":
+            torch.cuda.empty_cache()
         self.best_network.to(self.device)
         eval_results = self.evaluate_network(num_games=eval_games,
                                               num_simulations=eval_sims)
@@ -690,7 +725,9 @@ class Trainer:
         })
 
         # Save checkpoint at end of iteration (with buffer for full resume)
+        _log_memory("before_checkpoint_save")
         self.save_checkpoint(save_buffer=True)
+        _log_memory("after_checkpoint_save")
 
     def train(self, max_iterations: Optional[int] = None):
         """Run the full training loop."""

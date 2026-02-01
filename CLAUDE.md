@@ -123,14 +123,20 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 3. **Training Instability**: Early iterations produce all draws/max-length games
    - Solution: Smart seeds with strategic play, adaptive simulation counts
 
-4. **Replay Buffer OOM on Checkpoint Load**: The compressed NPZ buffer (~5MB on disk) decompresses to ~1.5GB (policies alone are 1.03GB at 96K×2816). Loading all arrays at once caused OOM on the 8GB Jetson.
-   - Solution: `load_data()` loads/deletes arrays sequentially so peak memory is ~max(single_array) not sum(all_arrays)
+4. **Replay Buffer OOM on Checkpoint Load/Save**: The buffer at 50K+ positions contains ~960MB of planes and ~563MB of policies. Stacking the full buffer into a contiguous array for save/load caused OOM on the 8GB Jetson.
+   - Solution: Chunked save using memory-mapped files (5K positions per chunk, ~85MB peak). Chunked load processes arrays in slices. All buffer data enforced as float32 on push to prevent accidental float64 doubling.
 
 5. **CUDA Fragmentation After Self-play**: Higher adaptive sims fragment GPU memory, causing `NVML_SUCCESS` assert failures when transitioning to training.
-   - Solution: `torch.cuda.empty_cache()` before training phase
+   - Solution: `torch.cuda.empty_cache()` before training phase and before eval phase
 
 6. **Temperature Threshold Too Low**: At `temperature_threshold: 30`, the model played near-deterministically after move 30 with noisy policies, entrenching defensive patterns.
    - Solution: Raised to 60 to maintain exploration longer in self-play
+
+7. **Seed Re-injection Memory Spike**: Periodic seed injection (every 5 iterations) loads a 233MB pickle. Without cleanup, the pickle data persists in memory alongside the replay buffer.
+   - Solution: Explicit `del smart_buffer; gc.collect()` after copying seeds to replay buffer
+
+8. **Memory Diagnostics**: Silent OOM kills during training are hard to diagnose on Jetson (kernel kills process without error in app logs).
+   - Solution: `_log_memory()` helper logs RSS and GPU memory at phase transitions (after self-play, before/after eval, before/after checkpoint save). Explicit `del current_mcts, best_mcts; gc.collect()` after eval to free MCTS circular references.
 
 ### Hardware Constraints (Jetson Orin Nano)
 
@@ -138,8 +144,11 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 - Sequential GPU inference only (no multiprocessing)
 - Batch size 128, 5 ResBlocks, 64 filters optimized for memory
 - Training uses mixed precision (FP16) when available
-- Replay buffer at 100K positions uses ~1.1GB RAM — must load arrays sequentially to avoid OOM
-- Always call `torch.cuda.empty_cache()` before switching between self-play and training phases
+- Replay buffer capped at 50K positions (~940MB). Save/load uses chunked I/O (5K chunks) to avoid temp array spikes
+- All buffer data enforced as float32 on push — prevents accidental float64 doubling
+- Always call `torch.cuda.empty_cache()` before switching between self-play, training, and eval phases
+- Memory usage logged at phase transitions (`_log_memory()`) for OOM diagnosis
+- MCTS trees explicitly freed after eval via `del` + `gc.collect()` (circular parent↔child refs)
 
 ### Agentic Benchmark Architecture
 
