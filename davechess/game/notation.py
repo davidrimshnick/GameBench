@@ -58,8 +58,8 @@ def move_to_dcn(state: GameState, move: Move) -> str:
 
 
 # Regex patterns for parsing
-_MOVE_RE = re.compile(r"^([CWRB])([a-h][1-8])([-x])([a-h][1-8])$")
-_DEPLOY_RE = re.compile(r"^\+([WRB])@([a-h][1-8])$")
+_MOVE_RE = re.compile(r"^([CWRBL])([a-h][1-8])([-x])([a-h][1-8])$")
+_DEPLOY_RE = re.compile(r"^\+([WRBL])@([a-h][1-8])$")
 _BOMBARD_RE = re.compile(r"^B([a-h][1-8])~([a-h][1-8])$")
 
 

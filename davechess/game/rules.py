@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from davechess.game.board import BOARD_SIZE, RESOURCE_NODES
+from davechess.game.board import BOARD_SIZE, GOLD_NODES, POWER_NODES, ALL_NODES, RESOURCE_NODES
 from davechess.game.state import (
     BASE_STRENGTH, DEPLOY_COST, GameState, Move, MoveStep, Deploy,
     BombardAttack, Piece, PieceType, Player,
@@ -16,8 +16,11 @@ ORTHOGONAL = [(0, 1), (0, -1), (1, 0), (-1, 0)]
 ALL_DIRS = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
 # Straight-line directions (orthogonal + diagonal)
 STRAIGHT_DIRS = ALL_DIRS
+DIAGONAL_DIRS = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
 
-_RESOURCE_SET = frozenset(RESOURCE_NODES)
+_GOLD_SET = frozenset(GOLD_NODES)
+_POWER_SET = frozenset(POWER_NODES)
+_ALL_NODES_SET = frozenset(ALL_NODES)
 _ORTHOGONAL_SET = frozenset(ORTHOGONAL)
 
 
@@ -28,11 +31,10 @@ def _in_bounds(r: int, c: int) -> bool:
 def get_resource_income(state: GameState, player: Player) -> int:
     """Calculate resource income for a player.
 
-    +1 per resource node that the player has a piece on or orthogonally adjacent to.
+    +1 per Gold node that the player has a piece on or orthogonally adjacent to.
     """
     income = 0
-    for nr, nc in RESOURCE_NODES:
-        # Check if player has a piece on or orthogonally adjacent to this node
+    for nr, nc in GOLD_NODES:
         if _player_controls_node(state, player, nr, nc):
             income += 1
     return income
@@ -61,7 +63,7 @@ def _count_controlled_nodes(state: GameState, player: Player) -> int:
     """
     opponent = Player(1 - player)
     count = 0
-    for nr, nc in RESOURCE_NODES:
+    for nr, nc in ALL_NODES:
         if _player_controls_node(state, player, nr, nc) and \
            not _player_controls_node(state, opponent, nr, nc):
             count += 1
@@ -83,14 +85,24 @@ def _get_warrior_strength(state: GameState, row: int, col: int, player: Player) 
     return strength
 
 
+def _get_power_node_bonus(row: int, col: int) -> int:
+    """Return +1 if (row, col) is on or adjacent (8-directional) to a Power node."""
+    for pr, pc in POWER_NODES:
+        if abs(row - pr) <= 1 and abs(col - pc) <= 1:
+            return 1
+    return 0
+
+
 def _get_piece_strength(state: GameState, row: int, col: int) -> int:
-    """Get total strength of piece at (row, col)."""
+    """Get total strength of piece at (row, col), including Power node bonus."""
     piece = state.board[row][col]
     if piece is None:
         return 0
     if piece.piece_type == PieceType.WARRIOR:
-        return _get_warrior_strength(state, row, col, piece.player)
-    return BASE_STRENGTH[piece.piece_type]
+        base = _get_warrior_strength(state, row, col, piece.player)
+    else:
+        base = BASE_STRENGTH[piece.piece_type]
+    return base + _get_power_node_bonus(row, col)
 
 
 def _find_commander(state: GameState, player: Player) -> tuple[int, int] | None:
@@ -131,6 +143,21 @@ def _is_square_attacked(state: GameState, tr: int, tc: int, by_player: Player) -
                 if _in_bounds(r1, c1) and board[r1][c1] is None:
                     return True
 
+    # Lancer: diagonal directions, distance 1-4, can jump over one piece
+    for dr, dc in DIAGONAL_DIRS:
+        blocking = 0
+        for dist in range(1, 5):
+            r, c = tr + dr * dist, tc + dc * dist
+            if not _in_bounds(r, c):
+                break
+            p = board[r][c]
+            if p is not None:
+                if p.player == by_player and p.piece_type == PieceType.LANCER and blocking <= 1:
+                    return True
+                blocking += 1
+                if blocking > 1:
+                    break
+
     return False
 
 
@@ -162,6 +189,8 @@ def _generate_pseudo_legal_moves(state: GameState) -> list[Move]:
                 _gen_rider_moves(state, row, col, player, moves)
             elif piece.piece_type == PieceType.BOMBARD:
                 _gen_bombard_moves(state, row, col, player, moves)
+            elif piece.piece_type == PieceType.LANCER:
+                _gen_lancer_moves(state, row, col, player, moves)
 
     _gen_deploy_moves(state, player, moves)
     return moves
@@ -383,6 +412,33 @@ def _gen_bombard_moves(state: GameState, row: int, col: int, player: Player,
             moves.append(BombardAttack((row, col), (target_r, target_c)))
 
 
+def _gen_lancer_moves(state: GameState, row: int, col: int, player: Player,
+                       moves: list[Move]):
+    """Lancer: diagonal up to 4 squares, can jump over exactly one piece (any color)."""
+    for dr, dc in DIAGONAL_DIRS:
+        pieces_in_way = 0
+        for dist in range(1, 5):
+            r2, c2 = row + dr * dist, col + dc * dist
+            if not _in_bounds(r2, c2):
+                break
+            occupant = state.board[r2][c2]
+            if occupant is None:
+                # Empty: can land here
+                moves.append(MoveStep((row, col), (r2, c2)))
+            elif occupant.player == player:
+                # Friendly piece: jump over if first, blocked if second
+                pieces_in_way += 1
+                if pieces_in_way > 1:
+                    break
+            else:
+                # Enemy piece: can capture, then this square blocks further
+                if pieces_in_way <= 1:
+                    moves.append(MoveStep((row, col), (r2, c2), is_capture=True))
+                pieces_in_way += 1
+                if pieces_in_way > 1:
+                    break
+
+
 def _gen_deploy_moves(state: GameState, player: Player, moves: list[Move]):
     """Generate deployment moves onto back 2 rows."""
     if player == Player.WHITE:
@@ -390,7 +446,7 @@ def _gen_deploy_moves(state: GameState, player: Player, moves: list[Move]):
     else:
         deploy_rows = [6, 7]
 
-    for piece_type in (PieceType.WARRIOR, PieceType.RIDER, PieceType.BOMBARD):
+    for piece_type in (PieceType.WARRIOR, PieceType.RIDER, PieceType.BOMBARD, PieceType.LANCER):
         cost = DEPLOY_COST[piece_type]
         if state.resources[player] < cost:
             continue
@@ -585,14 +641,14 @@ def check_winner(state: GameState) -> tuple[bool, Optional[Player]]:
 
 
 def get_controlled_nodes(state: GameState, player: Player) -> list[tuple[int, int]]:
-    """Return list of resource nodes controlled by player (on or adjacent)."""
-    return [(nr, nc) for nr, nc in RESOURCE_NODES
+    """Return list of all nodes controlled by player (on or adjacent)."""
+    return [(nr, nc) for nr, nc in ALL_NODES
             if _player_controls_node(state, player, nr, nc)]
 
 
 def get_exclusive_nodes(state: GameState, player: Player) -> list[tuple[int, int]]:
-    """Return list of resource nodes exclusively controlled by player."""
+    """Return list of all nodes exclusively controlled by player."""
     opponent = Player(1 - player)
-    return [(nr, nc) for nr, nc in RESOURCE_NODES
+    return [(nr, nc) for nr, nc in ALL_NODES
             if _player_controls_node(state, player, nr, nc)
             and not _player_controls_node(state, opponent, nr, nc)]

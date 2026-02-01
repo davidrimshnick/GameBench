@@ -75,7 +75,7 @@ class ReplayBuffer:
 
         with tempfile.TemporaryDirectory() as tmp:
             # Save each array individually so only one is in memory at a time
-            arr = np.stack(list(self.planes)) if self.planes else np.empty((0, 12, 8, 8))
+            arr = np.stack(list(self.planes)) if self.planes else np.empty((0, 15, 8, 8))
             planes_path = os.path.join(tmp, "planes.npy")
             np.save(planes_path, arr)
             del arr

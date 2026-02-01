@@ -14,11 +14,14 @@ An original strategic board game on an 8x8 grid combining positional resource co
 
 ### Board & Setup
 
-Each side starts with 6 pieces on their back two rows: a Commander (king), 4 Warriors (infantry), and a Rider (cavalry). The board has **8 resource nodes** at fixed symmetric positions — 2 near each side, 4 in the center.
+Each side starts with 6 pieces on their back two rows: a Commander (king), 4 Warriors (infantry), and a Rider (cavalry). The board has two types of nodes at fixed symmetric positions:
+
+- **Gold nodes** ($) — 4 in the center. Control these for resource income.
+- **Power nodes** (^) — 2 near each side. Pieces near these get +1 combat strength.
 
 ### Resources & Deployment
 
-Each turn, you earn **+1 resource for each node you have a piece on or adjacent to** (orthogonally). You spend resources to **deploy new pieces** onto empty squares in your back two rows. This is the core economic loop: control nodes → earn resources → deploy reinforcements → control more nodes.
+Each turn, you earn **+1 resource for each Gold node you have a piece on or adjacent to** (orthogonally). You spend resources to **deploy new pieces** onto empty squares in your back two rows. This is the core economic loop: control Gold nodes → earn resources → deploy reinforcements → control more territory.
 
 | Piece | Symbol | Deploy Cost | Move | Strength |
 |-------|--------|-------------|------|----------|
@@ -26,12 +29,21 @@ Each turn, you earn **+1 resource for each node you have a piece on or adjacent 
 | Warrior | W | 2 | 1 square, orthogonal | 1 (+1 per adjacent friendly Warrior) |
 | Rider | R | 4 | Up to 2 squares, straight line | 2 |
 | Bombard | B | 5 | 1 square, any direction | 0 (melee) |
+| Lancer | L | 6 | Up to 4 squares, diagonal only, can jump one piece | 3 |
+
+### Node Types
+
+**Gold nodes** provide economic power — each one you control gives +1 resource per turn.
+
+**Power nodes** provide military power — any piece on or adjacent to a Power node gets **+1 strength** in combat. This creates a strategic tension: Gold nodes fuel your economy, Power nodes strengthen your army. You must decide where to invest your forces.
 
 ### Combat
 
-Move onto an enemy piece to attack. Compare total strength — higher wins, tie removes both. **Warrior clustering** is key: a lone Warrior has strength 1, but three adjacent Warriors each have strength 3.
+Move onto an enemy piece to attack. Compare total strength (including Power node bonus) — higher wins, tie removes both. **Warrior clustering** is key: a lone Warrior has strength 1, but three adjacent Warriors each have strength 3.
 
 **Bombard special ability:** Ranged attack at exactly 2 squares distance (straight line, clear path). Target is removed; Bombard stays put. Cannot target Commanders with ranged attacks.
+
+**Lancer:** Diagonal-only piece that can jump over exactly one piece (friend or foe) in its path, similar to a limited bishop with jumping. At strength 3 and deploy cost 6, the Lancer is a powerful late-game attacker.
 
 ### Check & Checkmate
 
@@ -44,7 +56,7 @@ If your Commander is under attack, you **must** resolve it (move, block, or capt
 
 ### Turn Structure
 
-1. Gain resources from controlled nodes
+1. Gain resources from controlled Gold nodes
 2. Take one action: **move** a piece OR **deploy** a new piece
 
 ## Project Structure
@@ -65,7 +77,7 @@ GameBench/
 │   ├── calibrate_elo.py
 │   ├── run_benchmark.py
 │   └── compare_models.py
-└── tests/             # 94 tests across 5 suites
+└── tests/             # 110 tests across 5 suites
 ```
 
 ## Phases

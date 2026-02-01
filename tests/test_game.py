@@ -11,7 +11,8 @@ from davechess.game.rules import (
     get_resource_income, get_controlled_nodes, get_exclusive_nodes,
 )
 from davechess.game.board import (
-    BOARD_SIZE, RESOURCE_NODES, STARTING_POSITIONS, rc_to_notation, notation_to_rc,
+    BOARD_SIZE, RESOURCE_NODES, GOLD_NODES, POWER_NODES, ALL_NODES,
+    STARTING_POSITIONS, rc_to_notation, notation_to_rc,
     render_board,
 )
 from davechess.game.notation import move_to_dcn, dcn_to_move, game_to_dcn, dcn_to_game
@@ -49,6 +50,18 @@ class TestBoard:
                 sq = rc_to_notation(r, c)
                 r2, c2 = notation_to_rc(sq)
                 assert (r, c) == (r2, c2)
+
+    def test_gold_nodes_count(self):
+        assert len(GOLD_NODES) == 4
+
+    def test_power_nodes_count(self):
+        assert len(POWER_NODES) == 4
+
+    def test_node_sets_disjoint(self):
+        assert not set(GOLD_NODES) & set(POWER_NODES)
+
+    def test_all_nodes_is_union(self):
+        assert set(ALL_NODES) == set(GOLD_NODES) | set(POWER_NODES)
 
     def test_render_board(self):
         board = [[None] * 8 for _ in range(8)]
@@ -228,6 +241,97 @@ class TestLegalMoves:
         targets = {m.target_rc for m in bombard_attacks}
         assert (5, 3) in targets
 
+    def test_lancer_diagonal_moves(self):
+        """Lancers move diagonally up to 4 squares."""
+        state = GameState()
+        state.board = [[None] * 8 for _ in range(8)]
+        state.board[3][3] = Piece(PieceType.LANCER, Player.WHITE)
+        state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
+        state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
+
+        moves = generate_legal_moves(state)
+        lancer_moves = [m for m in moves if isinstance(m, MoveStep) and m.from_rc == (3, 3)]
+        destinations = {m.to_rc for m in lancer_moves}
+        # Distance 1 diagonal
+        assert (4, 4) in destinations
+        assert (2, 2) in destinations
+        assert (4, 2) in destinations
+        assert (2, 4) in destinations
+        # Distance 4 diagonal
+        assert (7, 7) in destinations  # capture black commander
+        # Should NOT include orthogonal
+        assert (4, 3) not in destinations
+        assert (3, 4) not in destinations
+
+    def test_lancer_not_orthogonal(self):
+        """Lancer cannot move orthogonally."""
+        state = GameState()
+        state.board = [[None] * 8 for _ in range(8)]
+        state.board[3][3] = Piece(PieceType.LANCER, Player.WHITE)
+        state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
+        state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
+
+        moves = generate_legal_moves(state)
+        lancer_moves = [m for m in moves if isinstance(m, MoveStep) and m.from_rc == (3, 3)]
+        destinations = {m.to_rc for m in lancer_moves}
+        # No orthogonal moves
+        for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            for dist in range(1, 5):
+                r, c = 3 + dr * dist, 3 + dc * dist
+                if 0 <= r < 8 and 0 <= c < 8:
+                    assert (r, c) not in destinations, f"Lancer should not reach ({r},{c})"
+
+    def test_lancer_jumping(self):
+        """Lancer can jump over exactly one piece."""
+        state = GameState()
+        state.board = [[None] * 8 for _ in range(8)]
+        state.board[3][3] = Piece(PieceType.LANCER, Player.WHITE)
+        state.board[4][4] = Piece(PieceType.WARRIOR, Player.WHITE)  # One piece to jump
+        state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
+        state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
+
+        moves = generate_legal_moves(state)
+        lancer_moves = [m for m in moves if isinstance(m, MoveStep) and m.from_rc == (3, 3)]
+        destinations = {m.to_rc for m in lancer_moves}
+        # Cannot land on friendly at (4,4)
+        assert (4, 4) not in destinations
+        # Can jump over to reach (5,5), (6,6)
+        assert (5, 5) in destinations
+        assert (6, 6) in destinations
+
+    def test_lancer_blocked_by_two(self):
+        """Lancer blocked by two pieces in path."""
+        state = GameState()
+        state.board = [[None] * 8 for _ in range(8)]
+        state.board[3][3] = Piece(PieceType.LANCER, Player.WHITE)
+        state.board[4][4] = Piece(PieceType.WARRIOR, Player.WHITE)
+        state.board[5][5] = Piece(PieceType.WARRIOR, Player.WHITE)
+        state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
+        state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
+
+        moves = generate_legal_moves(state)
+        lancer_moves = [m for m in moves if isinstance(m, MoveStep) and m.from_rc == (3, 3)]
+        destinations = {m.to_rc for m in lancer_moves}
+        # Cannot reach past two blockers
+        assert (6, 6) not in destinations
+        assert (7, 7) not in destinations
+
+    def test_lancer_deploy(self):
+        """Can deploy Lancer with enough resources."""
+        state = GameState()
+        state.resources[0] = 6
+        moves = generate_legal_moves(state)
+        lancer_deploys = [m for m in moves if isinstance(m, Deploy) and m.piece_type == PieceType.LANCER]
+        assert len(lancer_deploys) > 0
+
+    def test_lancer_no_deploy_insufficient_resources(self):
+        """Cannot deploy Lancer with fewer than 6 resources."""
+        state = GameState()
+        state.resources[0] = 5
+        moves = generate_legal_moves(state)
+        lancer_deploys = [m for m in moves if isinstance(m, Deploy) and m.piece_type == PieceType.LANCER]
+        assert len(lancer_deploys) == 0
+
     def test_bombard_blocked_path(self):
         """Bombard ranged attack blocked by piece in between."""
         state = GameState()
@@ -299,22 +403,56 @@ class TestCapture:
         """Warriors get +1 strength per adjacent friendly Warrior."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
-        # Two adjacent white warriors
-        state.board[3][3] = Piece(PieceType.WARRIOR, Player.WHITE)
-        state.board[3][4] = Piece(PieceType.WARRIOR, Player.WHITE)
+        # Two adjacent white warriors — placed far from Power nodes
+        state.board[0][3] = Piece(PieceType.WARRIOR, Player.WHITE)
+        state.board[0][4] = Piece(PieceType.WARRIOR, Player.WHITE)
         # Black rider to attack
-        state.board[3][5] = Piece(PieceType.RIDER, Player.BLACK)  # str 2
+        state.board[0][5] = Piece(PieceType.RIDER, Player.BLACK)  # base str 2
         state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
         state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
 
-        # Warrior at (3,4) has adjacent warrior at (3,3), so str = 1+1 = 2
-        # This warrior attacks Rider (str 2): tie, both removed
+        # Warrior at (0,4) has adjacent warrior at (0,3), so str = 1+1 = 2
+        # Rider at (0,5) has base str 2 (not near Power nodes)
+        # Attack: tie, both removed
         state.current_player = Player.WHITE
-        move = MoveStep((3, 4), (3, 5), is_capture=True)
+        move = MoveStep((0, 4), (0, 5), is_capture=True)
         apply_move(state, move)
         # Tie: both removed
-        assert state.board[3][4] is None
-        assert state.board[3][5] is None
+        assert state.board[0][4] is None
+        assert state.board[0][5] is None
+
+    def test_power_node_strength_bonus(self):
+        """Piece adjacent to Power node gets +1 strength."""
+        state = GameState()
+        state.board = [[None] * 8 for _ in range(8)]
+        # Power node at (2,1). Place Warrior at (2,2) — adjacent.
+        state.board[2][2] = Piece(PieceType.WARRIOR, Player.WHITE)  # str 1 + 1 power = 2
+        state.board[2][3] = Piece(PieceType.RIDER, Player.BLACK)    # str 2
+        state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
+        state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
+
+        # Warrior (str 2 with power bonus) vs Rider (str 2): tie, both removed
+        move = MoveStep((2, 2), (2, 3), is_capture=True)
+        apply_move(state, move)
+        assert state.board[2][2] is None
+        assert state.board[2][3] is None
+
+    def test_power_node_no_bonus_far_away(self):
+        """Piece not near any Power node gets no bonus."""
+        state = GameState()
+        state.board = [[None] * 8 for _ in range(8)]
+        # Place Warrior at (0,0) — far from all power nodes
+        state.board[0][4] = Piece(PieceType.WARRIOR, Player.WHITE)  # str 1, no bonus
+        state.board[0][5] = Piece(PieceType.RIDER, Player.BLACK)    # str 2
+        state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
+        state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
+
+        # Warrior (str 1) vs Rider (str 2): warrior loses
+        move = MoveStep((0, 4), (0, 5), is_capture=True)
+        apply_move(state, move)
+        assert state.board[0][4] is None
+        assert state.board[0][5] is not None  # Rider survives
+        assert state.board[0][5].piece_type == PieceType.RIDER
 
     def test_bombard_ranged_capture(self):
         """Bombard ranged attack removes target, Bombard stays."""
@@ -443,7 +581,7 @@ class TestNotation:
 
     def test_notation_roundtrip(self):
         """Parse then emit should produce identical string."""
-        cases = ["Wc1-c2", "Rd4xe4", "+W@c2", "Bd4~d6", "+R@a1", "+B@h2"]
+        cases = ["Wc1-c2", "Rd4xe4", "+W@c2", "Bd4~d6", "+R@a1", "+B@h2", "Ld4-g7", "+L@a1"]
         for dcn_str in cases:
             move = dcn_to_move(dcn_str)
             # Need a state with appropriate piece for emission

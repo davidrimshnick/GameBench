@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 
-from davechess.game.state import GameState, MoveStep, Deploy, BombardAttack, PieceType
+from davechess.game.state import GameState, Piece, Player, MoveStep, Deploy, BombardAttack, PieceType
 from davechess.engine.network import (
     state_to_planes, move_to_policy_index, policy_index_to_move,
     POLICY_SIZE, BOARD_SIZE,
@@ -14,30 +14,38 @@ class TestStateToPlanes:
     def test_output_shape(self):
         state = GameState()
         planes = state_to_planes(state)
-        assert planes.shape == (12, 8, 8)
+        assert planes.shape == (15, 8, 8)
 
     def test_dtype(self):
         state = GameState()
         planes = state_to_planes(state)
         assert planes.dtype == np.float32
 
-    def test_resource_nodes_plane(self):
-        """Plane 8 should mark resource node positions."""
+    def test_gold_nodes_plane(self):
+        """Plane 10 should mark gold node positions."""
         state = GameState()
         planes = state_to_planes(state)
-        from davechess.game.board import RESOURCE_NODES
-        for r, c in RESOURCE_NODES:
-            assert planes[8, r, c] == 1.0
+        from davechess.game.board import GOLD_NODES
+        for r, c in GOLD_NODES:
+            assert planes[10, r, c] == 1.0
+
+    def test_power_nodes_plane(self):
+        """Plane 11 should mark power node positions."""
+        state = GameState()
+        planes = state_to_planes(state)
+        from davechess.game.board import POWER_NODES
+        for r, c in POWER_NODES:
+            assert planes[11, r, c] == 1.0
 
     def test_current_player_plane(self):
-        """Plane 9 should indicate current player."""
+        """Plane 12 should indicate current player."""
         state = GameState()
         planes = state_to_planes(state)
         # White to move: all 1s
-        assert planes[9, 0, 0] == 1.0
+        assert planes[12, 0, 0] == 1.0
 
     def test_piece_planes(self):
-        """Current player's pieces should be on planes 0-3."""
+        """Current player's pieces should be on planes 0-4, opponent on 5-9."""
         state = GameState()
         planes = state_to_planes(state)
         # White Commander at (0, 3) - should be on plane 0 (Commander)
@@ -45,6 +53,8 @@ class TestStateToPlanes:
         # White Warriors at (0, 2) and (0, 5)
         assert planes[1, 0, 2] == 1.0
         assert planes[1, 0, 5] == 1.0
+        # Black Commander at (7, 3) - opponent, plane 5
+        assert planes[5, 7, 3] == 1.0
 
 
 class TestMoveEncoding:
@@ -63,6 +73,30 @@ class TestMoveEncoding:
         move = BombardAttack((3, 3), (5, 3))
         idx = move_to_policy_index(move)
         assert 0 <= idx < POLICY_SIZE
+
+    def test_lancer_deploy_encoding(self):
+        move = Deploy(PieceType.LANCER, (0, 3))
+        idx = move_to_policy_index(move)
+        assert 0 <= idx < POLICY_SIZE
+
+    def test_lancer_move_encoding(self):
+        """Lancer diagonal move at distance 4."""
+        move = MoveStep((0, 0), (4, 4))  # distance 4 diagonal
+        idx = move_to_policy_index(move)
+        assert 0 <= idx < POLICY_SIZE
+
+    def test_lancer_move_roundtrip(self):
+        """Lancer diagonal distance-4 move survives encode/decode."""
+        state = GameState()
+        state.board = [[None] * 8 for _ in range(8)]
+        state.board[0][0] = Piece(PieceType.LANCER, Player.WHITE)
+
+        move = MoveStep((0, 0), (4, 4))
+        idx = move_to_policy_index(move)
+        recovered = policy_index_to_move(idx, state)
+        assert isinstance(recovered, MoveStep)
+        assert recovered.from_rc == (0, 0)
+        assert recovered.to_rc == (4, 4)
 
     def test_different_moves_different_indices(self):
         """Different moves should map to different indices."""
@@ -107,7 +141,7 @@ class TestNetworkForward:
     def test_forward_pass_shapes(self):
         from davechess.engine.network import DaveChessNetwork
         net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
-        x = torch.randn(4, 12, 8, 8)
+        x = torch.randn(4, 15, 8, 8)
         policy, value = net(x)
         assert policy.shape == (4, POLICY_SIZE)
         assert value.shape == (4, 1)
@@ -116,7 +150,7 @@ class TestNetworkForward:
         """Value head output should be in [-1, 1] (tanh)."""
         from davechess.engine.network import DaveChessNetwork
         net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
-        x = torch.randn(8, 12, 8, 8)
+        x = torch.randn(8, 15, 8, 8)
         _, value = net(x)
         assert (value >= -1.0).all()
         assert (value <= 1.0).all()

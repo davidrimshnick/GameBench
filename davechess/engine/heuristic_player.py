@@ -9,6 +9,7 @@ import random
 import math
 
 from davechess.game.state import GameState, Player, PieceType, Move, MoveStep, Deploy
+from davechess.game.board import GOLD_NODES, POWER_NODES
 from davechess.game.rules import generate_legal_moves, apply_move, check_winner
 
 
@@ -31,15 +32,8 @@ class HeuristicPlayer:
         PieceType.WARRIOR: 3.0,     # Strong attacker
         PieceType.RIDER: 2.5,       # Mobile
         PieceType.BOMBARD: 2.0,     # Ranged but vulnerable
+        PieceType.LANCER: 4.0,      # Strong diagonal attacker with jump
     }
-
-    # Resource node locations
-    RESOURCE_NODES = [
-        (0, 3), (0, 4),  # White's home nodes
-        (7, 3), (7, 4),  # Black's home nodes
-        (3, 0), (4, 0),  # Left side nodes
-        (3, 7), (4, 7),  # Right side nodes
-    ]
 
     def __init__(self, exploration: float = 0.2, aggression: float = 0.5):
         """
@@ -162,7 +156,14 @@ class HeuristicPlayer:
                 else:
                     forward_bonus = (7 - r) / 7
 
-                piece_score = (center_bonus * 0.5 + forward_bonus * 0.5)
+                # Power node proximity bonus
+                power_bonus = 0.0
+                for pr, pc in POWER_NODES:
+                    if abs(r - pr) <= 1 and abs(c - pc) <= 1:
+                        power_bonus = 0.3
+                        break
+
+                piece_score = (center_bonus * 0.4 + forward_bonus * 0.4 + power_bonus * 0.2)
 
                 if piece.player == state.current_player:
                     score += piece_score
@@ -229,11 +230,11 @@ class HeuristicPlayer:
         return my_safety - opp_safety
 
     def _eval_resources(self, state: GameState) -> float:
-        """Evaluate resource control (-1 to 1)."""
+        """Evaluate resource control (-1 to 1). Only Gold nodes give income."""
         my_resources = 0
         opp_resources = 0
 
-        for r, c in self.RESOURCE_NODES:
+        for r, c in GOLD_NODES:
             piece = state.board[r][c]
             if piece:
                 if piece.player == state.current_player:
@@ -241,7 +242,7 @@ class HeuristicPlayer:
                 else:
                     opp_resources += 1
 
-        total = len(self.RESOURCE_NODES)
+        total = len(GOLD_NODES)
         return (my_resources - opp_resources) / total
 
 

@@ -13,7 +13,7 @@ GameBench is a benchmark measuring how efficiently LLMs learn novel strategic re
 # Install with development dependencies
 pip install -e ".[dev]"
 
-# Run all tests (94 tests across 5 suites)
+# Run all tests (110 tests across 5 suites)
 pytest
 
 # Run specific test suite
@@ -80,9 +80,9 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 ### Game State Representation
 
 - **Board**: 8x8 grid stored as `state.board[row][col]` containing `Piece` objects
-- **Resources**: 8 fixed nodes at positions (0,3), (0,4), (7,3), (7,4), (3,0), (4,0), (3,7), (4,7)
-- **Neural Network Input**: 12 planes (6 piece types × 2 players) via `state_to_planes()`
-- **Move Encoding**: Policy size of 2240 (64×35 move slots per square) via `move_to_policy_index()`
+- **Nodes**: 4 Gold nodes (give resource income) at (3,3), (3,4), (4,3), (4,4) + 4 Power nodes (give +1 strength to adjacent pieces) at (2,1), (2,6), (5,1), (5,6)
+- **Neural Network Input**: 15 planes (5 piece types × 2 players + 2 node types + player + 2 resources) via `state_to_planes()`
+- **Move Encoding**: Policy size of 2816 (64×44 move slots per square) via `move_to_policy_index()`
 
 ### Critical Game Rules
 
@@ -90,8 +90,12 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 1. **Commander Safety**: Must resolve check immediately (move/block/capture)
 2. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw.
-3. **Warrior Strength**: Base 1 + 1 per adjacent friendly Warrior (clustering bonus)
-4. **Bombard**: Can't use ranged attack against Commander (prevents cheese)
+3. **Piece Types**: Commander (C, str 2), Warrior (W, str 1 + adjacency), Rider (R, str 2), Bombard (B, str 0), Lancer (L, str 3, diagonal up to 4 squares with jump)
+4. **Deploy Costs**: W=2, R=4, B=5, L=6
+5. **Warrior Strength**: Base 1 + 1 per adjacent friendly Warrior (clustering bonus)
+6. **Power Node Bonus**: Any piece on or adjacent (8-directional) to a Power node gets +1 strength
+7. **Bombard**: Can't use ranged attack against Commander (prevents cheese)
+8. **Lancer**: Moves diagonally up to 4 squares, can jump over exactly one piece (any color)
 
 ### Known Issues & Solutions
 
@@ -104,7 +108,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 3. **Training Instability**: Early iterations produce all draws/max-length games
    - Solution: Smart seeds with strategic play, adaptive simulation counts
 
-4. **Replay Buffer OOM on Checkpoint Load**: The compressed NPZ buffer (~5MB on disk) decompresses to ~1.1GB (policies alone are 826MB at 96K×2240). Loading all arrays at once caused OOM on the 8GB Jetson.
+4. **Replay Buffer OOM on Checkpoint Load**: The compressed NPZ buffer (~5MB on disk) decompresses to ~1.5GB (policies alone are 1.03GB at 96K×2816). Loading all arrays at once caused OOM on the 8GB Jetson.
    - Solution: `load_data()` loads/deletes arrays sequentially so peak memory is ~max(single_array) not sum(all_arrays)
 
 5. **CUDA Fragmentation After Self-play**: Higher adaptive sims fragment GPU memory, causing `NVML_SUCCESS` assert failures when transitioning to training.

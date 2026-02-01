@@ -141,7 +141,7 @@ def analyze_results(results: list[dict]) -> dict:
         for player, ptype in r["deployed_types"]:
             deployed_all[ptype] += 1
     piece_usage = {}
-    for pt in [int(PieceType.WARRIOR), int(PieceType.RIDER), int(PieceType.BOMBARD)]:
+    for pt in [int(PieceType.WARRIOR), int(PieceType.RIDER), int(PieceType.BOMBARD), int(PieceType.LANCER)]:
         piece_usage[PieceType(pt).name] = deployed_all[pt] / n * 100
 
     # Strategy diversity (opening clusters)

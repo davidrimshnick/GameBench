@@ -21,6 +21,7 @@ class PieceType(IntEnum):
     WARRIOR = 1
     RIDER = 2
     BOMBARD = 3
+    LANCER = 4
 
 
 # Map character codes to PieceType
@@ -29,6 +30,7 @@ PIECE_CHARS = {
     "W": PieceType.WARRIOR,
     "R": PieceType.RIDER,
     "B": PieceType.BOMBARD,
+    "L": PieceType.LANCER,
 }
 PIECE_NAMES = {v: k for k, v in PIECE_CHARS.items()}
 
@@ -38,6 +40,7 @@ BASE_STRENGTH = {
     PieceType.WARRIOR: 1,
     PieceType.RIDER: 2,
     PieceType.BOMBARD: 0,
+    PieceType.LANCER: 3,
 }
 
 # Deploy cost per piece type (Commander cannot be deployed)
@@ -45,6 +48,7 @@ DEPLOY_COST = {
     PieceType.WARRIOR: 2,
     PieceType.RIDER: 4,
     PieceType.BOMBARD: 5,
+    PieceType.LANCER: 6,
 }
 
 

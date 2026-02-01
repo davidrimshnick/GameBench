@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from davechess.data.generator import MCTSLiteAgent, play_game
 from davechess.game.state import GameState, Player, PieceType, MoveStep, Deploy
 from davechess.game.rules import generate_legal_moves, apply_move
+from davechess.game.board import ALL_NODES
 
 def analyze_games(num_games: int = 100, simulations: int = 50):
     """Run games and collect statistics."""
@@ -90,7 +91,7 @@ def analyze_games(num_games: int = 100, simulations: int = 50):
                     piece = state.board[r][c]
                     # Resource nodes are location-based, not pieces
                     # Check if this is a resource location
-                    if (r, c) in [(0,3), (0,4), (7,3), (7,4), (3,0), (4,0), (3,7), (4,7)]:
+                    if (r, c) in ALL_NODES:
                         # Check which player controls it
                         if piece:
                             if piece.player == Player.WHITE:

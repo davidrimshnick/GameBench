@@ -4,14 +4,23 @@ from __future__ import annotations
 
 BOARD_SIZE = 8
 
-# Resource nodes at symmetrical positions (0-indexed row, col)
-# Placed to create interesting strategic tension across the board
-RESOURCE_NODES: list[tuple[int, int]] = [
-    (2, 1), (2, 6),  # White-side forward resources
-    (3, 3), (3, 4),  # Central resources
-    (4, 3), (4, 4),  # Central resources
-    (5, 1), (5, 6),  # Black-side forward resources
+# Gold nodes: give +1 resource per turn (central positions)
+GOLD_NODES: list[tuple[int, int]] = [
+    (3, 3), (3, 4),  # Central gold nodes
+    (4, 3), (4, 4),  # Central gold nodes
 ]
+
+# Power nodes: give +1 strength to adjacent friendly pieces (near-side positions)
+POWER_NODES: list[tuple[int, int]] = [
+    (2, 1), (2, 6),  # White-side power nodes
+    (5, 1), (5, 6),  # Black-side power nodes
+]
+
+# All nodes combined
+ALL_NODES: list[tuple[int, int]] = GOLD_NODES + POWER_NODES
+
+# Backward compatibility alias
+RESOURCE_NODES = ALL_NODES
 
 # Starting positions: dict mapping (row, col) -> (piece_type_char, player)
 # White on rows 0-1 (bottom), Black on rows 6-7 (top)
@@ -70,7 +79,8 @@ def render_board(board, resource_counts: tuple[int, int] | None = None,
         lines.append(f"Resources: White={resource_counts[0]}  Black={resource_counts[1]}")
     lines.append("")
 
-    resource_set = set(RESOURCE_NODES)
+    gold_set = set(GOLD_NODES)
+    power_set = set(POWER_NODES)
 
     lines.append("    a   b   c   d   e   f   g   h")
     lines.append("  +---+---+---+---+---+---+---+---+")
@@ -79,18 +89,24 @@ def render_board(board, resource_counts: tuple[int, int] | None = None,
         row_str = f"{row + 1} |"
         for col in range(BOARD_SIZE):
             cell = board[row][col]
-            is_resource = (row, col) in resource_set
+            pos = (row, col)
+            if pos in gold_set:
+                marker = "$"
+            elif pos in power_set:
+                marker = "^"
+            else:
+                marker = None
             if cell is not None:
                 piece_char, player = cell
                 # Lowercase for black, uppercase for white
                 display = piece_char if player == 0 else piece_char.lower()
-                if is_resource:
-                    row_str += f"*{display}*|"
+                if marker:
+                    row_str += f"{marker}{display}{marker}|"
                 else:
                     row_str += f" {display} |"
             else:
-                if is_resource:
-                    row_str += " * |"
+                if marker:
+                    row_str += f" {marker} |"
                 else:
                     row_str += "   |"
         row_str += f" {row + 1}"

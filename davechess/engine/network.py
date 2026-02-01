@@ -1,15 +1,16 @@
 """ResNet policy+value network for DaveChess AlphaZero.
 
-Input: 12 planes of 8x8
-  Planes 0-3: Current player's C/W/R/B positions (binary)
-  Planes 4-7: Opponent's C/W/R/B positions (binary)
-  Plane 8: Resource node positions (binary)
-  Plane 9: Current player indicator (all 1s or 0s)
-  Plane 10: Current player resources (scalar broadcast, normalized)
-  Plane 11: Opponent resources (scalar broadcast, normalized)
+Input: 15 planes of 8x8
+  Planes 0-4: Current player's C/W/R/B/L positions (binary)
+  Planes 5-9: Opponent's C/W/R/B/L positions (binary)
+  Plane 10: Gold node positions (binary)
+  Plane 11: Power node positions (binary)
+  Plane 12: Current player indicator (all 1s or 0s)
+  Plane 13: Current player resources (scalar broadcast, normalized)
+  Plane 14: Opponent resources (scalar broadcast, normalized)
 
 Output:
-  Policy: flat logit vector over all possible moves (~4736 logits)
+  Policy: flat logit vector over all possible moves (2816 logits)
   Value: single tanh scalar (-1 to +1)
 """
 
@@ -25,26 +26,16 @@ try:
 except ImportError:
     HAS_TORCH = False
 
-from davechess.game.board import BOARD_SIZE, RESOURCE_NODES
+from davechess.game.board import BOARD_SIZE, GOLD_NODES, POWER_NODES
 from davechess.game.state import GameState, Player, PieceType, Move, MoveStep, Deploy, BombardAttack
 
-# Move encoding:
-# For each source square (64), encode move type:
-#   - Direction moves: 8 directions x 3 max distance = 24
-#   - Deploy: 3 piece types (W, R, B) = 3 (source square = deploy target)
-#   - Bombard: 8 directions x 1 (always distance 2) = 8
-# Total per square: 24 + 3 + 8 = 35
-# But we only need deploy on deploy squares, so we use a flat encoding.
-# For simplicity: 64 * (24 + 8) + 64 * 3 = 64 * 35 = 2240
-# Actually, let's use a cleaner encoding:
-
-# Move types per source square:
-#   Slots 0-23: direction moves (8 dirs x 3 distances)
-#   Slots 24-31: bombard ranged attacks (8 dirs, always dist 2)
-#   Slots 32-34: deploy piece types (W=0, R=1, B=2) — only meaningful if source=deploy target
-# Total: 35 slots per square, 64 squares = 2240 total
-MOVES_PER_SQUARE = 35
-POLICY_SIZE = BOARD_SIZE * BOARD_SIZE * MOVES_PER_SQUARE  # 2240
+# Move encoding per source square:
+#   Slots 0-31:  direction moves (8 dirs x 4 max distances)
+#   Slots 32-39: bombard ranged attacks (8 dirs, always dist 2)
+#   Slots 40-43: deploy piece types (W=0, R=1, B=2, L=3)
+# Total: 44 slots per square, 64 squares = 2816 total
+MOVES_PER_SQUARE = 44
+POLICY_SIZE = BOARD_SIZE * BOARD_SIZE * MOVES_PER_SQUARE  # 2816
 
 # Direction encoding
 ALL_DIRS = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
@@ -55,11 +46,11 @@ RESOURCE_NORM = 50.0
 
 
 def state_to_planes(state: GameState) -> np.ndarray:
-    """Convert game state to 12x8x8 input planes.
+    """Convert game state to 15x8x8 input planes.
 
     The planes are always from the perspective of the current player.
     """
-    planes = np.zeros((12, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
+    planes = np.zeros((15, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
     current = state.current_player
     opponent = Player(1 - current)
 
@@ -68,22 +59,26 @@ def state_to_planes(state: GameState) -> np.ndarray:
             piece = state.board[row][col]
             if piece is None:
                 continue
-            pt = int(piece.piece_type)
+            pt = int(piece.piece_type)  # 0-4
             if piece.player == current:
                 planes[pt, row, col] = 1.0
             else:
-                planes[4 + pt, row, col] = 1.0
+                planes[5 + pt, row, col] = 1.0
 
-    # Resource nodes
-    for r, c in RESOURCE_NODES:
-        planes[8, r, c] = 1.0
+    # Gold nodes
+    for r, c in GOLD_NODES:
+        planes[10, r, c] = 1.0
+
+    # Power nodes
+    for r, c in POWER_NODES:
+        planes[11, r, c] = 1.0
 
     # Current player indicator
-    planes[9, :, :] = 1.0 if current == Player.WHITE else 0.0
+    planes[12, :, :] = 1.0 if current == Player.WHITE else 0.0
 
     # Resources (normalized, broadcast)
-    planes[10, :, :] = min(state.resources[current] / RESOURCE_NORM, 1.0)
-    planes[11, :, :] = min(state.resources[opponent] / RESOURCE_NORM, 1.0)
+    planes[13, :, :] = min(state.resources[current] / RESOURCE_NORM, 1.0)
+    planes[14, :, :] = min(state.resources[opponent] / RESOURCE_NORM, 1.0)
 
     return planes
 
@@ -102,10 +97,9 @@ def move_to_policy_index(move: Move) -> int:
         # Normalize direction
         d = (dr // dist, dc // dist)
         if d not in DIR_TO_IDX:
-            # Handle non-unit diagonal (shouldn't happen with our rules)
             return 0
         dir_idx = DIR_TO_IDX[d]
-        slot = dir_idx * 3 + (dist - 1)  # 0-23
+        slot = dir_idx * 4 + (dist - 1)  # 0-31
         sq_idx = fr * BOARD_SIZE + fc
         return sq_idx * MOVES_PER_SQUARE + slot
 
@@ -117,15 +111,17 @@ def move_to_policy_index(move: Move) -> int:
         dist = max(abs(dr), abs(dc))
         d = (dr // dist, dc // dist)
         dir_idx = DIR_TO_IDX.get(d, 0)
-        slot = 24 + dir_idx  # 24-31
+        slot = 32 + dir_idx  # 32-39
         sq_idx = fr * BOARD_SIZE + fc
         return sq_idx * MOVES_PER_SQUARE + slot
 
     elif isinstance(move, Deploy):
         tr, tc = move.to_rc
-        # Map piece type to deploy slot
-        deploy_map = {PieceType.WARRIOR: 0, PieceType.RIDER: 1, PieceType.BOMBARD: 2}
-        slot = 32 + deploy_map[move.piece_type]
+        deploy_map = {
+            PieceType.WARRIOR: 0, PieceType.RIDER: 1,
+            PieceType.BOMBARD: 2, PieceType.LANCER: 3,
+        }
+        slot = 40 + deploy_map[move.piece_type]  # 40-43
         sq_idx = tr * BOARD_SIZE + tc
         return sq_idx * MOVES_PER_SQUARE + slot
 
@@ -139,10 +135,10 @@ def policy_index_to_move(index: int, state: GameState) -> Move | None:
     row = sq_idx // BOARD_SIZE
     col = sq_idx % BOARD_SIZE
 
-    if slot < 24:
+    if slot < 32:
         # Direction move
-        dir_idx = slot // 3
-        dist = (slot % 3) + 1
+        dir_idx = slot // 4
+        dist = (slot % 4) + 1
         dr, dc = ALL_DIRS[dir_idx]
         tr, tc = row + dr * dist, col + dc * dist
         if 0 <= tr < BOARD_SIZE and 0 <= tc < BOARD_SIZE:
@@ -150,18 +146,21 @@ def policy_index_to_move(index: int, state: GameState) -> Move | None:
             is_capture = target is not None and target.player != state.current_player
             return MoveStep((row, col), (tr, tc), is_capture=is_capture)
 
-    elif slot < 32:
+    elif slot < 40:
         # Bombard ranged attack
-        dir_idx = slot - 24
+        dir_idx = slot - 32
         dr, dc = ALL_DIRS[dir_idx]
         tr, tc = row + dr * 2, col + dc * 2
         if 0 <= tr < BOARD_SIZE and 0 <= tc < BOARD_SIZE:
             return BombardAttack((row, col), (tr, tc))
 
-    elif slot < 35:
+    elif slot < 44:
         # Deploy
-        deploy_map = {0: PieceType.WARRIOR, 1: PieceType.RIDER, 2: PieceType.BOMBARD}
-        piece_type = deploy_map[slot - 32]
+        deploy_map = {
+            0: PieceType.WARRIOR, 1: PieceType.RIDER,
+            2: PieceType.BOMBARD, 3: PieceType.LANCER,
+        }
+        piece_type = deploy_map[slot - 40]
         return Deploy(piece_type, (row, col))
 
     return None
@@ -190,7 +189,7 @@ if HAS_TORCH:
         """ResNet policy+value network for DaveChess."""
 
         def __init__(self, num_res_blocks: int = 5, num_filters: int = 64,
-                     input_planes: int = 12):
+                     input_planes: int = 15):
             super().__init__()
 
             # Initial convolution
@@ -217,7 +216,7 @@ if HAS_TORCH:
             """Forward pass.
 
             Args:
-                x: (batch, 12, 8, 8) tensor.
+                x: (batch, 15, 8, 8) tensor.
 
             Returns:
                 (policy_logits, value) where policy is (batch, POLICY_SIZE)
