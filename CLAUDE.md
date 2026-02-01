@@ -43,8 +43,11 @@ python scripts/train.py --config configs/training.yaml  # Automatically resumes
 # Validate game balance with MCTSLite
 python scripts/validate_game.py --num-games 500 --sims 50
 
-# Generate smart seed games using heuristic players
-python scripts/generate_smart_seeds.py --num-games 50 --save checkpoints/seeds.pkl
+# Generate and save smart seed games (only needed once)
+python scripts/generate_and_save_seeds.py --num-games 150 --output checkpoints/smart_seeds.pkl
+
+# Check existing seed games
+python scripts/generate_and_save_seeds.py  # Shows stats without regenerating
 
 # Quick balance check
 python scripts/quick_balance_check.py
@@ -61,7 +64,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 1. **Value Target Structure**: Uses binary rewards (1.0 for wins, 0.0 for losses/draws) to encourage aggressive play, as the game tends toward defensive stalemates.
 
-2. **Smart Seed Generation**: Instead of MCTSLite's expensive random rollouts, uses heuristic players (`HeuristicPlayer`, `CommanderHunter`) that provide strategic seed games. Located in:
+2. **Smart Seed Generation**: Instead of MCTSLite's expensive random rollouts, uses heuristic players (`HeuristicPlayer`, `CommanderHunter`) that provide strategic seed games. Seeds are generated once and saved to `checkpoints/smart_seeds.pkl` (15.9 MB, ~1400 positions). Training automatically loads these instead of regenerating. Located in:
    - `davechess/engine/heuristic_player.py` - Position evaluation and strategic play
    - `davechess/engine/smart_seeds.py` - Seed game generation module
    - `scripts/generate_smart_seeds.py` - Standalone seed generator

@@ -364,16 +364,33 @@ class Trainer:
                     self.tb_writer.add_scalar(tag, v, self.training_step)
             self.tb_writer.flush()
 
-    def seed_buffer(self, num_games: int = 50, use_smart_seeds: bool = True):
+    def seed_buffer(self, num_games: int = 50, use_smart_seeds: bool = True,
+                    seed_file: str = "checkpoints/smart_seeds.pkl"):
         """Seed replay buffer with intelligent games.
 
         Uses heuristic players with commander hunting for better quality
         seed games instead of expensive random rollouts.
         """
         if use_smart_seeds:
-            logger.info(f"Generating {num_games} smart seed games using heuristic players...")
-            smart_buffer = generate_smart_seeds(num_games, verbose=False)
-            total_positions = len(smart_buffer)
+            # Try to load pre-generated seeds first
+            import os
+            import pickle
+
+            if os.path.exists(seed_file):
+                logger.info(f"Loading pre-generated smart seeds from {seed_file}...")
+                with open(seed_file, 'rb') as f:
+                    smart_buffer = pickle.load(f)
+                total_positions = len(smart_buffer)
+            else:
+                logger.info(f"Generating {num_games} smart seed games using heuristic players...")
+                smart_buffer = generate_smart_seeds(num_games, verbose=False)
+                total_positions = len(smart_buffer)
+
+                # Save for future use
+                os.makedirs(os.path.dirname(seed_file), exist_ok=True)
+                with open(seed_file, 'wb') as f:
+                    pickle.dump(smart_buffer, f)
+                logger.info(f"Saved seed games to {seed_file}")
 
             # Copy smart seeds to our replay buffer
             for i in range(total_positions):
