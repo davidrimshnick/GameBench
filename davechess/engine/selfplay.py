@@ -74,12 +74,34 @@ class ReplayBuffer:
         )
 
     def load_data(self, path: str):
-        """Load buffer data from disk."""
+        """Load buffer data from disk, one array at a time to limit peak memory.
+
+        For compressed NPZ, each data[key] access decompresses the full array.
+        By loading/consuming/deleting one key at a time, peak memory is
+        ~max(single_array + deque) rather than all arrays at once.
+        """
+        import gc
         data = np.load(path)
-        for i in range(len(data["values"])):
-            self.planes.append(data["planes"][i])
-            self.policies.append(data["policies"][i])
-            self.values.append(float(data["values"][i]))
+
+        values_arr = data["values"]
+        n = len(values_arr)
+        for i in range(n):
+            self.values.append(float(values_arr[i]))
+        del values_arr
+        gc.collect()
+
+        planes_arr = data["planes"]
+        for i in range(n):
+            self.planes.append(planes_arr[i])
+        del planes_arr
+        gc.collect()
+
+        policies_arr = data["policies"]
+        for i in range(n):
+            self.policies.append(policies_arr[i])
+        del policies_arr
+        del data
+        gc.collect()
 
 
 def play_selfplay_game(mcts_engine: MCTS,

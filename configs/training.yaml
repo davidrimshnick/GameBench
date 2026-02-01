@@ -11,7 +11,7 @@ mcts:
   cpuct: 1.5
   dirichlet_alpha: 0.3
   dirichlet_epsilon: 0.25
-  temperature_threshold: 30    # moves before temperature drops to near-zero
+  temperature_threshold: 60    # moves before temperature drops to near-zero
 
 selfplay:
   num_games_per_iteration: 20  # More games = more diverse training data
@@ -24,7 +24,7 @@ training:
   learning_rate: 0.001         # Lower LR for more stable learning
   momentum: 0.9
   weight_decay: 0.0001
-  steps_per_iteration: 150     # More steps with better quality data
+  steps_per_iteration: 300     # More steps to better utilize large buffer
   checkpoint_interval: 100
   eval_games: 10               # More eval games for reliable signal
   eval_simulations: 100        # Match self-play sim count
