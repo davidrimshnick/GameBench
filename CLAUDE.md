@@ -86,6 +86,8 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 ### Critical Game Rules
 
+**When changing game rules, update ALL three locations: `davechess/game/rules.py`, `davechess/benchmark/prompt.py` (RULES_TEXT), and `README.md` (DaveChess section).**
+
 1. **Commander Safety**: Must resolve check immediately (move/block/capture)
 2. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw.
 3. **Warrior Strength**: Base 1 + 1 per adjacent friendly Warrior (clustering bonus)
