@@ -10,24 +10,42 @@ The core question: **given N example games of a game you've never seen, how quic
 
 ## DaveChess
 
-An original strategic board game on an 8x8 grid with 8 resource nodes.
+An original strategic board game on an 8x8 grid combining positional resource control with tactical combat.
 
-**Pieces:**
+### Board & Setup
 
-| Piece | Symbol | Move | Strength | Deploy Cost |
-|-------|--------|------|----------|-------------|
-| Commander | C | 1 square, any direction | 2 | -- (starts on board) |
-| Warrior | W | 1 square, orthogonal | 1 (+1 per adjacent friendly Warrior) | 2 |
-| Rider | R | Up to 2 squares, straight line | 2 | 4 |
-| Bombard | B | 1 square any dir; ranged attack at 2 squares (not vs Commander) | 0 (melee) | 5 |
+Each side starts with 6 pieces on their back two rows: a Commander (king), 4 Warriors (infantry), and a Rider (cavalry). The board has **8 resource nodes** at fixed symmetric positions — 2 near each side, 4 in the center.
 
-**Check:** If your Commander is under attack, you must resolve it (move, block, or capture). Cannot leave your Commander in check.
+### Resources & Deployment
 
-**Win conditions:**
-1. Checkmate opponent's Commander (only way to win)
-2. Turn 100 with no checkmate = draw
+Each turn, you earn **+1 resource for each node you have a piece on or adjacent to** (orthogonally). You spend resources to **deploy new pieces** onto empty squares in your back two rows. This is the core economic loop: control nodes → earn resources → deploy reinforcements → control more nodes.
 
-**Turn structure:** Gain +1 resource per controlled node, then move a piece OR deploy a new piece.
+| Piece | Symbol | Deploy Cost | Move | Strength |
+|-------|--------|-------------|------|----------|
+| Commander | C | starts on board | 1 square, any direction | 2 |
+| Warrior | W | 2 | 1 square, orthogonal | 1 (+1 per adjacent friendly Warrior) |
+| Rider | R | 4 | Up to 2 squares, straight line | 2 |
+| Bombard | B | 5 | 1 square, any direction | 0 (melee) |
+
+### Combat
+
+Move onto an enemy piece to attack. Compare total strength — higher wins, tie removes both. **Warrior clustering** is key: a lone Warrior has strength 1, but three adjacent Warriors each have strength 3.
+
+**Bombard special ability:** Ranged attack at exactly 2 squares distance (straight line, clear path). Target is removed; Bombard stays put. Cannot target Commanders with ranged attacks.
+
+### Check & Checkmate
+
+If your Commander is under attack, you **must** resolve it (move, block, or capture). You cannot make a move that leaves your Commander in check. If no legal move resolves check, it's **checkmate** — you lose.
+
+### Win Conditions
+
+1. **Checkmate** opponent's Commander → you win
+2. **Turn 100** with no checkmate → draw
+
+### Turn Structure
+
+1. Gain resources from controlled nodes
+2. Take one action: **move** a piece OR **deploy** a new piece
 
 ## Project Structure
 
