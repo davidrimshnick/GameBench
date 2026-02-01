@@ -17,7 +17,7 @@ selfplay:
   num_games_per_iteration: 20  # More games = more diverse training data
   replay_buffer_size: 100000
   num_workers: 1               # Sequential GPU inference (no CPU multiprocessing)
-  min_buffer_size: 5000        # Higher minimum for better initial training
+  min_buffer_size: 1000        # Train immediately on seed games
 
 training:
   batch_size: 128

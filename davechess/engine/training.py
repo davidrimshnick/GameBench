@@ -668,6 +668,20 @@ class Trainer:
         del old_state
         gc.collect()
 
+        # Pre-train on seed data before self-play so the model
+        # has learned something before generating its own games
+        if self.iteration == 0 and len(self.replay_buffer) > 0:
+            logger.info(f"Pre-training on {len(self.replay_buffer)} seed positions...")
+            steps = train_cfg.get("steps_per_iteration", 100)
+            batch_size = train_cfg.get("batch_size", 128)
+            total_loss = 0.0
+            for step in range(steps):
+                losses = self.train_step(batch_size)
+                total_loss += losses["total_loss"]
+            avg_loss = total_loss / steps
+            logger.info(f"Pre-training complete: avg_loss={avg_loss:.4f} over {steps} steps")
+            self.save_best()
+
         while self.iteration < max_iter:
             try:
                 self.run_iteration()
