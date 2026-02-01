@@ -45,6 +45,15 @@ from davechess.engine.smart_seeds import generate_smart_seeds
 logger = logging.getLogger("davechess.training")
 
 
+def _get_rss_mb() -> float:
+    """Return current RSS in MB."""
+    try:
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # Linux: KB→MB
+    except Exception:
+        return 0.0
+
+
 def _log_memory(label: str):
     """Log current RSS and GPU memory at a phase transition point."""
     try:
@@ -128,6 +137,7 @@ class Trainer:
         self.iteration = 0
         self.best_elo_estimate = 0
         self.elo_estimate = 0  # Current network's estimated ELO (baseline=0)
+        self.consecutive_rejections = 0
 
         # Paths
         paths = config.get("paths", {})
@@ -161,6 +171,7 @@ class Trainer:
             "training_step": self.training_step,
             "iteration": self.iteration,
             "best_elo_estimate": self.best_elo_estimate,
+            "consecutive_rejections": self.consecutive_rejections,
         }
         if self.scaler is not None:
             checkpoint["scaler_state"] = self.scaler.state_dict()
@@ -221,6 +232,7 @@ class Trainer:
         self.training_step = checkpoint["training_step"]
         self.iteration = checkpoint["iteration"]
         self.best_elo_estimate = checkpoint.get("best_elo_estimate", 0)
+        self.consecutive_rejections = checkpoint.get("consecutive_rejections", 0)
 
         if self.scaler is not None and "scaler_state" in checkpoint:
             self.scaler.load_state_dict(checkpoint["scaler_state"])
@@ -505,13 +517,14 @@ class Trainer:
         logger.info(f"=== Iteration {self.iteration} ===")
         _log_memory("iteration_start")
 
-        # Periodic high-quality game injection (every 5 iterations)
-        # Explicitly free the pickle after copying to avoid holding 233MB
-        if self.iteration > 1 and self.iteration % 5 == 0:
-            logger.info(f"Adding high-quality seed games at iteration {self.iteration}")
-            self.seed_buffer(num_games=20)
-            gc.collect()
-            _log_memory("after_seed_injection")
+        # Periodic seed re-injection disabled — at higher ELO the heuristic seed
+        # data creates distribution mismatch that hurts eval performance.
+        # Seeds are already in the buffer from initial seeding at iteration 0.
+        # if self.iteration > 1 and self.iteration % 5 == 0:
+        #     logger.info(f"Adding high-quality seed games at iteration {self.iteration}")
+        #     self.seed_buffer(num_games=20)
+        #     gc.collect()
+        #     _log_memory("after_seed_injection")
 
         # Self-play phase — use current training network (not best_network)
         # This ensures self-play data always matches the network being trained,
@@ -646,6 +659,7 @@ class Trainer:
             self.best_elo_estimate = self.elo_estimate
             logger.info(f"New best network accepted! ELO: {self.elo_estimate:.0f} (+{elo_diff:.0f})")
             self.best_network.load_state_dict(self.network.state_dict())
+            self.consecutive_rejections = 0
             self.save_best()
             # Backup best model to W&B
             if self.use_wandb:
@@ -662,7 +676,24 @@ class Trainer:
                 wandb.log_artifact(artifact)
                 logger.info("Uploaded best model to W&B artifacts")
         else:
-            logger.info("New network rejected, keeping previous best.")
+            self.consecutive_rejections += 1
+            logger.info(f"New network rejected, keeping previous best. "
+                        f"({self.consecutive_rejections} consecutive rejections)")
+            # Auto-reset: after 7 consecutive rejections, reset training network
+            # to best model to escape local minima
+            max_rejections = train_cfg.get("max_consecutive_rejections", 7)
+            if self.consecutive_rejections >= max_rejections:
+                logger.warning(f"Resetting training network to best model after "
+                               f"{self.consecutive_rejections} consecutive rejections")
+                self.network.load_state_dict(self.best_network.state_dict())
+                self.consecutive_rejections = 0
+                if self.use_wandb:
+                    wandb.alert(
+                        title=f"Auto-reset at iter {self.iteration}",
+                        text=f"Training network reset to best model (ELO {self.best_elo_estimate:.0f}) "
+                             f"after {max_rejections} consecutive rejections",
+                        wait_duration=0,
+                    )
 
         eval_metrics = {
             "iteration": self.iteration,
@@ -682,6 +713,19 @@ class Trainer:
             wandb.run.summary["best_eval_win_rate"] = max(
                 wandb.run.summary.get("best_eval_win_rate", 0), win_rate)
             wandb.run.summary["total_iterations"] = self.iteration
+            # Email summary after every iteration
+            status = f"ACCEPTED ELO {self.best_elo_estimate:.0f} (+{elo_diff:.0f})" if accepted else "rejected"
+            wandb.alert(
+                title=f"Iter {self.iteration}: {status}",
+                text=(
+                    f"SP: {sp_stats['white_wins']}W/{sp_stats['black_wins']}B/{sp_stats['draws']}D "
+                    f"avg={sp_stats['avg_game_length']:.0f} moves\n"
+                    f"Loss: p={avg_losses['avg_policy_loss']:.4f} v={avg_losses['avg_value_loss']:.4f}\n"
+                    f"Eval: {win_rate:.3f} (W:{eval_results['wins']} L:{eval_results['losses']} D:{eval_results['draws']})\n"
+                    f"ELO: {self.best_elo_estimate:.0f} | Mem: RSS={_get_rss_mb():.0f}MB"
+                ),
+                wait_duration=0,
+            )
             # Alert on ELO milestones
             if accepted:
                 for threshold in [500, 1000, 1500, 2000]:

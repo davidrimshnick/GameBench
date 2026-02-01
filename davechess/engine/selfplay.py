@@ -193,6 +193,12 @@ def play_selfplay_game(mcts_engine: MCTS,
     else:
         winner = -1  # Draw
 
+    # Discard drawn games entirely — they produce only 0.0 value targets
+    # that teach the network "nothing happens", encouraging defensive play.
+    # Only decisive games provide meaningful gradient signal.
+    if winner == -1:
+        return []
+
     # Assign value targets based on outcome
     training_data = []
     for planes, policy_dict, player in examples:
@@ -205,7 +211,7 @@ def play_selfplay_game(mcts_engine: MCTS,
         if winner == player:
             value = 1.0
         else:
-            value = 0.0  # Losses and draws both get 0
+            value = 0.0  # Losses get 0
 
         training_data.append((planes, policy, value))
 

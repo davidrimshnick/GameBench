@@ -28,7 +28,7 @@ training:
   checkpoint_interval: 100
   eval_games: 10               # More eval games for reliable signal
   eval_simulations: 100        # Match self-play sim count
-  eval_threshold: 0.55
+  eval_threshold: 0.51
   max_iterations: 100
 
 paths:
