@@ -402,11 +402,11 @@ class Trainer:
                     policy = np.zeros(POLICY_SIZE, dtype=np.float32)
                     policy[move_to_policy_index(move)] = 1.0
 
-                    # Value from current player's perspective
+                    # Value from current player's perspective - only wins get 1.0
                     if int(winner) == int(state.current_player):
                         value = 1.0
                     else:
-                        value = -1.0
+                        value = 0.0  # Loss gets 0
 
                     self.replay_buffer.push(planes, policy, value)
                     total_positions += 1
