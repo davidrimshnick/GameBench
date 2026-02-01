@@ -189,18 +189,14 @@ def check_health(metrics: dict) -> list[tuple[str, bool, str]]:
     """
     checks = []
 
-    # Win condition distribution: no single condition >80% or <5% (for non-draw conditions)
+    # Win condition: all decisive games should be commander_capture
     wc = metrics["win_conditions"]
-    for cond in ["commander_capture", "resource_domination", "turn_limit"]:
-        pct = wc.get(cond, 0)
-        if pct > 80:
-            checks.append((f"win_cond_{cond}", False,
-                           f"{cond} at {pct:.1f}% (>80% threshold)"))
-        elif pct < 5 and cond != "turn_limit":  # turn_limit can be low
-            checks.append((f"win_cond_{cond}", False,
-                           f"{cond} at {pct:.1f}% (<5% threshold)"))
-        else:
-            checks.append((f"win_cond_{cond}", True, f"{cond} at {pct:.1f}%"))
+    cc_pct = wc.get("commander_capture", 0)
+    draw_pct = metrics.get("draw_rate", 0)
+    checks.append(("win_cond_commander_capture", cc_pct > 0,
+                   f"commander_capture at {cc_pct:.1f}%"))
+    checks.append(("draw_rate", draw_pct < 80,
+                   f"draw rate at {draw_pct:.1f}% ({'<80% ok' if draw_pct < 80 else '>80% too high'})"))
 
     # Average game length: 60-150
     avg = metrics["avg_length"]

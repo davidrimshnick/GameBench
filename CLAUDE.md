@@ -70,7 +70,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 1. **Value Target Structure**: Uses binary rewards (1.0 for wins, 0.0 for losses/draws) to encourage aggressive play, as the game tends toward defensive stalemates.
 
-2. **Smart Seed Generation**: Instead of MCTSLite's expensive random rollouts, uses heuristic players (`HeuristicPlayer`, `CommanderHunter`) that provide strategic seed games. Seeds are generated once and saved to `checkpoints/smart_seeds.pkl` (~20k positions, also backed up as W&B artifact `smart-seeds:latest`). Training automatically loads these instead of regenerating. At least one side must always be a `CommanderHunter` to ensure games end decisively. The model pre-trains on seed data before starting self-play. Located in:
+2. **Smart Seed Generation**: Instead of MCTSLite's expensive random rollouts, uses heuristic players (`HeuristicPlayer`, `CommanderHunter`) that provide strategic seed games. Seeds are generated once and saved to `checkpoints/smart_seeds.pkl` (~20k positions, backed up as W&B artifact `smart-seeds:latest`). **Not committed to git** (233MB) — download from W&B if missing. Training automatically loads these instead of regenerating. All seed games end in checkmate (draws are discarded). The model pre-trains on seed data before starting self-play. Located in:
    - `davechess/engine/heuristic_player.py` - Position evaluation and strategic play
    - `davechess/engine/smart_seeds.py` - Seed game generation module
    - `scripts/generate_and_save_seeds.py` - Standalone seed generator
@@ -87,17 +87,14 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 ### Critical Game Rules
 
 1. **Commander Safety**: Must resolve check immediately (move/block/capture)
-2. **Win Conditions** (checked in order):
-   - Checkmate opponent's Commander
-   - Control 5+ resource nodes
-   - Turn 100: most exclusive nodes
+2. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw.
 3. **Warrior Strength**: Base 1 + 1 per adjacent friendly Warrior (clustering bonus)
 4. **Bombard**: Can't use ranged attack against Commander (prevents cheese)
 
 ### Known Issues & Solutions
 
-1. **Defensive Stalemates**: Games naturally tend toward 200+ move defensive play
-   - Solution: Commander hunting strategies, aggressive heuristics, binary value targets
+1. **Defensive Stalemates**: Games naturally tend toward long defensive play ending in turn-100 draws
+   - Solution: Commander hunting strategies, aggressive heuristics, binary value targets (draws = 0.0, same as losses)
 
 2. **Slow Seed Generation**: MCTSLite with random rollouts takes minutes per game
    - Solution: Heuristic players provide 10x faster seed generation
@@ -130,8 +127,8 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 - `davechess/data/` - Game generation, ELO calibration
 - `davechess/benchmark/` - LLM evaluation framework
 - `configs/` - YAML configurations for all components
-- `checkpoints/` - Model checkpoints and seed game storage
-- `wandb/` - Weights & Biases tracking (auto-generated)
+- `checkpoints/` - Model checkpoints and seed game storage (gitignored, use W&B artifacts)
+- `wandb/` - Weights & Biases tracking (auto-generated, gitignored)
 
 ## Training Monitoring
 
@@ -146,7 +143,8 @@ Training logs to multiple destinations:
 Large files (seeds, checkpoints) should be stored as W&B artifacts, not committed to git (GitHub 100MB limit).
 
 Key metrics to watch:
-- `selfplay/avg_game_length` - Should be 30-100 moves, not 200+
+- `selfplay/avg_game_length` - Should decrease over time; turn 100 = draw limit
+- `selfplay/draw_rate` - Should decrease as model learns to checkmate before turn 100
 - `selfplay/white_win_rate` - Should stay near 0.5 for balance
 - `eval/win_rate` - Must exceed 0.55 to update best model
 - `training/policy_loss` - Should decrease over iterations
