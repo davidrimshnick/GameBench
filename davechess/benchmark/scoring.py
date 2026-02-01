@@ -115,6 +115,79 @@ def compute_gamebench_score(curve: list[tuple[int, float]],
     return max(0.0, min(100.0, score))
 
 
+def compute_budget_learning_curve(
+    results_by_budget: dict[int, float]
+) -> list[tuple[int, float]]:
+    """Convert {token_budget: elo} to a sorted learning curve.
+
+    Args:
+        results_by_budget: Dict mapping token budget to achieved ELO.
+
+    Returns:
+        Sorted list of (budget, ELO) points.
+    """
+    return sorted(results_by_budget.items())
+
+
+def compute_agentic_score(curve: list[tuple[int, float]],
+                           random_elo: float = 400.0,
+                           max_elo: float = 2700.0,
+                           max_budget: int = 10_000_000) -> float:
+    """Compute agentic GameBench score using log-scale AUC.
+
+    Uses log-scale for the x-axis since budgets span orders of magnitude
+    (100K to 10M). Each order of magnitude is weighted equally.
+
+    Score = (observed_AUC - random_AUC) / (perfect_AUC - random_AUC) * 100
+
+    Args:
+        curve: List of (budget, ELO) sorted by budget.
+        random_elo: ELO of random play (baseline).
+        max_elo: Maximum calibrated ELO (ceiling).
+        max_budget: Maximum budget for integration.
+
+    Returns:
+        Score between 0 and 100.
+    """
+    if len(curve) < 2:
+        if curve:
+            return max(0.0, min(100.0,
+                (curve[0][1] - random_elo) / (max_elo - random_elo) * 100.0
+            ))
+        return 0.0
+
+    # Clip to max_budget
+    curve = [(b, e) for b, e in curve if b <= max_budget]
+    if len(curve) < 2:
+        return 0.0
+
+    # Log-scale AUC using trapezoidal rule on log(budget)
+    auc = 0.0
+    for i in range(len(curve) - 1):
+        b1, e1 = curve[i]
+        b2, e2 = curve[i + 1]
+        if b1 <= 0 or b2 <= 0:
+            continue
+        log_width = math.log(b2) - math.log(b1)
+        auc += log_width * (e1 + e2) / 2.0
+
+    # Total log range for normalization
+    min_budget = curve[0][0]
+    capped_max = min(curve[-1][0], max_budget)
+    if min_budget <= 0 or capped_max <= min_budget:
+        return 0.0
+
+    log_range = math.log(capped_max) - math.log(min_budget)
+    random_auc = random_elo * log_range
+    perfect_auc = max_elo * log_range
+
+    if perfect_auc <= random_auc:
+        return 0.0
+
+    score = (auc - random_auc) / (perfect_auc - random_auc) * 100.0
+    return max(0.0, min(100.0, score))
+
+
 def format_results(model_name: str, curve: list[tuple[int, float]],
                    score: float) -> str:
     """Format benchmark results as a readable string."""

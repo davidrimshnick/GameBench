@@ -1,0 +1,33 @@
+api:
+  provider: "openai"  # "openai" or "anthropic"
+  model: "gpt-4"
+  temperature: 0.7
+  max_tokens: 4096
+
+budget:
+  token_budgets: [100000, 1000000, 10000000]
+  eval_reserve: 50000
+  context_window: 20  # rolling message window
+
+tools:
+  max_games_per_study: 20
+  max_concurrent_games: 5
+
+opponents:
+  calibration_file: "checkpoints/calibration.json"
+  checkpoint: "checkpoints/best.pt"
+  device: "cuda"
+
+evaluation:
+  target_rd: 50
+  max_games: 200
+  min_games: 10
+  initial_elo: 1000
+
+game_library:
+  path: "data/games/grandmaster"
+  max_games: 200
+
+output:
+  results_dir: "results/agentic"
+  save_transcripts: true

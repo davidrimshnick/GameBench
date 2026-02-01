@@ -161,3 +161,36 @@ def build_game_state_message(state: GameState, move_history_dcn: list[str],
     parts.append("Your move:")
 
     return "\n\n".join(parts)
+
+
+def build_agentic_system_prompt(token_budget: int) -> str:
+    """Build system prompt for the agentic benchmark.
+
+    Includes rules, budget info, and instructions about available tools.
+    """
+    rules = get_rules_prompt()
+    return f"""{rules}
+
+---
+
+You are an AI agent learning to play DaveChess. Your goal is to become as strong \
+a player as possible within your token budget.
+
+**Token budget:** {token_budget:,} tokens (input + output combined). All API calls \
+count against this budget, including during the evaluation phase.
+
+**Available tools:**
+- `study_games(n)`: Retrieve up to N grandmaster games from the library (max 20 per call)
+- `start_practice_game(opponent_elo)`: Start a practice game at chosen difficulty (400-2700 ELO)
+- `play_move(game_id, move_dcn)`: Make a move in DCN notation. The opponent responds immediately.
+- `get_game_state(game_id)`: Check the current board, legal moves, and history of a game
+
+**Strategy is up to you.** You might study games first, practice against weak opponents, \
+then work up to stronger ones — or any other approach you think will maximize your skill.
+
+**Important:** Your conversation history is limited to recent messages. If you want to \
+remember strategies, patterns, or notes across many turns, use your own note-taking \
+capabilities to persist information externally.
+
+When your budget is nearly exhausted, you will enter an **evaluation phase** where you \
+play rated games to determine your final ELO score. Evaluation tokens come from the same budget."""
