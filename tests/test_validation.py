@@ -25,7 +25,7 @@ class TestAnalyzeResults:
     def test_basic_analysis(self):
         results = [
             _make_result(0, "commander_capture", 80),
-            _make_result(1, "resource_domination", 120),
+            _make_result(1, "commander_capture", 120),
             _make_result(None, "draw", 200),
         ]
         metrics = analyze_results(results)
@@ -62,10 +62,10 @@ class TestHealthChecks:
                 results.append(_make_result(0, "commander_capture", 80,
                                             deployed_types=[(0, 1), (0, 2), (0, 3)]))
             elif i < 70:
-                results.append(_make_result(1, "resource_domination", 100,
+                results.append(_make_result(1, "commander_capture", 100,
                                             deployed_types=[(1, 1), (1, 2), (1, 3)]))
             elif i < 90:
-                results.append(_make_result(0, "turn_limit", 150,
+                results.append(_make_result(None, "draw", 200,
                                             deployed_types=[(0, 1)]))
             else:
                 results.append(_make_result(None, "draw", 200))

@@ -241,13 +241,6 @@ class HeuristicPlayer:
                 else:
                     opp_resources += 1
 
-        # Check for resource domination win
-        if my_resources >= 5:
-            return 1.0
-        if opp_resources >= 5:
-            return -1.0
-
-        # Otherwise normalize
         total = len(self.RESOURCE_NODES)
         return (my_resources - opp_resources) / total
 

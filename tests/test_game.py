@@ -353,31 +353,28 @@ class TestWinConditions:
         assert state.done
         assert state.winner == Player.WHITE
 
-    def test_resource_domination_wins(self):
-        """Occupying 4+ resource nodes wins."""
+    def test_resource_domination_does_not_win(self):
+        """Occupying all resource nodes does NOT end the game (only checkmate wins)."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
-        # Place white pieces adjacent to 6 resource nodes
         state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
         state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
 
-        # Control all resource nodes with white pieces
+        # Place white pieces on all resource nodes
         for r, c in RESOURCE_NODES:
             state.board[r][c] = Piece(PieceType.WARRIOR, Player.WHITE)
 
-        # Make a move that triggers the win check
+        # Make a move — game should NOT end
         state.board[6][6] = Piece(PieceType.WARRIOR, Player.WHITE)
         move = MoveStep((6, 6), (6, 5))
         apply_move(state, move)
-        assert state.done
-        assert state.winner == Player.WHITE
+        assert not state.done
 
     def test_turn_limit_draw(self):
-        """Turn 100+ with equal control results in tiebreak."""
+        """Turn 100+ always results in a draw (no tiebreaker)."""
         state = GameState()
         state.turn = 100
         state.current_player = Player.BLACK
-        # Black makes a move to trigger turn 101 check
         state.board = [[None] * 8 for _ in range(8)]
         state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
         state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
@@ -386,6 +383,7 @@ class TestWinConditions:
         move = MoveStep((6, 6), (6, 5))
         apply_move(state, move)
         assert state.done
+        assert state.winner is None  # Always draw, no tiebreaker
 
 
 class TestNotation:

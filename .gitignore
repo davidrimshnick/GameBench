@@ -9,7 +9,11 @@ build/
 
 # Checkpoints and logs
 checkpoints/*.pt
+checkpoints/*.npz
+checkpoints/*.pkl
+checkpoints/old_run_v1/
 logs/*.log
+logs/tensorboard/
 training_log.jsonl
 
 # Generated data

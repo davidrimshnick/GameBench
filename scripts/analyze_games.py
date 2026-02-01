@@ -124,12 +124,8 @@ def analyze_games(num_games: int = 100, simulations: int = 50):
 
         # Determine win type
         if winner is not None:
-            if not commander_white_alive:
+            if not commander_white_alive or not commander_black_alive:
                 stats['win_types']['commander_death'] += 1
-            elif not commander_black_alive:
-                stats['win_types']['commander_death'] += 1
-            elif resource_counts and max(resource_counts[-1]) >= 5:
-                stats['win_types']['resource_domination'] += 1
             else:
                 stats['win_types']['unknown'] += 1
 

@@ -47,10 +47,9 @@ You MUST resolve check on your turn (move Commander, block, or capture the attac
 If you cannot resolve check, it is checkmate and you lose.
 You cannot make a move that leaves your own Commander in check.
 
-## Win Conditions (checked in order)
+## Win Conditions
 1. Checkmate opponent's Commander (they have no legal move to escape check) → you win
-2. Occupy 4+ of 8 resource nodes (have your pieces physically on them) → you win
-3. Turn 100 → most exclusive resource nodes wins, tiebreak by piece count, then draw
+2. Turn 100 with no checkmate → draw
 
 ## Result
 - `1-0` = White wins, `0-1` = Black wins, `1/2-1/2` = Draw

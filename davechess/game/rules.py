@@ -58,7 +58,6 @@ def _count_controlled_nodes(state: GameState, player: Player) -> int:
     """Count resource nodes exclusively controlled by player.
 
     A node is exclusively controlled if the player controls it and the opponent does not.
-    Used for turn-limit tiebreaking.
     """
     opponent = Player(1 - player)
     count = 0
@@ -66,30 +65,6 @@ def _count_controlled_nodes(state: GameState, player: Player) -> int:
         if _player_controls_node(state, player, nr, nc) and \
            not _player_controls_node(state, opponent, nr, nc):
             count += 1
-    return count
-
-
-def _count_occupied_nodes(state: GameState, player: Player) -> int:
-    """Count resource nodes physically occupied by player's pieces.
-
-    Used for the resource domination win condition.
-    """
-    count = 0
-    for nr, nc in RESOURCE_NODES:
-        piece = state.board[nr][nc]
-        if piece is not None and piece.player == player:
-            count += 1
-    return count
-
-
-def _count_pieces(state: GameState, player: Player) -> int:
-    """Count total pieces for a player."""
-    count = 0
-    for row in range(BOARD_SIZE):
-        for col in range(BOARD_SIZE):
-            p = state.board[row][col]
-            if p is not None and p.player == player:
-                count += 1
     return count
 
 
@@ -494,13 +469,6 @@ def apply_move(state: GameState, move: Move) -> GameState:
 
     state.move_history.append(move)
 
-    # Check resource domination win (occupy 5+ of 8 resource nodes)
-    if not state.done:
-        occupied = _count_occupied_nodes(state, player)
-        if occupied >= 5:
-            state.done = True
-            state.winner = player
-
     # Switch player and advance turn
     if not state.done:
         state.current_player = opponent
@@ -511,25 +479,10 @@ def apply_move(state: GameState, move: Move) -> GameState:
         income = get_resource_income(state, state.current_player)
         state.resources[state.current_player] += income
 
-        # Check turn limit
+        # Check turn limit — draw if no checkmate by turn 100
         if state.turn > 100:
             state.done = True
-            white_nodes = _count_controlled_nodes(state, Player.WHITE)
-            black_nodes = _count_controlled_nodes(state, Player.BLACK)
-            if white_nodes > black_nodes:
-                state.winner = Player.WHITE
-            elif black_nodes > white_nodes:
-                state.winner = Player.BLACK
-            else:
-                # Tiebreak by piece count
-                white_pieces = _count_pieces(state, Player.WHITE)
-                black_pieces = _count_pieces(state, Player.BLACK)
-                if white_pieces > black_pieces:
-                    state.winner = Player.WHITE
-                elif black_pieces > white_pieces:
-                    state.winner = Player.BLACK
-                else:
-                    state.winner = None  # Draw
+            state.winner = None  # Draw
 
     # Checkmate/stalemate detection is handled lazily by generate_legal_moves()
     # when the next player tries to move and has no legal moves.
@@ -608,12 +561,6 @@ def apply_move_fast(state: GameState, move: Move) -> GameState:
     # state.move_history.append(move)
 
     if not state.done:
-        occupied = _count_occupied_nodes(state, player)
-        if occupied >= 5:
-            state.done = True
-            state.winner = player
-
-    if not state.done:
         state.current_player = opponent
         if player == Player.BLACK:
             state.turn += 1
@@ -621,23 +568,10 @@ def apply_move_fast(state: GameState, move: Move) -> GameState:
         income = get_resource_income(state, state.current_player)
         state.resources[state.current_player] += income
 
+        # Check turn limit — draw if no checkmate by turn 100
         if state.turn > 100:
             state.done = True
-            white_nodes = _count_controlled_nodes(state, Player.WHITE)
-            black_nodes = _count_controlled_nodes(state, Player.BLACK)
-            if white_nodes > black_nodes:
-                state.winner = Player.WHITE
-            elif black_nodes > white_nodes:
-                state.winner = Player.BLACK
-            else:
-                white_pieces = _count_pieces(state, Player.WHITE)
-                black_pieces = _count_pieces(state, Player.BLACK)
-                if white_pieces > black_pieces:
-                    state.winner = Player.WHITE
-                elif black_pieces > white_pieces:
-                    state.winner = Player.BLACK
-                else:
-                    state.winner = None
+            state.winner = None  # Draw
 
     return state
 
