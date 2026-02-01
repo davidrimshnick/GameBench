@@ -48,10 +48,12 @@ wandb login  # API key is in ~/.netrc
 python scripts/validate_game.py --num-games 500 --sims 50
 
 # Generate and save smart seed games (only needed once)
-python scripts/generate_and_save_seeds.py --num-games 150 --output checkpoints/smart_seeds.pkl
+python scripts/generate_and_save_seeds.py --num-games 500 --output checkpoints/smart_seeds.pkl
 
 # Check existing seed games
 python scripts/generate_and_save_seeds.py  # Shows stats without regenerating
+
+# Seeds are also stored as W&B artifact (smart-seeds:latest)
 
 # Quick balance check
 python scripts/quick_balance_check.py
@@ -68,10 +70,10 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 1. **Value Target Structure**: Uses binary rewards (1.0 for wins, 0.0 for losses/draws) to encourage aggressive play, as the game tends toward defensive stalemates.
 
-2. **Smart Seed Generation**: Instead of MCTSLite's expensive random rollouts, uses heuristic players (`HeuristicPlayer`, `CommanderHunter`) that provide strategic seed games. Seeds are generated once and saved to `checkpoints/smart_seeds.pkl` (15.9 MB, ~1400 positions). Training automatically loads these instead of regenerating. Located in:
+2. **Smart Seed Generation**: Instead of MCTSLite's expensive random rollouts, uses heuristic players (`HeuristicPlayer`, `CommanderHunter`) that provide strategic seed games. Seeds are generated once and saved to `checkpoints/smart_seeds.pkl` (~20k positions, also backed up as W&B artifact `smart-seeds:latest`). Training automatically loads these instead of regenerating. At least one side must always be a `CommanderHunter` to ensure games end decisively. The model pre-trains on seed data before starting self-play. Located in:
    - `davechess/engine/heuristic_player.py` - Position evaluation and strategic play
    - `davechess/engine/smart_seeds.py` - Seed game generation module
-   - `scripts/generate_smart_seeds.py` - Standalone seed generator
+   - `scripts/generate_and_save_seeds.py` - Standalone seed generator
 
 3. **Adaptive MCTS Simulations**: The `adaptive_simulations()` function in `training.py` scales simulation count based on model ELO (2 sims at ELO 0 → 200 sims at ELO 2000) to speed up early training.
 
@@ -122,13 +124,15 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 ## Training Monitoring
 
-**CRITICAL: Always ensure W&B is connected before starting training runs!**
+**CRITICAL: NEVER start a training run without W&B connected! Verify W&B shows "logging enabled" in the logs before proceeding. If W&B fails with "Broken pipe", kill any stale wandb processes first (`pkill -9 wandb`).**
 
 Training logs to multiple destinations:
 - **W&B Dashboard** - Primary monitoring at https://wandb.ai (MUST be connected)
 - Console output
 - `logs/training_log.jsonl` - Structured metrics
 - TensorBoard at `logs/tensorboard/`
+
+Large files (seeds, checkpoints) should be stored as W&B artifacts, not committed to git (GitHub 100MB limit).
 
 Key metrics to watch:
 - `selfplay/avg_game_length` - Should be 30-100 moves, not 200+
