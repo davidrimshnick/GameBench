@@ -1,8 +1,10 @@
 # GameBench
 
-Benchmark measuring how efficiently LLMs learn novel strategic reasoning from examples.
+A benchmark for **agentic learning** — measuring how well LLMs acquire novel strategic reasoning from experience, not memorization.
 
-A custom board game ("DaveChess") is designed to be absent from training data. An AlphaZero agent masters it via self-play on a Jetson Orin Nano. Synthetic grandmaster games are generated. Models are scored by how well they learn to play from in-context examples.
+LLMs trained on internet-scale data have seen chess, Go, and every popular board game. To test whether a model can actually *learn* strategy rather than recall it, we need a game that doesn't exist in any training corpus. GameBench uses **DaveChess**, a custom board game designed from scratch, paired with an AlphaZero engine that generates expert-level games as training signal.
+
+The core question: **given N example games of a game you've never seen, how quickly can you learn to play it well?**
 
 **Headline metric:** GameBench Score (0-100) = normalized area under the ELO-vs-N learning curve, where N = number of example games shown in context.
 
@@ -21,10 +23,9 @@ An original strategic board game on an 8x8 grid with 8 resource nodes.
 
 **Check:** If your Commander is under attack, you must resolve it (move, block, or capture). Cannot leave your Commander in check.
 
-**Win conditions (checked in order):**
-1. Checkmate opponent's Commander (no legal escape from check)
-2. Occupy 5+ of 8 resource nodes with your pieces
-3. Turn 100: most exclusive nodes, tiebreak by piece count
+**Win conditions:**
+1. Checkmate opponent's Commander (only way to win)
+2. Turn 100 with no checkmate = draw
 
 **Turn structure:** Gain +1 resource per controlled node, then move a piece OR deploy a new piece.
 
