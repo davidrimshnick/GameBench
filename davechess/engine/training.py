@@ -704,13 +704,13 @@ class Trainer:
             self.save_best()  # Save initial model as best
             # Improved seeding strategy to bootstrap learning
             logger.info("Using improved seed game strategy")
-            logger.info("Phase 1: High-quality seed games")
             self.seed_buffer(num_games=100)
-            logger.info("Phase 2: More seed games for diversity")
-            self.seed_buffer(num_games=50)
             logger.info(f"Initial seeding complete. Buffer size: {len(self.replay_buffer)}")
 
         # Now move training network to GPU
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         self.network.to(self.device)
         # Rebuild optimizer to point at GPU params
         train_cfg = self.config.get("training", {})
