@@ -83,7 +83,7 @@ python scripts/analyze_games.py
 
 The AlphaZero implementation has several critical modifications for DaveChess:
 
-1. **Value Target Structure**: Uses binary rewards (1.0 for wins, 0.0 for losses/draws) to encourage aggressive play, as the game tends toward defensive stalemates.
+1. **Value Target Structure**: Uses standard AlphaZero targets (+1.0 for wins, -1.0 for losses) with tanh output head. Drawn self-play games are discarded entirely (not added to replay buffer) since they provide no useful gradient signal and dilute decisive game data. Earlier versions incorrectly used 0/1 targets with a tanh head, causing the network to treat losses as neutral (tanh midpoint = 0 = "uncertain").
 
 2. **Smart Seed Generation**: Instead of MCTSLite's expensive random rollouts, uses heuristic players (`HeuristicPlayer`, `CommanderHunter`) that provide strategic seed games. Seeds are generated once and saved to `checkpoints/smart_seeds.pkl` (~20k positions, backed up as W&B artifact `smart-seeds:latest`). **Not committed to git** (233MB) — download from W&B if missing. Training automatically loads these instead of regenerating. All seed games end in checkmate (draws are discarded). The model pre-trains on seed data before starting self-play. Located in:
    - `davechess/engine/heuristic_player.py` - Position evaluation and strategic play
@@ -115,27 +115,39 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 ### Known Issues & Solutions
 
 1. **Defensive Stalemates**: Games naturally tend toward long defensive play ending in turn-100 draws
-   - Solution: Commander hunting strategies, aggressive heuristics, binary value targets (draws = 0.0, same as losses)
+   - Solution: Commander hunting strategies, aggressive heuristics, discard drawn games from training entirely, correct +1/-1 value targets with tanh head
+
+2. **Value Target / Activation Mismatch**: Using 0/1 value targets with tanh output [-1,+1] caused the network to learn that losing positions are neutral (0 = tanh midpoint). The network couldn't distinguish losses from draws, contributing to defensive play.
+   - Solution: Standard AlphaZero targets (+1 win, -1 loss) matching the tanh output range. All value target assignments must use +1/-1 (selfplay.py, smart_seeds.py, training.py MCTSLite fallback).
 
 2. **Slow Seed Generation**: MCTSLite with random rollouts takes minutes per game
    - Solution: Heuristic players provide 10x faster seed generation
 
-3. **Training Instability**: Early iterations produce all draws/max-length games
+4. **Training Instability**: Early iterations produce all draws/max-length games
    - Solution: Smart seeds with strategic play, adaptive simulation counts
 
-4. **Replay Buffer OOM on Checkpoint Load/Save**: The buffer at 50K+ positions contains ~960MB of planes and ~563MB of policies. Stacking the full buffer into a contiguous array for save/load caused OOM on the 8GB Jetson.
+5. **Draw Data Flooding Replay Buffer**: When 60-70% of self-play games are draws, the buffer fills with low-information positions that dilute the signal from decisive games.
+   - Solution: Discard drawn games entirely in `play_selfplay_game()` — return empty list when `winner == -1`. Only decisive games contribute training data.
+
+6. **Consecutive Rejection Stalls**: Training network can get stuck in local minima, failing eval repeatedly against the best network (7+ consecutive rejections observed).
+   - Solution: Auto-reset mechanism resets training network to best model weights after `max_consecutive_rejections` (default 7) consecutive failures. Counter persists across restarts via checkpoint.
+
+7. **Seed Re-injection Distribution Mismatch**: At higher ELO, periodic re-injection of heuristic seed data (every 5 iterations) creates a distribution mismatch that hurts eval performance.
+   - Solution: Disabled periodic seed re-injection. Seeds are only used for initial buffer seeding at iteration 0.
+
+8. **Replay Buffer OOM on Checkpoint Load/Save**: The buffer at 50K+ positions contains ~960MB of planes and ~563MB of policies. Stacking the full buffer into a contiguous array for save/load caused OOM on the 8GB Jetson.
    - Solution: Chunked save using memory-mapped files (5K positions per chunk, ~85MB peak). Chunked load processes arrays in slices. All buffer data enforced as float32 on push to prevent accidental float64 doubling.
 
-5. **CUDA Fragmentation After Self-play**: Higher adaptive sims fragment GPU memory, causing `NVML_SUCCESS` assert failures when transitioning to training.
+9. **CUDA Fragmentation After Self-play**: Higher adaptive sims fragment GPU memory, causing `NVML_SUCCESS` assert failures when transitioning to training.
    - Solution: `torch.cuda.empty_cache()` before training phase and before eval phase
 
-6. **Temperature Threshold Too Low**: At `temperature_threshold: 30`, the model played near-deterministically after move 30 with noisy policies, entrenching defensive patterns.
+10. **Temperature Threshold Too Low**: At `temperature_threshold: 30`, the model played near-deterministically after move 30 with noisy policies, entrenching defensive patterns.
    - Solution: Raised to 60 to maintain exploration longer in self-play
 
-7. **Seed Re-injection Memory Spike**: Periodic seed injection (every 5 iterations) loads a 233MB pickle. Without cleanup, the pickle data persists in memory alongside the replay buffer.
+11. **Seed Re-injection Memory Spike**: Periodic seed injection (every 5 iterations) loads a 233MB pickle. Without cleanup, the pickle data persists in memory alongside the replay buffer.
    - Solution: Explicit `del smart_buffer; gc.collect()` after copying seeds to replay buffer
 
-8. **Memory Diagnostics**: Silent OOM kills during training are hard to diagnose on Jetson (kernel kills process without error in app logs).
+12. **Memory Diagnostics**: Silent OOM kills during training are hard to diagnose on Jetson (kernel kills process without error in app logs).
    - Solution: `_log_memory()` helper logs RSS and GPU memory at phase transitions (after self-play, before/after eval, before/after checkpoint save). Explicit `del current_mcts, best_mcts; gc.collect()` after eval to free MCTS circular references.
 
 ### Hardware Constraints (Jetson Orin Nano)
@@ -205,5 +217,5 @@ Key metrics to watch:
 - `selfplay/avg_game_length` - Should decrease over time; turn 100 = draw limit
 - `selfplay/draw_rate` - Should decrease as model learns to checkmate before turn 100
 - `selfplay/white_win_rate` - Should stay near 0.5 for balance
-- `eval/win_rate` - Must exceed 0.55 to update best model
+- `eval/win_rate` - Must exceed 0.51 to update best model
 - `training/policy_loss` - Should decrease over iterations

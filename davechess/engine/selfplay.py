@@ -207,11 +207,11 @@ def play_selfplay_game(mcts_engine: MCTS,
         for idx, prob in policy_dict.items():
             policy[idx] = prob
 
-        # Value from this player's perspective - only wins get 1.0
+        # Value from this player's perspective: +1 win, -1 loss
         if winner == player:
             value = 1.0
         else:
-            value = 0.0  # Losses get 0
+            value = -1.0
 
         training_data.append((planes, policy, value))
 
