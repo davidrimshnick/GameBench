@@ -75,14 +75,14 @@ The AlphaZero implementation has several critical modifications for DaveChess:
    - `davechess/engine/smart_seeds.py` - Seed game generation module
    - `scripts/generate_and_save_seeds.py` - Standalone seed generator
 
-3. **Adaptive MCTS Simulations**: The `adaptive_simulations()` function in `training.py` scales simulation count based on model ELO (2 sims at ELO 0 → 200 sims at ELO 2000) to speed up early training.
+3. **Adaptive MCTS Simulations**: The `adaptive_simulations()` function in `training.py` scales simulation count based on model ELO (25 sims at ELO 0 → 100 sims at ELO 2000) to speed up early training. Min sims raised from 10→25 (selfplay) and 15→30 (eval) because too-shallow search produced low-quality data that couldn't learn from seed strategies.
 
 ### Game State Representation
 
 - **Board**: 8x8 grid stored as `state.board[row][col]` containing `Piece` objects
 - **Resources**: 8 fixed nodes at positions (0,3), (0,4), (7,3), (7,4), (3,0), (4,0), (3,7), (4,7)
 - **Neural Network Input**: 12 planes (6 piece types × 2 players) via `state_to_planes()`
-- **Move Encoding**: Policy size of 576 (64×9 actions per square) via `move_to_policy_index()`
+- **Move Encoding**: Policy size of 2240 (64×35 move slots per square) via `move_to_policy_index()`
 
 ### Critical Game Rules
 
@@ -105,12 +105,23 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 3. **Training Instability**: Early iterations produce all draws/max-length games
    - Solution: Smart seeds with strategic play, adaptive simulation counts
 
+4. **Replay Buffer OOM on Checkpoint Load**: The compressed NPZ buffer (~5MB on disk) decompresses to ~1.1GB (policies alone are 826MB at 96K×2240). Loading all arrays at once caused OOM on the 8GB Jetson.
+   - Solution: `load_data()` loads/deletes arrays sequentially so peak memory is ~max(single_array) not sum(all_arrays)
+
+5. **CUDA Fragmentation After Self-play**: Higher adaptive sims fragment GPU memory, causing `NVML_SUCCESS` assert failures when transitioning to training.
+   - Solution: `torch.cuda.empty_cache()` before training phase
+
+6. **Temperature Threshold Too Low**: At `temperature_threshold: 30`, the model played near-deterministically after move 30 with noisy policies, entrenching defensive patterns.
+   - Solution: Raised to 60 to maintain exploration longer in self-play
+
 ### Hardware Constraints (Jetson Orin Nano)
 
 - 8GB shared RAM (CPU + GPU)
 - Sequential GPU inference only (no multiprocessing)
 - Batch size 128, 5 ResBlocks, 64 filters optimized for memory
 - Training uses mixed precision (FP16) when available
+- Replay buffer at 100K positions uses ~1.1GB RAM — must load arrays sequentially to avoid OOM
+- Always call `torch.cuda.empty_cache()` before switching between self-play and training phases
 
 ## File Structure Notes
 

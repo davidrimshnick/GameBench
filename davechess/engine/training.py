@@ -509,6 +509,9 @@ class Trainer:
             return
 
         logger.info("Training phase...")
+        # Clear GPU cache before training to avoid CUDA fragmentation after self-play
+        if self.device != "cpu":
+            torch.cuda.empty_cache()
         batch_size = train_cfg.get("batch_size", 256)
         steps = train_cfg.get("steps_per_iteration", 1000)
         checkpoint_interval = train_cfg.get("checkpoint_interval", 500)
