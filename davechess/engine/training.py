@@ -34,11 +34,12 @@ try:
 except ImportError:
     HAS_TB = False
 
-from davechess.engine.network import DaveChessNetwork, POLICY_SIZE
+from davechess.engine.network import DaveChessNetwork, POLICY_SIZE, state_to_planes, move_to_policy_index
 from davechess.engine.selfplay import ReplayBuffer, run_selfplay_batch
 from davechess.engine.mcts import MCTS
 from davechess.game.state import GameState, Player
 from davechess.game.rules import generate_legal_moves, apply_move
+from davechess.data.generator import MCTSLiteAgent, play_game
 
 logger = logging.getLogger("davechess.training")
 
@@ -362,6 +363,45 @@ class Trainer:
                     self.tb_writer.add_scalar(tag, v, self.training_step)
             self.tb_writer.flush()
 
+    def seed_buffer(self, num_games: int = 50, mcts_sims: int = 50):
+        """Seed replay buffer with games from MCTSLite (no neural network).
+
+        Generates decisive games and converts them to training examples
+        to bootstrap learning before self-play produces useful data.
+        """
+        logger.info(f"Seeding buffer with {num_games} MCTSLite games ({mcts_sims} sims)...")
+        agent = MCTSLiteAgent(num_simulations=mcts_sims)
+        total_positions = 0
+
+        for game_idx in range(num_games):
+            moves, winner, turns = play_game(agent, agent)
+            if winner is None:
+                continue  # Skip draws
+
+            # Replay game to extract training examples
+            state = GameState()
+            for move in moves:
+                planes = state_to_planes(state)
+                policy = np.zeros(POLICY_SIZE, dtype=np.float32)
+                policy[move_to_policy_index(move)] = 1.0
+
+                # Value from current player's perspective
+                if int(winner) == int(state.current_player):
+                    value = 1.0
+                else:
+                    value = -1.0
+
+                self.replay_buffer.push(planes, policy, value)
+                total_positions += 1
+                apply_move(state, move)
+
+            if (game_idx + 1) % 10 == 0:
+                logger.info(f"  Seed game {game_idx+1}/{num_games}: "
+                            f"{total_positions} total positions")
+
+        logger.info(f"Seeded buffer with {total_positions} positions from "
+                    f"{num_games} games. Buffer size: {len(self.replay_buffer)}")
+
     def run_iteration(self):
         """Run one training iteration: self-play + training + evaluation."""
         sp_cfg = self.config.get("selfplay", {})
@@ -371,6 +411,11 @@ class Trainer:
         self.iteration += 1
         iteration_start = time.time()
         logger.info(f"=== Iteration {self.iteration} ===")
+
+        # Periodic high-quality game injection (every 5 iterations)
+        if self.iteration > 1 and self.iteration % 5 == 0:
+            logger.info(f"Adding high-quality MCTS games at iteration {self.iteration}")
+            self.seed_buffer(num_games=20, mcts_sims=100)
 
         # Self-play phase — use current training network (not best_network)
         # This ensures self-play data always matches the network being trained,
@@ -563,6 +608,13 @@ class Trainer:
         else:
             logger.info("Starting fresh training")
             self.save_best()  # Save initial model as best
+            # Improved seeding strategy to bootstrap learning
+            logger.info("Using improved seed game strategy")
+            logger.info("Phase 1: High-quality seed games")
+            self.seed_buffer(num_games=100, mcts_sims=50)
+            logger.info("Phase 2: Medium-quality seed games for diversity")
+            self.seed_buffer(num_games=50, mcts_sims=25)
+            logger.info(f"Initial seeding complete. Buffer size: {len(self.replay_buffer)}")
 
         # Now move training network to GPU
         self.network.to(self.device)

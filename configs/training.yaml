@@ -17,14 +17,14 @@ selfplay:
   num_games_per_iteration: 20  # More games = more diverse training data
   replay_buffer_size: 100000
   num_workers: 1               # Sequential GPU inference (no CPU multiprocessing)
-  min_buffer_size: 3000        # Don't train until buffer has enough data
+  min_buffer_size: 5000        # Higher minimum for better initial training
 
 training:
   batch_size: 128
-  learning_rate: 0.002         # Lower LR for more stable learning
+  learning_rate: 0.001         # Lower LR for more stable learning
   momentum: 0.9
   weight_decay: 0.0001
-  steps_per_iteration: 100     # Fewer steps to reduce overfitting (~1 epoch)
+  steps_per_iteration: 150     # More steps with better quality data
   checkpoint_interval: 100
   eval_games: 10               # More eval games for reliable signal
   eval_simulations: 100        # Match self-play sim count
