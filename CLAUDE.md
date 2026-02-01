@@ -28,6 +28,7 @@ python scripts/play.py --mcts-vs-mcts 50 50  # Watch MCTS vs MCTS
 
 ### Training
 ```bash
+# IMPORTANT: Always use W&B for monitoring! The API key is already configured locally.
 # Start AlphaZero training (requires CUDA)
 python scripts/train.py --config configs/training.yaml
 
@@ -36,6 +37,9 @@ tensorboard --logdir logs/tensorboard
 
 # Resume training from checkpoint
 python scripts/train.py --config configs/training.yaml  # Automatically resumes
+
+# If W&B fails to connect, check credentials:
+wandb login  # API key is in ~/.netrc
 ```
 
 ### Game Analysis & Seed Generation
@@ -118,11 +122,13 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 ## Training Monitoring
 
+**CRITICAL: Always ensure W&B is connected before starting training runs!**
+
 Training logs to multiple destinations:
+- **W&B Dashboard** - Primary monitoring at https://wandb.ai (MUST be connected)
 - Console output
 - `logs/training_log.jsonl` - Structured metrics
 - TensorBoard at `logs/tensorboard/`
-- W&B dashboard (if configured)
 
 Key metrics to watch:
 - `selfplay/avg_game_length` - Should be 30-100 moves, not 200+
