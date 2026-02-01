@@ -1,0 +1,49 @@
+# Improved AlphaZero training configuration
+# Optimized for better seed games and stable learning
+network:
+  num_res_blocks: 5
+  num_filters: 64
+  input_planes: 12
+  board_size: 8
+
+mcts:
+  num_simulations: 100         # Good depth for policy targets
+  cpuct: 1.5
+  dirichlet_alpha: 0.3
+  dirichlet_epsilon: 0.25
+  temperature_threshold: 30    # Moves before temperature drops
+
+selfplay:
+  num_games_per_iteration: 20  # Keep same for consistency
+  replay_buffer_size: 100000
+  num_workers: 1
+  min_buffer_size: 5000        # Higher minimum for better initial training
+
+training:
+  batch_size: 128
+  learning_rate: 0.001         # Slightly lower for stability
+  momentum: 0.9
+  weight_decay: 0.0001
+  steps_per_iteration: 150     # More steps with better data
+  checkpoint_interval: 100
+  eval_games: 10
+  eval_simulations: 100
+  eval_threshold: 0.55
+  max_iterations: 100
+
+# Improved seeding parameters (used by train_improved.py)
+seeding:
+  initial_high_quality_games: 100
+  initial_high_quality_sims: 50
+  initial_medium_quality_games: 50
+  initial_medium_quality_sims: 25
+  periodic_injection_interval: 5    # Every 5 iterations
+  periodic_injection_games: 20
+  periodic_injection_sims: 100
+  post_acceptance_games: 10
+  post_acceptance_sims: 75
+
+paths:
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+  training_log: "training_log.jsonl"
