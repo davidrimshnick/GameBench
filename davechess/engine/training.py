@@ -516,6 +516,7 @@ class Trainer:
                     f"avg={sp_stats['avg_game_length']:.0f}")
 
         sp_metrics = {
+            "iteration": self.iteration,
             "selfplay/num_examples": num_new_examples,
             "selfplay/buffer_size": len(self.replay_buffer),
             "selfplay/elapsed_sec": selfplay_elapsed,
@@ -530,6 +531,12 @@ class Trainer:
         }
         if self.use_wandb:
             wandb.log(sp_metrics, step=self.training_step)
+            # Log per-game details as a table
+            if "game_details" in sp_stats:
+                table = wandb.Table(columns=["game", "length", "winner"])
+                for g in sp_stats["game_details"]:
+                    table.add_data(g["game"], g["length"], g["winner"])
+                wandb.log({"selfplay/games": table}, step=self.training_step)
         if self.tb_writer:
             for k, v in sp_metrics.items():
                 self.tb_writer.add_scalar(k, v, self.training_step)
@@ -623,6 +630,7 @@ class Trainer:
             logger.info("New network rejected, keeping previous best.")
 
         eval_metrics = {
+            "iteration": self.iteration,
             "eval/win_rate": win_rate,
             "eval/wins": eval_results["wins"],
             "eval/losses": eval_results["losses"],
@@ -630,10 +638,25 @@ class Trainer:
             "eval/avg_game_length": eval_results["avg_game_length"],
             "eval/accepted": int(accepted),
             "eval/elapsed_sec": eval_elapsed,
-            "eval/elo": self.elo_estimate,
+            "elo": self.best_elo_estimate,
         }
         if self.use_wandb:
             wandb.log(eval_metrics, step=self.training_step)
+            # Update summary with best values
+            wandb.run.summary["best_elo"] = self.best_elo_estimate
+            wandb.run.summary["best_eval_win_rate"] = max(
+                wandb.run.summary.get("best_eval_win_rate", 0), win_rate)
+            wandb.run.summary["total_iterations"] = self.iteration
+            # Alert on ELO milestones
+            if accepted:
+                for threshold in [500, 1000, 1500, 2000]:
+                    prev_elo = self.best_elo_estimate - elo_diff
+                    if prev_elo < threshold <= self.best_elo_estimate:
+                        wandb.alert(
+                            title=f"ELO milestone: {threshold}",
+                            text=f"Model reached ELO {self.best_elo_estimate:.0f} "
+                                 f"at iteration {self.iteration}",
+                        )
         if self.tb_writer:
             for k, v in eval_metrics.items():
                 self.tb_writer.add_scalar(k, v, self.training_step)

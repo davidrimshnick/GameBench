@@ -78,6 +78,11 @@ def init_wandb(config: dict, device: str) -> bool:
             tags=["alphazero", "jetson"],
             save_code=False,
         )
+        # Per-iteration metrics use iteration as x-axis for cleaner charts
+        wandb.define_metric("iteration")
+        wandb.define_metric("eval/*", step_metric="iteration")
+        wandb.define_metric("selfplay/*", step_metric="iteration")
+        wandb.define_metric("elo", step_metric="iteration")
         return True
     except Exception as e:
         logging.getLogger("davechess.train").warning(f"W&B init failed: {e}")

@@ -207,6 +207,7 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
     black_wins = 0
     draws = 0
     game_lengths = []
+    game_details = []
 
     for game_idx in range(num_games):
         examples = play_selfplay_game(mcts, temperature_threshold)
@@ -216,24 +217,29 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
 
         # Determine winner from value targets: last position's value
         # tells us the outcome (1.0 = that player won, -1.0 = lost, 0 = draw)
+        winner = "draw"
         if examples:
             last_value = examples[-1][2]  # value_target of last position
-            last_player = 0  # We need to check who moved last
             # Even positions (0, 2, 4...) = White's turn, odd = Black's
             if game_len % 2 == 1:  # odd length = White moved last
                 if last_value > 0:
                     white_wins += 1
+                    winner = "white"
                 elif last_value < 0:
                     black_wins += 1
+                    winner = "black"
                 else:
                     draws += 1
             else:  # even length = Black moved last
                 if last_value > 0:
                     black_wins += 1
+                    winner = "black"
                 elif last_value < 0:
                     white_wins += 1
+                    winner = "white"
                 else:
                     draws += 1
+        game_details.append({"game": game_idx + 1, "length": game_len, "winner": winner})
 
         logger.info(f"  Self-play game {game_idx+1}/{num_games}: "
                     f"{game_len} moves, {len(all_examples)} total positions")
@@ -248,6 +254,7 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
         "avg_game_length": sum(game_lengths) / len(game_lengths) if game_lengths else 0,
         "min_game_length": min(game_lengths) if game_lengths else 0,
         "max_game_length": max(game_lengths) if game_lengths else 0,
+        "game_details": game_details,
     }
 
     return all_examples, stats
