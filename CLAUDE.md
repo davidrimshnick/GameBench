@@ -83,7 +83,7 @@ python scripts/analyze_games.py
 
 The AlphaZero implementation has several critical modifications for DaveChess:
 
-1. **Value Target Structure**: Uses standard AlphaZero targets (+1.0 for wins, -1.0 for losses) with tanh output head. Drawn self-play games are discarded entirely (not added to replay buffer) since they provide no useful gradient signal and dilute decisive game data. Earlier versions incorrectly used 0/1 targets with a tanh head, causing the network to treat losses as neutral (tanh midpoint = 0 = "uncertain").
+1. **Value Target Structure**: Uses standard AlphaZero three-valued targets (+1.0 for wins, 0.0 for draws, -1.0 for losses) with tanh output head. Drawn games are included in training data so the model learns that draw-prone positions are worse than winning ones. Earlier versions incorrectly used 0/1 targets with a tanh head, causing the network to treat losses as neutral (tanh midpoint = 0 = "uncertain"). Another earlier version discarded draws entirely, but with the threefold repetition rule, draws carry meaningful signal.
 
 2. **Smart Seed Generation**: Instead of MCTSLite's expensive random rollouts, uses heuristic players (`HeuristicPlayer`, `CommanderHunter`) that provide strategic seed games. Seeds are generated once and saved to `checkpoints/smart_seeds.pkl` (~20k positions, backed up as W&B artifact `smart-seeds:latest`). **Not committed to git** (233MB) — download from W&B if missing. Training automatically loads these instead of regenerating. All seed games end in checkmate (draws are discarded). The model pre-trains on seed data before starting self-play. Located in:
    - `davechess/engine/heuristic_player.py` - Position evaluation and strategic play
@@ -104,7 +104,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 **When changing game rules, update ALL three locations: `davechess/game/rules.py`, `davechess/benchmark/prompt.py` (RULES_TEXT), and `README.md` (DaveChess section).**
 
 1. **Commander Safety**: Must resolve check immediately (move/block/capture)
-2. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player + resources) = draw.
+2. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player, excluding resources) = draw.
 3. **Piece Types**: Commander (C, str 2), Warrior (W, str 1 + adjacency), Rider (R, str 2), Bombard (B, str 0), Lancer (L, str 3, diagonal up to 4 squares with jump)
 4. **Deploy Costs**: W=2, R=4, B=5, L=6
 5. **Warrior Strength**: Base 1 + 1 per adjacent friendly Warrior (clustering bonus)
@@ -127,7 +127,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
    - Solution: Smart seeds with strategic play, adaptive simulation counts
 
 5. **Draw Data Flooding Replay Buffer**: When 60-70% of self-play games are draws, the buffer fills with low-information positions that dilute the signal from decisive games.
-   - Solution: Discard drawn games entirely in `play_selfplay_game()` — return empty list when `winner == -1`. Only decisive games contribute training data.
+   - Solution (previous): Discarded draws entirely. (Current): With threefold repetition rule, draws carry meaningful signal. Draws are now kept with value target 0.0 (standard AlphaZero three-valued targets). The repetition rule shortens the worst-case draws, and the model learns to avoid draw-prone positions.
 
 6. **Consecutive Rejection Stalls**: Training network can get stuck in local minima, failing eval repeatedly against the best network (7+ consecutive rejections observed).
    - Solution: Auto-reset mechanism resets training network to best model weights after `max_consecutive_rejections` (default 7) consecutive failures. Counter persists across restarts via checkpoint.
@@ -151,7 +151,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
    - Solution: `_log_memory()` helper logs RSS and GPU memory at phase transitions (after self-play, before/after eval, before/after checkpoint save). Explicit `del current_mcts, best_mcts; gc.collect()` after eval to free MCTS circular references.
 
 13. **Threefold Repetition**: At high ELO (2000+), 75% of self-play games end in draws via Warrior-toggle oscillation (Wb1-c1/Wc1-b1 repeated to turn 100). The policy network couldn't learn to avoid repetition because the rule wasn't in `apply_move()`.
-   - Solution: Added `position_counts` dict to `GameState` tracking `get_board_tuple()` occurrences. In `apply_move()`, draw is declared when any position occurs 3 times. NOT in `apply_move_fast()` (MCTS rollouts) — the value network learns repetition is bad through training on actual games. The `clone()` method copies `position_counts` so game loops from cloned states track correctly.
+   - Solution: Added `position_counts` dict to `GameState` tracking `get_position_key()` occurrences (board + current_player only, excluding resources — resources change every turn via income, preventing repeats). In `apply_move()`, draw is declared when any position occurs 3 times. NOT in `apply_move_fast()` (MCTS rollouts) — the value network learns repetition is bad through training on actual games. The `clone()` method copies `position_counts` so game loops from cloned states track correctly.
 
 ### Hardware Constraints (Jetson Orin Nano)
 
