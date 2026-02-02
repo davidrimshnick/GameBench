@@ -541,10 +541,11 @@ def apply_move(state: GameState, move: Move) -> GameState:
             state.winner = None  # Draw
 
         # Check threefold repetition — draw if same position occurs 3 times
+        # Uses board + player only (excludes resources, which change every turn)
         if not state.done:
-            board_key = state.get_board_tuple()
-            state.position_counts[board_key] = state.position_counts.get(board_key, 0) + 1
-            if state.position_counts[board_key] >= 3:
+            pos_key = state.get_position_key()
+            state.position_counts[pos_key] = state.position_counts.get(pos_key, 0) + 1
+            if state.position_counts[pos_key] >= 3:
                 state.done = True
                 state.winner = None  # Draw by repetition
 

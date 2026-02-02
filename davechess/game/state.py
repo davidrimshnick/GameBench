@@ -138,8 +138,8 @@ class GameState:
         self.move_history: list[Move] = []
         self.position_counts: dict[tuple, int] = {}
         self._setup_starting_position()
-        # Record starting position
-        self.position_counts[self.get_board_tuple()] = 1
+        # Record starting position for threefold repetition detection
+        self.position_counts[self.get_position_key()] = 1
 
     def _setup_starting_position(self):
         """Place pieces in their starting positions."""
@@ -168,7 +168,9 @@ class GameState:
         return None
 
     def get_board_tuple(self) -> tuple:
-        """Return a hashable representation of the board for state comparison."""
+        """Return a hashable representation of the board for state comparison.
+        Includes resources — use get_position_key() for repetition detection.
+        """
         cells = []
         for row in range(BOARD_SIZE):
             for col in range(BOARD_SIZE):
@@ -178,6 +180,20 @@ class GameState:
                 else:
                     cells.append((cell.piece_type, cell.player))
         return (tuple(cells), self.current_player, self.resources[0], self.resources[1])
+
+    def get_position_key(self) -> tuple:
+        """Return a hashable key for threefold repetition detection.
+        Excludes resources (they change every turn via income, preventing repeats).
+        """
+        cells = []
+        for row in range(BOARD_SIZE):
+            for col in range(BOARD_SIZE):
+                cell = self.board[row][col]
+                if cell is None:
+                    cells.append(None)
+                else:
+                    cells.append((cell.piece_type, cell.player))
+        return (tuple(cells), self.current_player)
 
     def serialize(self) -> str:
         """Serialize game state to JSON string."""
