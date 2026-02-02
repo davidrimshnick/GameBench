@@ -137,6 +137,7 @@ class GameState:
         self.winner: Optional[Player] = None  # None = draw if done
         self.move_history: list[Move] = []
         self.position_counts: dict[tuple, int] = {}
+        self.halfmove_clock: int = 0  # Moves since last capture or deploy (50-move rule)
         self._setup_starting_position()
         # Record starting position for threefold repetition detection
         self.position_counts[self.get_position_key()] = 1
@@ -159,6 +160,7 @@ class GameState:
         new.winner = self.winner
         new.move_history = []  # Don't copy history for MCTS clones
         new.position_counts = self.position_counts.copy()
+        new.halfmove_clock = self.halfmove_clock
         return new
 
     def get_piece_at(self, row: int, col: int) -> Optional[Piece]:
@@ -237,6 +239,7 @@ class GameState:
         state.winner = Player(d["winner"]) if d["winner"] is not None else None
         state.move_history = []
         state.position_counts = {}
+        state.halfmove_clock = 0
         return state
 
     def to_display_board(self) -> list[list]:

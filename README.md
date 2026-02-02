@@ -54,6 +54,7 @@ If your Commander is under attack, you **must** resolve it (move, block, or capt
 1. **Checkmate** opponent's Commander → you win
 2. **Turn 100** with no checkmate → draw
 3. **Threefold repetition** of the same board position → draw
+4. **50-move rule**: 50 moves per side with no capture or deploy → draw
 
 ### Turn Structure
 

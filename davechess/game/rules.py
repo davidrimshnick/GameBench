@@ -525,6 +525,14 @@ def apply_move(state: GameState, move: Move) -> GameState:
 
     state.move_history.append(move)
 
+    # Update halfmove clock (50-move rule): reset on capture/deploy/bombard, else increment
+    if isinstance(move, MoveStep) and move.is_capture:
+        state.halfmove_clock = 0
+    elif isinstance(move, (Deploy, BombardAttack)):
+        state.halfmove_clock = 0
+    else:
+        state.halfmove_clock += 1
+
     # Switch player and advance turn
     if not state.done:
         state.current_player = opponent
@@ -539,6 +547,11 @@ def apply_move(state: GameState, move: Move) -> GameState:
         if state.turn > 100:
             state.done = True
             state.winner = None  # Draw
+
+        # Check 50-move rule — draw if 100 halfmoves with no capture or deploy
+        if not state.done and state.halfmove_clock >= 100:
+            state.done = True
+            state.winner = None  # Draw by 50-move rule
 
         # Check threefold repetition — draw if same position occurs 3 times
         # Uses board + player only (excludes resources, which change every turn)
@@ -625,6 +638,14 @@ def apply_move_fast(state: GameState, move: Move) -> GameState:
     # Skip move_history for fast rollouts
     # state.move_history.append(move)
 
+    # Update halfmove clock (50-move rule)
+    if isinstance(move, MoveStep) and move.is_capture:
+        state.halfmove_clock = 0
+    elif isinstance(move, (Deploy, BombardAttack)):
+        state.halfmove_clock = 0
+    else:
+        state.halfmove_clock += 1
+
     if not state.done:
         state.current_player = opponent
         if player == Player.BLACK:
@@ -637,6 +658,11 @@ def apply_move_fast(state: GameState, move: Move) -> GameState:
         if state.turn > 100:
             state.done = True
             state.winner = None  # Draw
+
+        # Check 50-move rule — draw if 100 halfmoves with no capture or deploy
+        if not state.done and state.halfmove_clock >= 100:
+            state.done = True
+            state.winner = None  # Draw by 50-move rule
 
         # Check threefold repetition (same logic as apply_move)
         if not state.done:

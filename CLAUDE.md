@@ -104,7 +104,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 **When changing game rules, update ALL three locations: `davechess/game/rules.py`, `davechess/benchmark/prompt.py` (RULES_TEXT), and `README.md` (DaveChess section).**
 
 1. **Commander Safety**: Must resolve check immediately (move/block/capture)
-2. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player, excluding resources) = draw.
+2. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player, excluding resources) = draw. 50-move rule: 50 moves per side (100 halfmoves) with no capture or deploy = draw.
 3. **Piece Types**: Commander (C, str 2), Warrior (W, str 1 + adjacency), Rider (R, str 2), Bombard (B, str 0), Lancer (L, str 3, diagonal up to 4 squares with jump)
 4. **Deploy Costs**: W=2, R=4, B=5, L=6
 5. **Warrior Strength**: Base 1 + 1 per adjacent friendly Warrior (clustering bonus)
