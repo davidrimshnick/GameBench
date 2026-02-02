@@ -204,11 +204,6 @@ def play_selfplay_game(mcts_engine: MCTS,
 
     game_record = {"moves": game_moves, "winner": winner_str, "length": move_count}
 
-    # Discard drawn games from training — they dilute decisive game signal.
-    # Game record is still returned for logging.
-    if winner == -1:
-        return [], game_record
-
     # Assign value targets based on outcome
     training_data = []
     for planes, policy_dict, player in examples:
@@ -217,8 +212,10 @@ def play_selfplay_game(mcts_engine: MCTS,
         for idx, prob in policy_dict.items():
             policy[idx] = prob
 
-        # Value from this player's perspective: +1 win, -1 loss
-        if winner == player:
+        # Value from this player's perspective: +1 win, -1 loss, 0 draw
+        if winner == -1:
+            value = 0.0
+        elif winner == player:
             value = 1.0
         else:
             value = -1.0
