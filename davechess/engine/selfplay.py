@@ -188,8 +188,8 @@ def play_selfplay_game(mcts_engine: MCTS,
         planes = state_to_planes(state)
         examples.append((planes, info["policy_target"], int(state.current_player)))
 
-        # Record move for game log (state is copied by apply_move)
-        game_moves.append((state, move))
+        # Record move for game log (apply_move mutates in-place, so clone first)
+        game_moves.append((state.clone(), move))
 
         state = apply_move(state, move)
         move_count += 1
