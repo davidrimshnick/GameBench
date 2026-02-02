@@ -596,7 +596,13 @@ class Trainer:
         if self.device != "cpu":
             torch.cuda.empty_cache()
         batch_size = train_cfg.get("batch_size", 256)
-        steps = train_cfg.get("steps_per_iteration", 1000)
+        max_steps = train_cfg.get("steps_per_iteration", 1000)
+        # Scale steps to buffer size: ~2 passes through the data, capped at max_steps.
+        # Prevents overfitting when buffer is small (e.g. 2K positions × 300 steps = 16x overfit).
+        buf_size = len(self.replay_buffer)
+        steps = min(max_steps, max(1, (buf_size * 2) // batch_size))
+        if steps < max_steps:
+            logger.info(f"Scaled training steps {max_steps} -> {steps} for buffer size {buf_size}")
         checkpoint_interval = train_cfg.get("checkpoint_interval", 500)
 
         total_loss_sum = 0.0
