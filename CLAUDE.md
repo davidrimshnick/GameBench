@@ -104,7 +104,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 **When changing game rules, update ALL three locations: `davechess/game/rules.py`, `davechess/benchmark/prompt.py` (RULES_TEXT), and `README.md` (DaveChess section).**
 
 1. **Commander Safety**: Must resolve check immediately (move/block/capture)
-2. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw.
+2. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player + resources) = draw.
 3. **Piece Types**: Commander (C, str 2), Warrior (W, str 1 + adjacency), Rider (R, str 2), Bombard (B, str 0), Lancer (L, str 3, diagonal up to 4 squares with jump)
 4. **Deploy Costs**: W=2, R=4, B=5, L=6
 5. **Warrior Strength**: Base 1 + 1 per adjacent friendly Warrior (clustering bonus)
@@ -114,8 +114,8 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 ### Known Issues & Solutions
 
-1. **Defensive Stalemates**: Games naturally tend toward long defensive play ending in turn-100 draws
-   - Solution: Commander hunting strategies, aggressive heuristics, discard drawn games from training entirely, correct +1/-1 value targets with tanh head
+1. **Defensive Stalemates**: Games naturally tend toward long defensive play ending in turn-100 draws. Warrior-toggle pattern (Wb1-c1/Wc1-b1 oscillation) wastes moves in drawn positions.
+   - Solution: Commander hunting strategies, aggressive heuristics, discard drawn games from training entirely, correct +1/-1 value targets with tanh head, threefold repetition draw rule (ends repetitive games early instead of grinding to turn 100)
 
 2. **Value Target / Activation Mismatch**: Using 0/1 value targets with tanh output [-1,+1] caused the network to learn that losing positions are neutral (0 = tanh midpoint). The network couldn't distinguish losses from draws, contributing to defensive play.
    - Solution: Standard AlphaZero targets (+1 win, -1 loss) matching the tanh output range. All value target assignments must use +1/-1 (selfplay.py, smart_seeds.py, training.py MCTSLite fallback).
@@ -149,6 +149,9 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 12. **Memory Diagnostics**: Silent OOM kills during training are hard to diagnose on Jetson (kernel kills process without error in app logs).
    - Solution: `_log_memory()` helper logs RSS and GPU memory at phase transitions (after self-play, before/after eval, before/after checkpoint save). Explicit `del current_mcts, best_mcts; gc.collect()` after eval to free MCTS circular references.
+
+13. **Threefold Repetition**: At high ELO (2000+), 75% of self-play games end in draws via Warrior-toggle oscillation (Wb1-c1/Wc1-b1 repeated to turn 100). The policy network couldn't learn to avoid repetition because the rule wasn't in `apply_move()`.
+   - Solution: Added `position_counts` dict to `GameState` tracking `get_board_tuple()` occurrences. In `apply_move()`, draw is declared when any position occurs 3 times. NOT in `apply_move_fast()` (MCTS rollouts) — the value network learns repetition is bad through training on actual games. The `clone()` method copies `position_counts` so game loops from cloned states track correctly.
 
 ### Hardware Constraints (Jetson Orin Nano)
 

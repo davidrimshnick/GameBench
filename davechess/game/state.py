@@ -136,7 +136,10 @@ class GameState:
         self.done: bool = False
         self.winner: Optional[Player] = None  # None = draw if done
         self.move_history: list[Move] = []
+        self.position_counts: dict[tuple, int] = {}
         self._setup_starting_position()
+        # Record starting position
+        self.position_counts[self.get_board_tuple()] = 1
 
     def _setup_starting_position(self):
         """Place pieces in their starting positions."""
@@ -155,6 +158,7 @@ class GameState:
         new.done = self.done
         new.winner = self.winner
         new.move_history = []  # Don't copy history for MCTS clones
+        new.position_counts = self.position_counts.copy()
         return new
 
     def get_piece_at(self, row: int, col: int) -> Optional[Piece]:
@@ -216,6 +220,7 @@ class GameState:
         state.done = d["done"]
         state.winner = Player(d["winner"]) if d["winner"] is not None else None
         state.move_history = []
+        state.position_counts = {}
         return state
 
     def to_display_board(self) -> list[list]:

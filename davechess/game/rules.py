@@ -540,6 +540,14 @@ def apply_move(state: GameState, move: Move) -> GameState:
             state.done = True
             state.winner = None  # Draw
 
+        # Check threefold repetition — draw if same position occurs 3 times
+        if not state.done:
+            board_key = state.get_board_tuple()
+            state.position_counts[board_key] = state.position_counts.get(board_key, 0) + 1
+            if state.position_counts[board_key] >= 3:
+                state.done = True
+                state.winner = None  # Draw by repetition
+
     # Checkmate/stalemate detection is handled lazily by generate_legal_moves()
     # when the next player tries to move and has no legal moves.
 
