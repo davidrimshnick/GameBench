@@ -19,7 +19,7 @@ try:
 except ImportError:
     HAS_TORCH = False
 
-from davechess.game.state import GameState, Player
+from davechess.game.state import GameState, Player, Move
 from davechess.game.rules import generate_legal_moves, apply_move
 from davechess.engine.network import state_to_planes, move_to_policy_index, POLICY_SIZE
 from davechess.engine.mcts import MCTS
@@ -156,15 +156,19 @@ class ReplayBuffer:
 
 
 def play_selfplay_game(mcts_engine: MCTS,
-                       temperature_threshold: int = 30) -> list[tuple[np.ndarray, np.ndarray, float]]:
-    """Play one self-play game and return training examples.
+                       temperature_threshold: int = 30) -> tuple[list, dict]:
+    """Play one self-play game and return training examples + game record.
 
     Returns:
-        List of (planes, policy_target, value_target) for each position.
-        value_target is set after the game ends based on the outcome.
+        (training_data, game_record) where:
+        - training_data: list of (planes, policy_target, value_target) tuples
+          (empty for draws)
+        - game_record: dict with "moves" (list of (state, move) pairs),
+          "winner" ("white"/"black"/"draw"), "length" (int)
     """
     state = GameState()
     examples: list[tuple[np.ndarray, dict, int]] = []  # (planes, policy_dict, player)
+    game_moves: list[tuple[GameState, Move]] = []  # For DCN logging
     move_count = 0
 
     while not state.done:
@@ -184,20 +188,26 @@ def play_selfplay_game(mcts_engine: MCTS,
         planes = state_to_planes(state)
         examples.append((planes, info["policy_target"], int(state.current_player)))
 
-        apply_move(state, move)
+        # Record move for game log (state is copied by apply_move)
+        game_moves.append((state, move))
+
+        state = apply_move(state, move)
         move_count += 1
 
     # Determine game outcome
     if state.winner is not None:
         winner = int(state.winner)
+        winner_str = "white" if state.winner == Player.WHITE else "black"
     else:
-        winner = -1  # Draw
+        winner = -1
+        winner_str = "draw"
 
-    # Discard drawn games entirely — they produce only 0.0 value targets
-    # that teach the network "nothing happens", encouraging defensive play.
-    # Only decisive games provide meaningful gradient signal.
+    game_record = {"moves": game_moves, "winner": winner_str, "length": move_count}
+
+    # Discard drawn games from training — they dilute decisive game signal.
+    # Game record is still returned for logging.
     if winner == -1:
-        return []
+        return [], game_record
 
     # Assign value targets based on outcome
     training_data = []
@@ -215,7 +225,7 @@ def play_selfplay_game(mcts_engine: MCTS,
 
         training_data.append((planes, policy, value))
 
-    return training_data
+    return training_data, game_record
 
 
 def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
@@ -241,37 +251,24 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
     game_lengths = []
     game_details = []
 
+    game_records = []
+
     for game_idx in range(num_games):
-        examples = play_selfplay_game(mcts, temperature_threshold)
+        examples, game_record = play_selfplay_game(mcts, temperature_threshold)
         game_len = len(examples)
         all_examples.extend(examples)
         game_lengths.append(game_len)
 
-        # Determine winner from value targets: last position's value
-        # tells us the outcome (1.0 = that player won, -1.0 = lost, 0 = draw)
-        winner = "draw"
-        if examples:
-            last_value = examples[-1][2]  # value_target of last position
-            # Even positions (0, 2, 4...) = White's turn, odd = Black's
-            if game_len % 2 == 1:  # odd length = White moved last
-                if last_value > 0:
-                    white_wins += 1
-                    winner = "white"
-                elif last_value < 0:
-                    black_wins += 1
-                    winner = "black"
-                else:
-                    draws += 1
-            else:  # even length = Black moved last
-                if last_value > 0:
-                    black_wins += 1
-                    winner = "black"
-                elif last_value < 0:
-                    white_wins += 1
-                    winner = "white"
-                else:
-                    draws += 1
-        game_details.append({"game": game_idx + 1, "length": game_len, "winner": winner})
+        winner = game_record["winner"]
+        if winner == "white":
+            white_wins += 1
+        elif winner == "black":
+            black_wins += 1
+        else:
+            draws += 1
+
+        game_details.append({"game": game_idx + 1, "length": game_record["length"], "winner": winner})
+        game_records.append(game_record)
 
         logger.info(f"  Self-play game {game_idx+1}/{num_games}: "
                     f"{game_len} moves, {len(all_examples)} total positions")
@@ -287,6 +284,7 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
         "min_game_length": min(game_lengths) if game_lengths else 0,
         "max_game_length": max(game_lengths) if game_lengths else 0,
         "game_details": game_details,
+        "game_records": game_records,
     }
 
     return all_examples, stats

@@ -41,6 +41,7 @@ from davechess.game.state import GameState, Player
 from davechess.game.rules import generate_legal_moves, apply_move
 from davechess.data.generator import MCTSLiteAgent, play_game
 from davechess.engine.smart_seeds import generate_smart_seeds
+from davechess.game.notation import game_to_dcn
 
 logger = logging.getLogger("davechess.training")
 
@@ -582,6 +583,32 @@ class Trainer:
         if self.tb_writer:
             for k, v in sp_metrics.items():
                 self.tb_writer.add_scalar(k, v, self.training_step)
+
+        # Log games in DCN notation for strategy analysis
+        if "game_records" in sp_stats:
+            games_dir = os.path.join(self.log_dir, "games")
+            os.makedirs(games_dir, exist_ok=True)
+            dcn_path = os.path.join(games_dir, f"iter_{self.iteration:04d}.dcn")
+            try:
+                dcn_games = []
+                for i, rec in enumerate(sp_stats["game_records"]):
+                    headers = {
+                        "Iteration": str(self.iteration),
+                        "Game": str(i + 1),
+                        "Moves": str(rec["length"]),
+                        "ELO": f"{self.best_elo_estimate:.0f}",
+                    }
+                    result_map = {"white": "1-0", "black": "0-1", "draw": "1/2-1/2"}
+                    result = result_map.get(rec["winner"], "1/2-1/2")
+                    dcn_games.append(game_to_dcn(rec["moves"], headers, result))
+                with open(dcn_path, "w") as f:
+                    f.write("\n\n".join(dcn_games))
+                logger.info(f"Saved {len(dcn_games)} games to {dcn_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save game log: {e}")
+            # Free game records to reclaim memory (state objects are large)
+            del sp_stats["game_records"]
+            gc.collect()
 
         # Training phase — skip if buffer too small
         min_buffer = sp_cfg.get("min_buffer_size", 0)
