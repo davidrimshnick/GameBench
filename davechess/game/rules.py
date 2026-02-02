@@ -638,6 +638,14 @@ def apply_move_fast(state: GameState, move: Move) -> GameState:
             state.done = True
             state.winner = None  # Draw
 
+        # Check threefold repetition (same logic as apply_move)
+        if not state.done:
+            pos_key = state.get_position_key()
+            state.position_counts[pos_key] = state.position_counts.get(pos_key, 0) + 1
+            if state.position_counts[pos_key] >= 3:
+                state.done = True
+                state.winner = None  # Draw by repetition
+
     return state
 
 
