@@ -435,6 +435,10 @@ def main():
     parser.add_argument("--eval-max-games", type=int, default=30)
     parser.add_argument("--context-window", type=int, default=20)
     parser.add_argument("--results-dir", default="results/harness")
+    parser.add_argument("--checkpoint", default=None,
+                        help="Path to neural network checkpoint for MCTS opponents")
+    parser.add_argument("--calibration", default=None,
+                        help="Path to calibration JSON (from calibrate_opponents.py)")
     args = parser.parse_args()
 
     # Create LLM client
@@ -456,6 +460,10 @@ def main():
     ]
     if args.skip_baseline:
         create_args.append("--skip-baseline")
+    if args.checkpoint:
+        create_args.extend(["--checkpoint", args.checkpoint])
+    if args.calibration:
+        create_args.extend(["--calibration", args.calibration])
 
     result = cli_run(create_args)
     session_file = result["session_file"]

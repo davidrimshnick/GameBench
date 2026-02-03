@@ -17,8 +17,9 @@ import argparse
 import json
 import logging
 
+from davechess.game.state import Player
 from davechess.data.elo import Glicko2Rating, glicko2_update
-from davechess.data.generator import RandomAgent, MCTSLiteAgent, play_game
+from davechess.data.generator import RandomAgent, MCTSAgent, MCTSLiteAgent, play_game
 from davechess.benchmark.opponent_pool import CalibratedLevel, OpponentPool
 
 logger = logging.getLogger("calibrate")
@@ -33,8 +34,7 @@ def create_agent(sim_count: int, network=None, device: str = "cpu"):
     if sim_count == 0:
         return RandomAgent()
     if network is not None:
-        from davechess.engine.mcts import MCTSAgent
-        return MCTSAgent(network, device=device, num_simulations=sim_count)
+        return MCTSAgent(network, num_simulations=sim_count, device=device)
     return MCTSLiteAgent(num_simulations=sim_count)
 
 
@@ -67,13 +67,14 @@ def calibrate(sim_counts: list[int], games_per_pair: int = 20,
                 else:
                     white_idx, black_idx = j, i
 
-                result = play_game(agents[white_idx], agents[black_idx])
+                _moves, winner, _turns = play_game(
+                    agents[white_idx], agents[black_idx])
                 played += 1
 
                 # Score from white's perspective
-                if result == "1-0":
+                if winner == Player.WHITE:
                     white_score, black_score = 1.0, 0.0
-                elif result == "0-1":
+                elif winner == Player.BLACK:
                     white_score, black_score = 0.0, 1.0
                 else:
                     white_score, black_score = 0.5, 0.5
@@ -133,10 +134,14 @@ def main():
     if args.checkpoint and not args.no_network:
         try:
             import torch
-            from davechess.engine.network import DaveChessNet, load_checkpoint
-            network = DaveChessNet()
-            load_checkpoint(network, args.checkpoint, device=args.device)
-            logger.info(f"Loaded network from {args.checkpoint}")
+            from davechess.engine.network import DaveChessNetwork
+            ckpt = torch.load(args.checkpoint, map_location=args.device,
+                              weights_only=False)
+            network = DaveChessNetwork()
+            network.load_state_dict(ckpt["network_state"])
+            network.eval()
+            elo = ckpt.get("elo_estimate", "?")
+            logger.info(f"Loaded network from {args.checkpoint} (ELO {elo})")
         except Exception as e:
             logger.warning(f"Could not load checkpoint: {e}")
 

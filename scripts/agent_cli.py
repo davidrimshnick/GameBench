@@ -1,46 +1,150 @@
 #!/usr/bin/env python3
-"""CLI driver for an AI agent to play through the benchmark.
+"""
+GameBench: DaveChess Benchmark CLI
+===================================
 
-Wraps BenchmarkSession with simple single-command operations that
-print JSON output. Designed to be driven by an LLM agent (e.g.
-Claude Code) via sequential bash calls.
+This is the sole interface for running the DaveChess benchmark. Any coding
+agent (Claude Code, Codex CLI, Gemini CLI, OpenCode, etc.) can drive this
+script via sequential bash calls. All output is JSON. Session state persists
+to a pickle file between calls, so each invocation is a fresh process.
 
-Session state is persisted to a pickle file between calls so each
-invocation is a fresh process. Every command output includes
-"session_file" so the caller never loses the path.
+Setup
+-----
+    cd <repo_root>
+    pip install -e .          # or set PYTHONPATH=. before each command
+    # GM games must exist in data/gm_games/ (.dcn format)
 
-Commands:
-    create   Create a new benchmark session
-    status   Show session status (phase, ratings, tokens)
-    resume   Get session state for continuation (status + active game)
-    rules    Print full DaveChess rules text
-    state    Show current game board, legal moves, resources
-    move     Play a move in DCN notation
-    study    Study N grandmaster games (LEARNING phase only)
-    practice Start a practice game (LEARNING phase only)
-    evaluate Transition to EVALUATION phase (from LEARNING)
-    result   Show final results (COMPLETED phase only)
+Session Lifecycle
+-----------------
+Every session progresses through phases:
 
-Usage:
-    python scripts/agent_cli.py create --name "my-run" [--budget N]
-                                       [--baseline-games N] [--skip-baseline]
-                                       [--eval-min-games N] [--eval-max-games N]
-    python scripts/agent_cli.py status <session_file>
-    python scripts/agent_cli.py resume <session_file>
-    python scripts/agent_cli.py rules <session_file>
-    python scripts/agent_cli.py state <session_file>
-    python scripts/agent_cli.py move <session_file> <move_dcn>
-    python scripts/agent_cli.py study <session_file> <num_games>
-    python scripts/agent_cli.py practice <session_file> <opponent_elo>
-    python scripts/agent_cli.py evaluate <session_file>
-    python scripts/agent_cli.py result <session_file>
+    BASELINE  ->  LEARNING  ->  EVALUATION  ->  COMPLETED
 
-Session Lifecycle:
-    BASELINE -> LEARNING -> EVALUATION -> COMPLETED
+    BASELINE:   Play rated games with rules-only knowledge.
+    LEARNING:   Study GM games, play practice games to improve.
+    EVALUATION: Play rated games to measure final ELO.
+    COMPLETED:  Session done — retrieve results.
 
-    With --skip-baseline, starts directly at LEARNING.
+    Phase transitions:
+      BASELINE -> LEARNING     automatic after baseline games finish
+      LEARNING -> EVALUATION   explicit via `evaluate` command
+      EVALUATION -> COMPLETED  automatic after convergence or budget exhausted
 
-See docs/benchmark_agent_guide.md for detailed usage instructions.
+    Use --skip-baseline on `create` to start directly in LEARNING.
+
+Commands
+--------
+Every command prints JSON to stdout. Every response includes "session_file"
+so the caller never loses the path.
+
+  create    Create a new benchmark session.
+            python scripts/agent_cli.py create --name "my-run" [options]
+              --budget N            Token budget (default: 1000000)
+              --baseline-games N    Baseline rated games (default: 10)
+              --eval-min-games N    Min eval games before convergence check (default: 10)
+              --eval-max-games N    Max eval games (default: 200)
+              --skip-baseline       Start in LEARNING (skip baseline)
+              --checkpoint PATH     Neural network checkpoint for MCTS opponents
+              --calibration PATH    Calibration JSON (from calibrate_opponents.py)
+            Output: {"session_file": "...", "phase": "...", "game_id": "...", ...}
+
+  status    Show session status (phase, ratings, token usage).
+            python scripts/agent_cli.py status <session_file>
+
+  resume    Get status + current game state (for continuation agents).
+            python scripts/agent_cli.py resume <session_file>
+
+  rules     Print full DaveChess rules (plain text, not JSON).
+            python scripts/agent_cli.py rules <session_file>
+
+  state     Show current game: board, legal moves, resources, history.
+            python scripts/agent_cli.py state <session_file>
+            Output includes: board, legal_moves[], agent_color, turn,
+            your_resources, opponent_resources, move_history
+
+  move      Play a move in DCN notation. Opponent responds automatically.
+            python scripts/agent_cli.py move <session_file> <move_dcn>
+            Output: your_move, opponent_move, game_over, board, legal_moves
+            If game ends: result ("win"/"loss"/"draw"), next_game_id
+            If illegal move: error message + legal_moves list to retry
+
+  study     Retrieve N grandmaster games for study (LEARNING only).
+            python scripts/agent_cli.py study <session_file> <num_games>
+            Games are in DCN notation. Not repeated within a session.
+
+  practice  Start a practice game at target ELO (LEARNING only).
+            python scripts/agent_cli.py practice <session_file> <opponent_elo>
+            Then use `move` to play. Practice games don't affect rating.
+
+  evaluate  Transition from LEARNING to EVALUATION phase.
+            python scripts/agent_cli.py evaluate <session_file>
+            Creates first rated evaluation game.
+
+  result    Get final results (COMPLETED only).
+            python scripts/agent_cli.py result <session_file>
+            Output: baseline_elo, final_elo, elo_gain, game details
+
+  report-tokens   Report token usage from an external harness.
+            python scripts/agent_cli.py report-tokens <session_file> <prompt> <completion>
+            Agents should self-report approximate token usage after each
+            interaction to keep the budget tracker accurate.
+
+DCN Notation
+------------
+    Move:     Xa1-b2     e.g. Wc1-c2  (Warrior c1 to c2)
+    Capture:  Xa1xb2     e.g. Rb1xd3  (Rider captures at d3)
+    Deploy:   +X@a1      e.g. +W@c2   (Deploy Warrior at c2, costs resources)
+    Bombard:  Xa1~b3     e.g. Bc3~e3  (Bombard ranged attack from c3 to e3)
+
+Opponent Calibration (MCTSLite, no neural network)
+--------------------------------------------------
+    MCTS Sims  |  Approx ELO
+    -----------+-----------
+    0 (random) |  400
+    10         |  800
+    50         |  1200
+    200        |  1800
+    800        |  2400
+
+    Evaluation opponents are chosen near the agent's estimated ELO for
+    maximum info gain (Glicko-2 rating system).
+
+Example: Full Benchmark Run
+----------------------------
+    # 1. Create session (skip baseline for simplicity)
+    PYTHONPATH=. python scripts/agent_cli.py create --name "my-agent" \\
+        --skip-baseline --budget 500000
+
+    # 2. Read the rules
+    PYTHONPATH=. python scripts/agent_cli.py rules <session_file>
+
+    # 3. Study some GM games
+    PYTHONPATH=. python scripts/agent_cli.py study <session_file> 5
+
+    # 4. Play practice games to learn
+    PYTHONPATH=. python scripts/agent_cli.py practice <session_file> 800
+    PYTHONPATH=. python scripts/agent_cli.py move <session_file> "Wd2-d3"
+    # ... keep playing moves until game_over=true
+
+    # 5. Transition to evaluation
+    PYTHONPATH=. python scripts/agent_cli.py evaluate <session_file>
+
+    # 6. Play rated games (move until game_over, repeat for each new game)
+    PYTHONPATH=. python scripts/agent_cli.py move <session_file> "Wd2-d3"
+    # ... phase auto-completes after convergence
+
+    # 7. Get results
+    PYTHONPATH=. python scripts/agent_cli.py result <session_file>
+
+Tips for AI Agents
+------------------
+    - Always pick moves from the legal_moves list in the state/move response.
+    - Check game_over after each move. When a game ends, look for next_game_id.
+    - Study GM games early to learn piece interactions and strategy.
+    - Start practice at low ELO (800), increase as you improve.
+    - When ready, call `evaluate` — you can't go back to studying after.
+    - Use `resume` if context is lost — it returns full current state.
+    - Self-report tokens via `report-tokens` to keep budget tracking accurate.
 """
 
 import argparse
@@ -62,6 +166,7 @@ from davechess.benchmark.sequential_eval import EvalConfig
 
 SCRATCHDIR = os.path.join("checkpoints", "agent_sessions")
 GAMES_DIR = "data/gm_games"
+DEFAULT_CHECKPOINT = os.path.join("checkpoints", "best.pt")
 
 # Default calibration for MCTSLite (no network)
 DEFAULT_CALIBRATION = [
@@ -71,6 +176,21 @@ DEFAULT_CALIBRATION = [
     CalibratedLevel(sim_count=200, measured_elo=1800),
     CalibratedLevel(sim_count=800, measured_elo=2400),
 ]
+
+
+def _load_network(checkpoint_path: str, device: str = "cpu"):
+    """Load neural network from checkpoint, or return None if unavailable."""
+    import torch
+    from davechess.engine.network import DaveChessNetwork
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    net = DaveChessNetwork()
+    net.load_state_dict(ckpt["network_state"])
+    net.eval()
+    elo = ckpt.get("elo_estimate", "?")
+    iteration = ckpt.get("iteration", "?")
+    print(json.dumps({"info": f"Loaded network: ELO {elo}, iteration {iteration}"}),
+          file=sys.stderr)
+    return net
 
 
 def _save_session(session: BenchmarkSession, path: str):
@@ -90,7 +210,16 @@ def _print(data):
 
 
 def cmd_create(args):
-    pool = OpponentPool(network=None, device="cpu", calibration=DEFAULT_CALIBRATION)
+    network = None
+    if args.checkpoint:
+        network = _load_network(args.checkpoint)
+
+    if args.calibration:
+        pool = OpponentPool.from_calibration_file(
+            args.calibration, network=network, device="cpu")
+    else:
+        pool = OpponentPool(network=network, device="cpu",
+                            calibration=DEFAULT_CALIBRATION)
     library = GameLibrary(GAMES_DIR, max_games=200)
     loaded = library.load()
 
@@ -316,6 +445,10 @@ def main():
     p.add_argument("--eval-max-games", type=int, default=200)
     p.add_argument("--skip-baseline", action="store_true",
                    help="Start directly in LEARNING phase (no baseline games)")
+    p.add_argument("--checkpoint", default=None,
+                   help="Path to neural network checkpoint for MCTS opponents")
+    p.add_argument("--calibration", default=None,
+                   help="Path to calibration JSON (from calibrate_opponents.py)")
 
     # status
     p = sub.add_parser("status", help="Show session status")
