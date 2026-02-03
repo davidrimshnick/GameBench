@@ -236,3 +236,76 @@ The benchmark uses MCTSLite opponents with no neural network. Default calibratio
 | 800 | 2400 |
 
 Evaluation opponents are chosen near the agent's current estimated ELO for maximum information gain (Glicko-2 rating system).
+
+## External Testing Harness (`run_benchmark.py`)
+
+For automated benchmarking with **real token budget enforcement**, use the external harness. It calls the LLM API directly, extracts token usage from every response, and reports it to the session so the token budget is the binding constraint.
+
+### Prerequisites
+
+- An API key set as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` environment variable
+- `davechess` importable (via `pip install -e .` or `PYTHONPATH=.`)
+
+### Usage
+
+```bash
+python scripts/run_benchmark.py \
+  --provider anthropic \
+  --model claude-sonnet-4-20250514 \
+  --budget 500000 \
+  --name "claude-sonnet-500k"
+```
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--provider` | `anthropic` | LLM provider (`anthropic` or `openai`) |
+| `--model` | (required) | Model name |
+| `--budget` | (required) | Total token budget (learning + evaluation) |
+| `--eval-reserve` | `50000` | Tokens reserved for evaluation phase |
+| `--name` | `benchmark-run` | Session name |
+| `--skip-baseline` | `false` | Skip baseline phase |
+| `--baseline-games` | `5` | Number of baseline games |
+| `--eval-min-games` | `5` | Minimum evaluation games |
+| `--eval-max-games` | `30` | Maximum evaluation games |
+| `--context-window` | `20` | Rolling context window size |
+| `--results-dir` | `results/harness` | Directory for output files |
+
+### How It Works
+
+1. Creates a `BenchmarkSession` via `agent_cli.py create`
+2. Calls the LLM API with DaveChess tool definitions
+3. Executes tool calls (study, practice, move, state) through `agent_cli.py`
+4. After every API call, reports token usage via `agent_cli.py report-tokens`
+5. When `tokens_remaining <= eval_reserve`, transitions to evaluation
+6. Plays rated evaluation games until session completes or budget exhausted
+7. Saves results JSON and transcript to `--results-dir`
+
+### Output
+
+Results are saved to `results/harness/<name>_results.json`:
+```json
+{
+  "model": "claude-sonnet-4-20250514",
+  "budget": 500000,
+  "total_tokens": 487321,
+  "baseline_elo": 850,
+  "final_elo": 1150,
+  "elo_gain": 300,
+  "turns": 142,
+  "elapsed_sec": 1234.5
+}
+```
+
+A full transcript is saved to `results/harness/<name>_transcript.json`.
+
+### Token Tracking
+
+The `report-tokens` CLI command updates the session's `TokenTracker`:
+
+```bash
+python scripts/agent_cli.py report-tokens <session_file> <prompt_tokens> <completion_tokens>
+```
+
+This is called automatically by the harness after every LLM API call. The session uses `TokenTracker.exhausted` to stop evaluation when the budget runs out.

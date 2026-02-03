@@ -279,6 +279,19 @@ def cmd_resume(args):
     _print(output)
 
 
+def cmd_report_tokens(args):
+    """Report token usage from an external harness."""
+    session = _load_session(args.session_file)
+    try:
+        result = session.report_tokens(args.prompt_tokens, args.completion_tokens)
+    except Exception as e:
+        _print({"error": str(e), "session_file": args.session_file})
+        return
+    _save_session(session, args.session_file)
+    result["session_file"] = args.session_file
+    _print(result)
+
+
 def cmd_result(args):
     session = _load_session(args.session_file)
     try:
@@ -339,6 +352,12 @@ def main():
     p = sub.add_parser("resume", help="Get session state for continuation")
     p.add_argument("session_file")
 
+    # report-tokens
+    p = sub.add_parser("report-tokens", help="Report token usage from external harness")
+    p.add_argument("session_file")
+    p.add_argument("prompt_tokens", type=int)
+    p.add_argument("completion_tokens", type=int)
+
     # result
     p = sub.add_parser("result", help="Show final results")
     p.add_argument("session_file")
@@ -358,6 +377,7 @@ def main():
         "practice": cmd_practice,
         "evaluate": cmd_evaluate,
         "resume": cmd_resume,
+        "report-tokens": cmd_report_tokens,
         "result": cmd_result,
     }[args.command](args)
 
