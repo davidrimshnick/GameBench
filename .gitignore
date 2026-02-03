@@ -19,6 +19,10 @@ training_log.jsonl
 # Generated data
 data/games/
 data/generated/
+data/gm_games/
+
+# Agent sessions
+checkpoints/agent_sessions/
 
 # IDE
 .vscode/

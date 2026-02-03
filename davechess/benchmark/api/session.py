@@ -218,6 +218,11 @@ class _StepEvaluator:
 
         response: dict = {"your_move": move_dcn}
 
+        # Trigger checkmate/stalemate detection for the opponent
+        # (generate_legal_moves sets state.done if no legal moves exist)
+        if not game.state.done:
+            generate_legal_moves(game.state)
+
         # Check game over after agent move
         if game.state.done:
             self._finalize_game(game)
@@ -231,6 +236,10 @@ class _StepEvaluator:
         apply_move(game.state, opp_move)
         game.move_history_dcn.append(opp_dcn)
         response["opponent_move"] = opp_dcn
+
+        # Trigger checkmate/stalemate detection for the agent
+        if not game.state.done:
+            generate_legal_moves(game.state)
 
         # Check game over after opponent move
         if game.state.done:
