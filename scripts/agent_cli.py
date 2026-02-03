@@ -5,12 +5,28 @@ Wraps BenchmarkSession with simple single-command operations that
 print JSON output. Designed to be driven by an LLM agent (e.g.
 Claude Code) via sequential bash calls.
 
-Session state is persisted to a JSON file between calls so each
-invocation is a fresh process.
+Session state is persisted to a pickle file between calls so each
+invocation is a fresh process. Every command output includes
+"session_file" so the caller never loses the path.
+
+Commands:
+    create   Create a new benchmark session
+    status   Show session status (phase, ratings, tokens)
+    resume   Get session state for continuation (status + active game)
+    rules    Print full DaveChess rules text
+    state    Show current game board, legal moves, resources
+    move     Play a move in DCN notation
+    study    Study N grandmaster games (LEARNING phase only)
+    practice Start a practice game (LEARNING phase only)
+    evaluate Transition to EVALUATION phase (from LEARNING)
+    result   Show final results (COMPLETED phase only)
 
 Usage:
-    python scripts/agent_cli.py create --budget 100000 --name "claude-code"
+    python scripts/agent_cli.py create --name "my-run" [--budget N]
+                                       [--baseline-games N] [--skip-baseline]
+                                       [--eval-min-games N] [--eval-max-games N]
     python scripts/agent_cli.py status <session_file>
+    python scripts/agent_cli.py resume <session_file>
     python scripts/agent_cli.py rules <session_file>
     python scripts/agent_cli.py state <session_file>
     python scripts/agent_cli.py move <session_file> <move_dcn>
@@ -18,6 +34,13 @@ Usage:
     python scripts/agent_cli.py practice <session_file> <opponent_elo>
     python scripts/agent_cli.py evaluate <session_file>
     python scripts/agent_cli.py result <session_file>
+
+Session Lifecycle:
+    BASELINE -> LEARNING -> EVALUATION -> COMPLETED
+
+    With --skip-baseline, starts directly at LEARNING.
+
+See docs/benchmark_agent_guide.md for detailed usage instructions.
 """
 
 import argparse
@@ -84,27 +107,34 @@ def cmd_create(args):
         game_library=library,
         eval_config=eval_config,
         baseline_max_games=args.baseline_games,
+        skip_baseline=args.skip_baseline,
     )
 
     session_file = os.path.join(SCRATCHDIR, f"{session.session_id}.pkl")
     _save_session(session, session_file)
 
-    # Get first game info
-    evaluator = session._baseline_evaluator
-    game = evaluator.current_game
-
-    _print({
+    output = {
         "session_file": session_file,
         "phase": session.phase.value,
         "library_games": loaded,
-        "game_id": game.game_id,
-        "game_state": evaluator.get_game_state(),
-    })
+    }
+
+    if not args.skip_baseline:
+        evaluator = session._baseline_evaluator
+        game = evaluator.current_game
+        output["game_id"] = game.game_id
+        output["game_state"] = evaluator.get_game_state()
+    else:
+        output["info"] = "Session started in LEARNING phase (baseline skipped)."
+
+    _print(output)
 
 
 def cmd_status(args):
     session = _load_session(args.session_file)
-    _print(session.get_status())
+    status = session.get_status()
+    status["session_file"] = args.session_file
+    _print(status)
 
 
 def cmd_rules(args):
@@ -119,26 +149,28 @@ def cmd_state(args):
     if session.phase == SessionPhase.BASELINE:
         evaluator = session._baseline_evaluator
         if evaluator.current_game:
-            _print(evaluator.get_game_state())
+            result = evaluator.get_game_state()
         else:
-            _print({"info": "No active baseline game. Phase may be transitioning."})
+            result = {"info": "No active baseline game. Phase may be transitioning."}
     elif session.phase == SessionPhase.EVALUATION:
         evaluator = session._final_evaluator
         if evaluator.current_game:
-            _print(evaluator.get_game_state())
+            result = evaluator.get_game_state()
         else:
-            _print({"info": "No active eval game."})
+            result = {"info": "No active eval game."}
     elif session.phase == SessionPhase.LEARNING:
         # Show active practice games
         active = session._game_manager.get_active_games()
         if active:
             game = active[0]
-            _print(session._game_manager.get_state(game.game_id))
+            result = session._game_manager.get_state(game.game_id)
         else:
-            _print({"info": "No active practice games. Use 'practice' to start one."})
+            result = {"info": "No active practice games. Use 'practice' to start one."}
     else:
-        _print({"phase": session.phase.value, "info": "Session completed."})
+        result = {"phase": session.phase.value, "info": "Session completed."}
 
+    result["session_file"] = args.session_file
+    _print(result)
     _save_session(session, args.session_file)
 
 
@@ -164,6 +196,7 @@ def cmd_move(args):
 
     result = session.play_move(game_id, args.move_dcn)
     _save_session(session, args.session_file)
+    result["session_file"] = args.session_file
     _print(result)
 
 
@@ -172,10 +205,11 @@ def cmd_study(args):
     try:
         result = session.study_games(args.num_games)
     except Exception as e:
-        _print({"error": str(e)})
+        _print({"error": str(e), "session_file": args.session_file})
         return
     _save_session(session, args.session_file)
     _print({
+        "session_file": args.session_file,
         "num_returned": result["num_returned"],
         "remaining": result["remaining_in_library"],
         "games": result["games"],
@@ -187,9 +221,10 @@ def cmd_practice(args):
     try:
         result = session.start_practice_game(args.opponent_elo)
     except Exception as e:
-        _print({"error": str(e)})
+        _print({"error": str(e), "session_file": args.session_file})
         return
     _save_session(session, args.session_file)
+    result["session_file"] = args.session_file
     _print(result)
 
 
@@ -198,10 +233,50 @@ def cmd_evaluate(args):
     try:
         result = session.request_evaluation()
     except Exception as e:
-        _print({"error": str(e)})
+        _print({"error": str(e), "session_file": args.session_file})
         return
     _save_session(session, args.session_file)
+    result["session_file"] = args.session_file
     _print(result)
+
+
+def cmd_resume(args):
+    """Print session status + current game state for a continuation agent."""
+    session = _load_session(args.session_file)
+    status = session.get_status()
+    output = {
+        "session_file": args.session_file,
+        "phase": status["phase"],
+        "baseline_rating": status.get("baseline_rating"),
+        "final_rating": status.get("final_rating"),
+    }
+
+    # Include current game state if there's an active game
+    if session.phase == SessionPhase.BASELINE:
+        evaluator = session._baseline_evaluator
+        if evaluator.current_game:
+            output["current_game"] = evaluator.get_game_state()
+            output["game_id"] = evaluator.current_game.game_id
+    elif session.phase == SessionPhase.EVALUATION:
+        evaluator = session._final_evaluator
+        if evaluator and evaluator.current_game:
+            output["current_game"] = evaluator.get_game_state()
+            output["game_id"] = evaluator.current_game.game_id
+        elif evaluator and not evaluator.is_complete:
+            output["info"] = "No active game. Use 'state' to create next eval game."
+    elif session.phase == SessionPhase.LEARNING:
+        active = session._game_manager.get_active_games()
+        if active:
+            game = active[0]
+            output["current_game"] = session._game_manager.get_state(game.game_id)
+            output["game_id"] = game.game_id
+        else:
+            output["info"] = "In LEARNING phase. Use 'study', 'practice', or 'evaluate'."
+    elif session.phase == SessionPhase.COMPLETED:
+        output["info"] = "Session is COMPLETED. Use 'result' to get final results."
+
+    _save_session(session, args.session_file)
+    _print(output)
 
 
 def cmd_result(args):
@@ -209,8 +284,9 @@ def cmd_result(args):
     try:
         result = session.get_result()
     except Exception as e:
-        _print({"error": str(e)})
+        _print({"error": str(e), "session_file": args.session_file})
         return
+    result["session_file"] = args.session_file
     _print(result)
 
 
@@ -225,6 +301,8 @@ def main():
     p.add_argument("--baseline-games", type=int, default=10)
     p.add_argument("--eval-min-games", type=int, default=10)
     p.add_argument("--eval-max-games", type=int, default=200)
+    p.add_argument("--skip-baseline", action="store_true",
+                   help="Start directly in LEARNING phase (no baseline games)")
 
     # status
     p = sub.add_parser("status", help="Show session status")
@@ -257,6 +335,10 @@ def main():
     p = sub.add_parser("evaluate", help="Request evaluation")
     p.add_argument("session_file")
 
+    # resume
+    p = sub.add_parser("resume", help="Get session state for continuation")
+    p.add_argument("session_file")
+
     # result
     p = sub.add_parser("result", help="Show final results")
     p.add_argument("session_file")
@@ -275,6 +357,7 @@ def main():
         "study": cmd_study,
         "practice": cmd_practice,
         "evaluate": cmd_evaluate,
+        "resume": cmd_resume,
         "result": cmd_result,
     }[args.command](args)
 

@@ -374,6 +374,7 @@ class BenchmarkSession:
         game_library: GameLibrary,
         eval_config: EvalConfig,
         baseline_max_games: int = 30,
+        skip_baseline: bool = False,
     ):
         self.session_id = session_id
         self.agent_name = agent_name
@@ -387,9 +388,6 @@ class BenchmarkSession:
 
         # Practice games (LEARNING phase)
         self._game_manager = GameManager(opponent_pool, max_concurrent=5)
-
-        # Phase management
-        self._phase = SessionPhase.BASELINE
 
         # Baseline evaluator — auto-created, smaller max_games
         baseline_config = EvalConfig(
@@ -405,8 +403,13 @@ class BenchmarkSession:
         # Final evaluator — created on request_evaluation()
         self._final_evaluator: Optional[_StepEvaluator] = None
 
-        # Auto-create first baseline game
-        self._baseline_evaluator.create_next_game()
+        # Phase management: skip baseline if requested
+        if skip_baseline:
+            self._phase = SessionPhase.LEARNING
+        else:
+            self._phase = SessionPhase.BASELINE
+            # Auto-create first baseline game
+            self._baseline_evaluator.create_next_game()
 
     @property
     def phase(self) -> SessionPhase:
