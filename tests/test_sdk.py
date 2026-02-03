@@ -1,10 +1,15 @@
-"""Tests for BenchmarkClient SDK against a test server."""
+"""Tests for BenchmarkClient SDK against a test server.
+
+Uses the ``short_games`` fixture (conftest.py) to monkeypatch ``apply_move``
+so every game ends in a draw after ~4 turns, making baseline / eval fast
+enough for SDK round-trip tests.
+"""
 
 import pytest
 
 from fastapi.testclient import TestClient
 
-from davechess.benchmark.api.server import app
+from davechess.benchmark.api.server import app as _shared_app
 from davechess.benchmark.api.dependencies import init_app
 from davechess.benchmark.sdk import BenchmarkClient, BenchmarkAPIError
 
@@ -29,56 +34,61 @@ class _TestTransport:
         return self._client.delete(url)
 
 
-@pytest.fixture(scope="module")
-def sdk_client():
-    """Create a BenchmarkClient backed by TestClient (no real HTTP)."""
-    config = {
-        "opponents": {
-            "calibration": [
-                {"sim_count": 0, "elo": 400, "rd": 50},
-                {"sim_count": 10, "elo": 800, "rd": 50},
-                {"sim_count": 50, "elo": 1200, "rd": 50},
-            ],
-        },
-        "game_library": {
-            "games_dir": "nonexistent_dir",
-            "max_games": 200,
-        },
-        "eval": {
-            "initial_elo": 1000,
-            "target_rd": 50.0,
-            "max_games": 200,
-            "min_games": 5,
-        },
-        "baseline_max_games": 3,
-    }
-    init_app(app, config)
+_APP_CONFIG = {
+    "opponents": {
+        "calibration": [
+            {"sim_count": 0, "elo": 400, "rd": 50},
+            {"sim_count": 10, "elo": 800, "rd": 50},
+            {"sim_count": 50, "elo": 1200, "rd": 50},
+        ],
+    },
+    "game_library": {
+        "games_dir": "nonexistent_dir",
+        "max_games": 200,
+    },
+    "eval": {
+        "initial_elo": 1000,
+        "target_rd": 50.0,
+        "max_games": 200,
+        "min_games": 5,
+    },
+    "baseline_max_games": 3,
+}
 
-    # Inject fake games
-    manager = app.state.session_manager
+
+@pytest.fixture
+def sdk_client(short_games):
+    """BenchmarkClient backed by TestClient with short-game patching."""
+    init_app(_shared_app, _APP_CONFIG)
+
+    manager = _shared_app.state.session_manager
     manager.game_library.games = [
         f'[Game "{i+1}"]\n1. Wc1-c2 Wc8-c7\n1-0'
         for i in range(10)
     ]
 
-    test_client = TestClient(app)
+    test_client = TestClient(_shared_app)
 
     client = BenchmarkClient(base_url="")
     client._session = _TestTransport(test_client)
-    client._url = lambda path: path  # No base_url prefix needed
+    client._url = lambda path: path
     return client
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def _play_through_baseline_sdk(client: BenchmarkClient, session_id: str):
-    """Play random moves through baseline via SDK."""
-    for _ in range(500):
+    """Play random moves through baseline via SDK until LEARNING phase."""
+    for _ in range(200):
         status = client.get_session_status(session_id)
         if status.phase.value != "baseline":
             return
 
         eval_status = client.get_eval_status(session_id)
         if eval_status.current_game is None:
-            return
+            continue
 
         game_id = eval_status.current_game.game_id
         game_state = eval_status.current_game.game_state
@@ -93,7 +103,7 @@ def _play_through_baseline_sdk(client: BenchmarkClient, session_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Session management
 # ---------------------------------------------------------------------------
 
 class TestSDKSessionManagement:
@@ -122,13 +132,15 @@ class TestSDKSessionManagement:
         assert exc_info.value.status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# Game play
+# ---------------------------------------------------------------------------
+
 class TestSDKGamePlay:
     def test_play_move(self, sdk_client):
         create = sdk_client.create_session(100000, "move-agent")
-        game_state = create.game_state
-        legal = game_state.get("legal_moves", [])
-        if not legal:
-            pytest.skip("No legal moves")
+        legal = create.game_state.get("legal_moves", [])
+        assert legal, "Expected legal moves"
 
         result = sdk_client.play_move(create.session_id, create.game_id, legal[0])
         assert result.game_state is not None
@@ -140,6 +152,10 @@ class TestSDKGamePlay:
         assert exc_info.value.status_code == 400
 
 
+# ---------------------------------------------------------------------------
+# Token reporting
+# ---------------------------------------------------------------------------
+
 class TestSDKTokens:
     def test_report_tokens(self, sdk_client):
         create = sdk_client.create_session(100000, "token-agent")
@@ -148,14 +164,18 @@ class TestSDKTokens:
         assert result.tokens.remaining == 99300
 
 
+# ---------------------------------------------------------------------------
+# Learning phase
+# ---------------------------------------------------------------------------
+
 class TestSDKLearningPhase:
     def test_study_games(self, sdk_client):
         create = sdk_client.create_session(1_000_000, "study-agent")
         _play_through_baseline_sdk(sdk_client, create.session_id)
 
         status = sdk_client.get_session_status(create.session_id)
-        if status.phase.value != "learning":
-            pytest.skip("Could not reach learning phase")
+        assert status.phase.value == "learning", \
+            f"Expected learning, got {status.phase.value}"
 
         result = sdk_client.study_games(create.session_id, 2)
         assert result.num_returned == 2
@@ -165,12 +185,15 @@ class TestSDKLearningPhase:
         _play_through_baseline_sdk(sdk_client, create.session_id)
 
         status = sdk_client.get_session_status(create.session_id)
-        if status.phase.value != "learning":
-            pytest.skip("Could not reach learning phase")
+        assert status.phase.value == "learning"
 
         result = sdk_client.start_game(create.session_id, 800)
         assert result.game_id
 
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
 
 class TestSDKEvaluation:
     def test_request_evaluation(self, sdk_client):
@@ -178,8 +201,7 @@ class TestSDKEvaluation:
         _play_through_baseline_sdk(sdk_client, create.session_id)
 
         status = sdk_client.get_session_status(create.session_id)
-        if status.phase.value != "learning":
-            pytest.skip("Could not reach learning phase")
+        assert status.phase.value == "learning"
 
         result = sdk_client.request_evaluation(create.session_id)
         assert result.phase.value == "evaluation"
@@ -189,15 +211,15 @@ class TestSDKEvaluation:
         create = sdk_client.create_session(1_000_000, "evalstatus-agent")
         _play_through_baseline_sdk(sdk_client, create.session_id)
 
-        status = sdk_client.get_session_status(create.session_id)
-        if status.phase.value != "learning":
-            pytest.skip("Could not reach learning phase")
-
         sdk_client.request_evaluation(create.session_id)
         eval_status = sdk_client.get_eval_status(create.session_id)
         assert eval_status.phase.value == "evaluation"
         assert not eval_status.is_complete
 
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
 
 class TestSDKErrorHandling:
     def test_not_found_error(self, sdk_client):

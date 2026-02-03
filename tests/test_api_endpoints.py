@@ -1,10 +1,16 @@
-"""Tests for FastAPI endpoints via TestClient."""
+"""Tests for FastAPI endpoints via TestClient.
+
+Uses the ``short_games`` fixture (conftest.py) to monkeypatch ``apply_move``
+so every game ends in a draw after ~4 turns, making baseline / eval fast
+enough for HTTP-level round-trip tests.
+"""
 
 import pytest
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from davechess.benchmark.api.server import app
+from davechess.benchmark.api.server import app as _shared_app
 from davechess.benchmark.api.dependencies import init_app
 from davechess.benchmark.api.models import SessionPhase
 
@@ -13,43 +19,48 @@ from davechess.benchmark.api.models import SessionPhase
 # Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="module")
-def client():
-    """Create a test client with initialized app."""
-    config = {
-        "opponents": {
-            "calibration": [
-                {"sim_count": 0, "elo": 400, "rd": 50},
-                {"sim_count": 10, "elo": 800, "rd": 50},
-                {"sim_count": 50, "elo": 1200, "rd": 50},
-            ],
-        },
-        "game_library": {
-            "games_dir": "nonexistent_dir",
-            "max_games": 200,
-        },
-        "eval": {
-            "initial_elo": 1000,
-            "target_rd": 50.0,
-            "max_games": 200,
-            "min_games": 5,
-        },
-        "baseline_max_games": 3,
-    }
-    init_app(app, config)
+_APP_CONFIG = {
+    "opponents": {
+        "calibration": [
+            {"sim_count": 0, "elo": 400, "rd": 50},
+            {"sim_count": 10, "elo": 800, "rd": 50},
+            {"sim_count": 50, "elo": 1200, "rd": 50},
+        ],
+    },
+    "game_library": {
+        "games_dir": "nonexistent_dir",
+        "max_games": 200,
+    },
+    "eval": {
+        "initial_elo": 1000,
+        "target_rd": 50.0,
+        "max_games": 200,
+        "min_games": 5,
+    },
+    "baseline_max_games": 3,
+}
+
+
+@pytest.fixture
+def client(short_games):
+    """TestClient with short-game patching active."""
+    init_app(_shared_app, _APP_CONFIG)
 
     # Inject fake games into the library
-    manager = app.state.session_manager
+    manager = _shared_app.state.session_manager
     manager.game_library.games = [
         f'[Game "{i+1}"]\n1. Wc1-c2 Wc8-c7\n1-0'
         for i in range(10)
     ]
 
-    return TestClient(app)
+    return TestClient(_shared_app)
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _create_session(client) -> dict:
-    """Helper to create a session and return response dict."""
     resp = client.post("/sessions", json={
         "token_budget": 1_000_000,
         "agent_name": "test-bot",
@@ -59,18 +70,17 @@ def _create_session(client) -> dict:
 
 
 def _play_through_baseline(client, session_id: str) -> None:
-    """Play random moves through all baseline games."""
-    for _ in range(500):
-        # Get session status to check phase
+    """Play random moves through baseline games until LEARNING phase."""
+    for _ in range(200):
         status = client.get(f"/sessions/{session_id}").json()
         if status["phase"] != "baseline":
             return
 
-        # Get eval status to find current game
         eval_resp = client.get(f"/sessions/{session_id}/eval/status")
         eval_data = eval_resp.json()
         if eval_data.get("current_game") is None:
-            return
+            # Game may have just finished; loop will re-check phase
+            continue
 
         game_id = eval_data["current_game"]["game_id"]
         game_state = eval_data["current_game"]["game_state"]
@@ -78,16 +88,14 @@ def _play_through_baseline(client, session_id: str) -> None:
         if not legal:
             continue
 
-        move_resp = client.post(
+        client.post(
             f"/sessions/{session_id}/games/{game_id}/move",
             json={"move_dcn": legal[0]},
         )
-        if move_resp.status_code != 200:
-            continue
 
 
 # ---------------------------------------------------------------------------
-# Session creation tests
+# Session creation
 # ---------------------------------------------------------------------------
 
 class TestCreateSession:
@@ -116,7 +124,7 @@ class TestCreateSession:
 
 
 # ---------------------------------------------------------------------------
-# Session status tests
+# Session status
 # ---------------------------------------------------------------------------
 
 class TestSessionStatus:
@@ -159,11 +167,8 @@ class TestPlayMove:
         data = _create_session(client)
         sid = data["session_id"]
         game_id = data["game_id"]
-        game_state = data["game_state"]
-
-        legal = game_state.get("legal_moves", [])
-        if not legal:
-            pytest.skip("No legal moves in initial state")
+        legal = data["game_state"].get("legal_moves", [])
+        assert legal, "Expected legal moves in initial state"
 
         resp = client.post(
             f"/sessions/{sid}/games/{game_id}/move",
@@ -228,14 +233,49 @@ class TestStudyGames:
         sid = data["session_id"]
         _play_through_baseline(client, sid)
 
-        # Check we're in learning
         status = client.get(f"/sessions/{sid}").json()
-        if status["phase"] != "learning":
-            pytest.skip("Could not reach learning phase")
+        assert status["phase"] == "learning", \
+            f"Expected learning phase, got {status['phase']}"
 
         resp = client.post(f"/sessions/{sid}/study", json={"num_games": 2})
         assert resp.status_code == 200
         assert resp.json()["num_returned"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Practice games (requires LEARNING phase)
+# ---------------------------------------------------------------------------
+
+class TestPracticeGames:
+    def test_start_practice_game(self, client):
+        data = _create_session(client)
+        sid = data["session_id"]
+        _play_through_baseline(client, sid)
+
+        status = client.get(f"/sessions/{sid}").json()
+        assert status["phase"] == "learning"
+
+        resp = client.post(f"/sessions/{sid}/games",
+                           json={"opponent_elo": 800})
+        assert resp.status_code == 200
+        assert "game_id" in resp.json()
+
+    def test_practice_game_play_move(self, client):
+        data = _create_session(client)
+        sid = data["session_id"]
+        _play_through_baseline(client, sid)
+
+        resp = client.post(f"/sessions/{sid}/games",
+                           json={"opponent_elo": 600})
+        game_id = resp.json()["game_id"]
+        legal = resp.json()["game_state"].get("legal_moves", [])
+        assert legal
+
+        move_resp = client.post(
+            f"/sessions/{sid}/games/{game_id}/move",
+            json={"move_dcn": legal[0]},
+        )
+        assert move_resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -256,12 +296,43 @@ class TestEvaluation:
         _play_through_baseline(client, sid)
 
         status = client.get(f"/sessions/{sid}").json()
-        if status["phase"] != "learning":
-            pytest.skip("Could not reach learning phase")
+        assert status["phase"] == "learning"
 
         resp = client.post(f"/sessions/{sid}/evaluate")
         assert resp.status_code == 200
         assert resp.json()["phase"] == "evaluation"
+
+    def test_eval_status(self, client):
+        data = _create_session(client)
+        sid = data["session_id"]
+        _play_through_baseline(client, sid)
+
+        client.post(f"/sessions/{sid}/evaluate")
+        resp = client.get(f"/sessions/{sid}/eval/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["phase"] == "evaluation"
+        assert body["is_complete"] is False
+        assert body["current_game"] is not None
+
+    def test_eval_play_through(self, client):
+        """Play moves through an eval game via HTTP."""
+        data = _create_session(client)
+        sid = data["session_id"]
+        _play_through_baseline(client, sid)
+
+        resp = client.post(f"/sessions/{sid}/evaluate")
+        game_id = resp.json()["game_id"]
+        game_state = resp.json()["game_state"]
+
+        # Play a few moves in the eval game
+        legal = game_state.get("legal_moves", [])
+        if legal:
+            move_resp = client.post(
+                f"/sessions/{sid}/games/{game_id}/move",
+                json={"move_dcn": legal[0]},
+            )
+            assert move_resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +348,6 @@ class TestDeleteSession:
         assert resp.status_code == 200
         assert resp.json()["deleted"] is True
 
-        # Should be gone
         resp = client.get(f"/sessions/{sid}")
         assert resp.status_code == 404
 
