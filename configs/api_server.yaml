@@ -1,0 +1,30 @@
+# Benchmark API server configuration
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+# Opponent pool (MCTSLite mode, no neural network required)
+opponents:
+  # Inline calibration — or use calibration_file for a JSON path
+  calibration:
+    - { sim_count: 0,   elo: 400,  rd: 50 }
+    - { sim_count: 10,  elo: 800,  rd: 50 }
+    - { sim_count: 50,  elo: 1200, rd: 50 }
+    - { sim_count: 200, elo: 1800, rd: 50 }
+    - { sim_count: 800, elo: 2400, rd: 50 }
+
+# GM game library for agent study
+game_library:
+  games_dir: "data/gm_games"
+  max_games: 200
+
+# Evaluation settings (used for both baseline and final eval)
+eval:
+  initial_elo: 1000
+  target_rd: 50.0
+  max_games: 200
+  min_games: 10
+
+# Baseline uses fewer games for a rough estimate
+baseline_max_games: 30
