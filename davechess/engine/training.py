@@ -338,8 +338,13 @@ class Trainer:
         return losses
 
     def evaluate_network(self, num_games: int = 40,
-                         num_simulations: int = 100) -> dict:
-        """Evaluate current network against best network.
+                         num_simulations: int = 100,
+                         num_random_games: int = 4) -> dict:
+        """Evaluate current network against best network + random opponent.
+
+        Plays num_games against best network, then num_random_games against
+        a random MCTS (no NN). Must win all random games to pass eval —
+        losing to random play indicates overfitting.
 
         Returns dict with win_rate and detailed results.
         """
@@ -393,6 +398,58 @@ class Trainer:
         total_decisive = wins + losses
         win_rate = wins / total_decisive if total_decisive > 0 else 0.5
 
+        # Random opponent sanity check: must win all games vs random MCTS
+        random_wins = 0
+        random_losses = 0
+        random_draws = 0
+        if num_random_games > 0:
+            random_mcts = MCTS(None, num_simulations=num_simulations,
+                               device=self.device)
+            for game_idx in range(num_random_games):
+                state = GameState()
+                current_is_white = (game_idx % 2 == 0)
+                move_count = 0
+
+                while not state.done:
+                    moves = generate_legal_moves(state)
+                    if not moves:
+                        break
+
+                    is_current_turn = (
+                        (state.current_player == Player.WHITE and current_is_white) or
+                        (state.current_player == Player.BLACK and not current_is_white)
+                    )
+
+                    if is_current_turn:
+                        move, _ = current_mcts.get_move(state, add_noise=False)
+                    else:
+                        move, _ = random_mcts.get_move(state, add_noise=False)
+
+                    apply_move(state, move)
+                    move_count += 1
+
+                game_lengths.append(move_count)
+
+                if state.winner is not None:
+                    current_won = (
+                        (state.winner == Player.WHITE and current_is_white) or
+                        (state.winner == Player.BLACK and not current_is_white)
+                    )
+                    if current_won:
+                        random_wins += 1
+                    else:
+                        random_losses += 1
+                else:
+                    random_draws += 1
+
+            del random_mcts
+            logger.info(f"Random eval: W:{random_wins} L:{random_losses} D:{random_draws}")
+
+            # If we lost or drew any random game, fail eval regardless
+            if random_losses > 0 or random_draws > 0:
+                logger.info("Failed random opponent check — network may be overfitting")
+                win_rate = 0.0  # Force rejection
+
         # Explicitly free MCTS trees (circular parent↔child refs)
         del current_mcts, best_mcts
         gc.collect()
@@ -402,6 +459,9 @@ class Trainer:
             "wins": wins,
             "losses": losses,
             "draws": draws,
+            "random_wins": random_wins,
+            "random_losses": random_losses,
+            "random_draws": random_draws,
             "avg_game_length": sum(game_lengths) / len(game_lengths) if game_lengths else 0,
         }
 
