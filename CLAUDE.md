@@ -44,22 +44,20 @@ wandb login  # API key is in ~/.netrc
 
 ### Benchmark CLI (for any coding agent)
 ```bash
+# Install davechess as a package first: pip install -e . (from repo root)
 # All docs are in scripts/agent_cli.py — read the docstring for full reference.
-# Every command uses: PYTHONPATH=. python scripts/agent_cli.py <command> [args]
 
 # Create a session (skip baseline for quick test)
-PYTHONPATH=. python scripts/agent_cli.py create --name "test" --skip-baseline --budget 500000
+python scripts/agent_cli.py create --name "test" --skip-baseline --budget 500000
 
 # Study GM games, practice, play moves, evaluate
-PYTHONPATH=. python scripts/agent_cli.py study <session_file> 5
-PYTHONPATH=. python scripts/agent_cli.py practice <session_file> 800
-PYTHONPATH=. python scripts/agent_cli.py move <session_file> "Wd2-d3"
-PYTHONPATH=. python scripts/agent_cli.py evaluate <session_file>
-PYTHONPATH=. python scripts/agent_cli.py result <session_file>
+python scripts/agent_cli.py study <session_file> 5
+python scripts/agent_cli.py practice <session_file> 800
+python scripts/agent_cli.py move <session_file> "Wd2-d3"
+python scripts/agent_cli.py evaluate <session_file>
+python scripts/agent_cli.py result <session_file>
 
-# Launch a coding agent to run the benchmark autonomously (see CLAUDE.md benchmark section)
-claude -p "Read scripts/agent_cli.py and run the full benchmark..." \
-  --allowedTools "Bash(run benchmark commands)"
+# Launch a coding agent in a sandbox — see "Running the Benchmark with a Coding Agent" below
 ```
 
 ### Legacy Harness (API-level token tracking)
@@ -195,19 +193,35 @@ Opponents use MCTSLite (random rollouts, no neural network). The neural network 
 
 ### Running the Benchmark with a Coding Agent
 
-To test the benchmark with a coding agent (Claude Code, Codex CLI, etc.), launch a separate instance and point it at `agent_cli.py`:
+To test the benchmark with a coding agent (Claude Code, Codex CLI, etc.), launch a separate instance in an isolated sandbox directory so it can't read the game engine source code.
 
+**Sandbox setup:**
 ```bash
-# Launch Claude Code as the benchmark agent (from repo root)
-claude -p "Read scripts/agent_cli.py to understand the DaveChess benchmark. \
-  Run the full benchmark: create a session (--skip-baseline --budget 500000 \
-  --eval-min-games 5 --eval-max-games 15), read the rules, study GM games, \
-  play practice games, then evaluate. Pick moves from legal_moves. \
-  Use PYTHONPATH=. before each command. Show final result." \
-  --allowedTools "Bash(run benchmark commands)"
+# Create minimal sandbox with only the CLI script and game data
+SANDBOX="/tmp/benchmark-sandbox"  # or any temp directory
+mkdir -p "$SANDBOX/scripts" "$SANDBOX/data" "$SANDBOX/checkpoints/agent_sessions"
+cp scripts/agent_cli.py "$SANDBOX/scripts/"
+cp -r data/gm_games "$SANDBOX/data/"
+
+# davechess must be installed as a package: pip install -e . (from repo root)
 ```
 
-The agent should autonomously:
+**Launch the agent (with streaming output for monitoring):**
+```bash
+cd "$SANDBOX" && claude -p "You are in a sandbox directory. \
+  Read scripts/agent_cli.py — it has all the docs you need. \
+  Run the full DaveChess benchmark: create a session \
+  (--skip-baseline --budget 500000 --eval-min-games 5 --eval-max-games 15), \
+  read the rules, study GM games, play practice games, then evaluate. \
+  Pick moves from legal_moves. Show the final result." \
+  --allowedTools "Bash(run benchmark commands)" \
+  --output-format stream-json \
+  2>&1 | tee benchmark-output.log
+```
+
+The `--output-format stream-json` flag streams JSON chunks in real time so you can monitor progress (without it, `claude -p` buffers all output until completion).
+
+**What the agent should do autonomously:**
 1. Read `scripts/agent_cli.py` docstring to learn the interface
 2. Create a session, read rules, study GM games
 3. Play practice games to develop strategy (Lancers are dominant — see GM games)
@@ -215,6 +229,8 @@ The agent should autonomously:
 5. Report final ELO via `result` command
 
 Each practice/eval game involves ~30-100 individual `move` commands. A full run with practice + 5-15 eval games can take 10-30 minutes depending on the agent's speed.
+
+**Why a sandbox?** The agent should only see `agent_cli.py` (the interface) and game data. If it has access to the full repo, it could read the game engine, opponent logic, or rules implementation — defeating the purpose of measuring learning from examples.
 
 ### Agentic Benchmark Architecture (Legacy Harness)
 
