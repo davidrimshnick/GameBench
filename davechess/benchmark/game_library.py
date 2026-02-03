@@ -7,8 +7,8 @@ import os
 import random
 from typing import Optional
 
-from davechess.data.storage import load_game
-from davechess.game.notation import game_to_dcn
+from davechess.data.storage import load_game, replay_game
+from davechess.game.notation import move_to_dcn
 
 logger = logging.getLogger("davechess.benchmark")
 
@@ -101,12 +101,16 @@ def _format_game_record(
         lines.append(f'[{key} "{val}"]')
     lines.append("")
 
-    # Format moves as numbered pairs
-    for i in range(0, len(moves), 2):
+    # Replay game to get states, then convert moves to DCN notation
+    states, _ = replay_game(moves)
+    dcn_moves = [move_to_dcn(state, move) for state, move in zip(states, moves)]
+
+    # Format as numbered pairs
+    for i in range(0, len(dcn_moves), 2):
         move_num = i // 2 + 1
-        white_move = moves[i]
-        if i + 1 < len(moves):
-            black_move = moves[i + 1]
+        white_move = dcn_moves[i]
+        if i + 1 < len(dcn_moves):
+            black_move = dcn_moves[i + 1]
             lines.append(f"{move_num}. {white_move} {black_move}")
         else:
             lines.append(f"{move_num}. {white_move}")
