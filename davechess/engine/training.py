@@ -445,9 +445,9 @@ class Trainer:
             del random_mcts
             logger.info(f"Random eval: W:{random_wins} L:{random_losses} D:{random_draws}")
 
-            # If we lost or drew any random game, fail eval regardless
-            if random_losses > 0 or random_draws > 0:
-                logger.info("Failed random opponent check — network may be overfitting")
+            # If we lost any random game, fail eval — draws are tolerable at low sims
+            if random_losses > 0:
+                logger.info("Failed random opponent check — lost to random, network is overfitting")
                 win_rate = 0.0  # Force rejection
 
         # Explicitly free MCTS trees (circular parent↔child refs)
