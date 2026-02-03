@@ -151,7 +151,10 @@ The AlphaZero implementation has several critical modifications for DaveChess:
    - Solution: `_log_memory()` helper logs RSS and GPU memory at phase transitions (after self-play, before/after eval, before/after checkpoint save). Explicit `del current_mcts, best_mcts; gc.collect()` after eval to free MCTS circular references.
 
 13. **Threefold Repetition**: At high ELO (2000+), 75% of self-play games end in draws via Warrior-toggle oscillation (Wb1-c1/Wc1-b1 repeated to turn 100). The policy network couldn't learn to avoid repetition because the rule wasn't in `apply_move()`.
-   - Solution: Added `position_counts` dict to `GameState` tracking `get_position_key()` occurrences (board + current_player only, excluding resources — resources change every turn via income, preventing repeats). In `apply_move()`, draw is declared when any position occurs 3 times. NOT in `apply_move_fast()` (MCTS rollouts) — the value network learns repetition is bad through training on actual games. The `clone()` method copies `position_counts` so game loops from cloned states track correctly.
+   - Solution: Added `position_counts` dict to `GameState` tracking `get_position_key()` occurrences (board + current_player only, excluding resources — resources change every turn via income, preventing repeats). In both `apply_move()` and `apply_move_fast()`, draw is declared when any position occurs 3 times. MCTS search sees repetition draws as terminal nodes (value 0.0). The `clone()` method copies `position_counts` so game loops from cloned states track correctly.
+
+14. **Self-Play Overfitting**: At ELO 4000+, the network learned to exploit its own play patterns but lost to random MCTS rollouts. The policy became too narrow — all 20 games per iteration were homogeneous self-play with modest Dirichlet noise (alpha=0.3, epsilon=0.25).
+   - Solution: Three changes to increase diversity: (1) Lowered `dirichlet_alpha` from 0.3→0.15 for spikier noise (DaveChess has ~30-80 legal moves, not Go's ~400). (2) Raised `dirichlet_epsilon` from 0.25→0.4 so 40% of the root policy comes from noise. (3) Added `random_opponent_fraction` (default 0.25): 25% of self-play games are played against a no-NN MCTS opponent (uniform policy + zero value), forcing the network to handle non-standard play. Training examples are only collected from the NN side in these games. The NN alternates White/Black across random-opponent games.
 
 ### Hardware Constraints (Jetson Orin Nano)
 
@@ -215,6 +218,12 @@ Training logs to multiple destinations:
 - TensorBoard at `logs/tensorboard/`
 
 Large files (seeds, checkpoints) should be stored as W&B artifacts, not committed to git (GitHub 100MB limit).
+
+W&B artifacts automatically backed up:
+- **best-model-iter{N}** — best.pt uploaded on each ELO improvement
+- **replay-buffer** — full replay buffer uploaded each iteration
+- **game-log-iter{N}** — DCN game logs uploaded each iteration
+- **game-logs-all** — one-time backfill of all historical DCN logs
 
 Key metrics to watch:
 - `selfplay/avg_game_length` - Should decrease over time; turn 100 = draw limit

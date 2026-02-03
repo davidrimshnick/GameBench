@@ -539,6 +539,9 @@ class Trainer:
             num_games=sp_cfg.get("num_games_per_iteration", 100),
             num_simulations=num_sims,
             temperature_threshold=mcts_cfg.get("temperature_threshold", 30),
+            dirichlet_alpha=mcts_cfg.get("dirichlet_alpha", 0.3),
+            dirichlet_epsilon=mcts_cfg.get("dirichlet_epsilon", 0.25),
+            random_opponent_fraction=sp_cfg.get("random_opponent_fraction", 0.0),
             device=self.device,
         )
         selfplay_elapsed = time.time() - selfplay_start
@@ -604,6 +607,22 @@ class Trainer:
                 with open(dcn_path, "w") as f:
                     f.write("\n\n".join(dcn_games))
                 logger.info(f"Saved {len(dcn_games)} games to {dcn_path}")
+                # Backup game log to W&B
+                if self.use_wandb:
+                    try:
+                        artifact = wandb.Artifact(
+                            f"game-log-iter{self.iteration:04d}",
+                            type="game-log",
+                            metadata={
+                                "iteration": self.iteration,
+                                "num_games": len(dcn_games),
+                                "elo": self.best_elo_estimate,
+                            },
+                        )
+                        artifact.add_file(dcn_path)
+                        wandb.log_artifact(artifact)
+                    except Exception as e:
+                        logger.warning(f"Failed to upload game log to W&B: {e}")
             except Exception as e:
                 logger.warning(f"Failed to save game log: {e}")
             # Free game records to reclaim memory (state objects are large)

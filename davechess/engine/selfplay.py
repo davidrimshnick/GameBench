@@ -156,8 +156,19 @@ class ReplayBuffer:
 
 
 def play_selfplay_game(mcts_engine: MCTS,
-                       temperature_threshold: int = 30) -> tuple[list, dict]:
+                       temperature_threshold: int = 30,
+                       opponent_mcts: MCTS = None,
+                       nn_plays_white: bool = True) -> tuple[list, dict]:
     """Play one self-play game and return training examples + game record.
+
+    Args:
+        mcts_engine: Primary MCTS engine (with neural network).
+        temperature_threshold: Move number after which temperature drops.
+        opponent_mcts: Optional second MCTS engine (e.g. random/no-NN).
+            When provided, mcts_engine plays one side and opponent_mcts
+            plays the other. Training examples are only collected from
+            the mcts_engine's turns.
+        nn_plays_white: When opponent_mcts is set, which side the NN plays.
 
     Returns:
         (training_data, game_record) where:
@@ -170,23 +181,34 @@ def play_selfplay_game(mcts_engine: MCTS,
     examples: list[tuple[np.ndarray, dict, int]] = []  # (planes, policy_dict, player)
     game_moves: list[tuple[GameState, Move]] = []  # For DCN logging
     move_count = 0
+    nn_player = Player.WHITE if nn_plays_white else Player.BLACK
 
     while not state.done:
         moves = generate_legal_moves(state)
         if not moves:
             break
 
+        # Choose which engine plays this move
+        if opponent_mcts is not None and state.current_player != nn_player:
+            # Opponent's turn — use opponent engine, no training data
+            engine = opponent_mcts
+            is_nn_turn = False
+        else:
+            engine = mcts_engine
+            is_nn_turn = True
+
         # Adjust temperature
         if move_count < temperature_threshold:
-            mcts_engine.temperature = 1.0
+            engine.temperature = 1.0
         else:
-            mcts_engine.temperature = 0.1  # Near-greedy
+            engine.temperature = 0.1  # Near-greedy
 
-        move, info = mcts_engine.get_move(state, add_noise=True)
+        move, info = engine.get_move(state, add_noise=True)
 
-        # Record training example
-        planes = state_to_planes(state)
-        examples.append((planes, info["policy_target"], int(state.current_player)))
+        # Only record training examples from the NN engine's turns
+        if is_nn_turn:
+            planes = state_to_planes(state)
+            examples.append((planes, info["policy_target"], int(state.current_player)))
 
         # Record move for game log (apply_move mutates in-place, so clone first)
         game_moves.append((state.clone(), move))
@@ -227,6 +249,9 @@ def play_selfplay_game(mcts_engine: MCTS,
 
 def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
                        temperature_threshold: int = 30,
+                       dirichlet_alpha: float = 0.3,
+                       dirichlet_epsilon: float = 0.25,
+                       random_opponent_fraction: float = 0.0,
                        device: str = "cpu") -> tuple[list, dict]:
     """Run a batch of self-play games sequentially.
 
@@ -235,13 +260,20 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
         num_games: Number of games to play.
         num_simulations: MCTS simulations per move.
         temperature_threshold: Move number after which temperature drops.
+        dirichlet_alpha: Dirichlet noise concentration parameter.
+        dirichlet_epsilon: Fraction of Dirichlet noise to blend with policy.
+        random_opponent_fraction: Fraction of games played vs random MCTS
+            (no neural network) to prevent self-play overfitting.
         device: Torch device string.
 
     Returns:
         (all_examples, stats) where stats has game-level statistics.
     """
     all_examples = []
-    mcts = MCTS(network, num_simulations=num_simulations, device=device)
+    mcts = MCTS(network, num_simulations=num_simulations,
+                dirichlet_alpha=dirichlet_alpha,
+                dirichlet_epsilon=dirichlet_epsilon,
+                device=device)
     white_wins = 0
     black_wins = 0
     draws = 0
@@ -250,8 +282,27 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
 
     game_records = []
 
+    # Create random opponent if needed
+    num_random_games = int(num_games * random_opponent_fraction)
+    random_mcts = None
+    if num_random_games > 0:
+        random_mcts = MCTS(None, num_simulations=num_simulations, device=device)
+
     for game_idx in range(num_games):
-        examples, game_record = play_selfplay_game(mcts, temperature_threshold)
+        if game_idx < num_random_games:
+            # Play against random MCTS — alternate sides
+            nn_plays_white = (game_idx % 2 == 0)
+            examples, game_record = play_selfplay_game(
+                mcts, temperature_threshold,
+                opponent_mcts=random_mcts,
+                nn_plays_white=nn_plays_white,
+            )
+            game_type = "vs_random"
+        else:
+            # Standard self-play
+            examples, game_record = play_selfplay_game(mcts, temperature_threshold)
+            game_type = "selfplay"
+
         game_len = len(examples)
         all_examples.extend(examples)
         game_lengths.append(game_len)
@@ -264,10 +315,11 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
         else:
             draws += 1
 
-        game_details.append({"game": game_idx + 1, "length": game_record["length"], "winner": winner})
+        game_details.append({"game": game_idx + 1, "length": game_record["length"],
+                             "winner": winner, "type": game_type})
         game_records.append(game_record)
 
-        logger.info(f"  Self-play game {game_idx+1}/{num_games}: "
+        logger.info(f"  Self-play game {game_idx+1}/{num_games} ({game_type}): "
                     f"{game_len} moves, {len(all_examples)} total positions")
         gc.collect()  # Free MCTS tree circular references
 
@@ -282,6 +334,7 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
         "max_game_length": max(game_lengths) if game_lengths else 0,
         "game_details": game_details,
         "game_records": game_records,
+        "num_random_games": num_random_games,
     }
 
     return all_examples, stats
