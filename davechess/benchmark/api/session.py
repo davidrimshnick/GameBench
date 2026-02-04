@@ -584,7 +584,8 @@ class BenchmarkSession:
     def _check_baseline_transition(self, result: dict) -> None:
         """Check if baseline eval is done and transition to LEARNING."""
         evaluator = self._baseline_evaluator
-        if evaluator.is_complete and self._phase == SessionPhase.BASELINE:
+        if ((evaluator.is_complete or self.token_tracker.exhausted)
+                and self._phase == SessionPhase.BASELINE):
             self._phase = SessionPhase.LEARNING
             result["phase_transition"] = "learning"
             logger.info(
