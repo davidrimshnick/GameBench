@@ -31,6 +31,7 @@ training:
   eval_simulations: 100        # Match self-play sim count
   eval_threshold: 0.51
   max_iterations: 100
+  max_consecutive_rejections: 50  # Don't auto-reset — let network adapt to diversity regime
 
 paths:
   checkpoint_dir: "checkpoints"
