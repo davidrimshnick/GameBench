@@ -72,6 +72,57 @@ class TestTokenTracker:
         assert s["remaining"] == 48_800
         assert s["num_calls"] == 1
 
+    def test_budget_message_no_usage(self):
+        tracker = TokenTracker(budget=500_000)
+        msg = tracker.budget_message(phase="learning")
+        assert "500,000" in msg
+        assert "--tokens" in msg
+
+    def test_budget_message_learning_early(self):
+        tracker = TokenTracker(budget=100_000)
+        tracker.record(10_000, 5_000)  # 15% used, 85% remaining
+        msg = tracker.budget_message(phase="learning")
+        assert "85,000" in msg
+        assert "Keep studying" in msg
+
+    def test_budget_message_learning_mid(self):
+        tracker = TokenTracker(budget=100_000)
+        tracker.record(30_000, 20_000)  # 50% used, 50% remaining
+        msg = tracker.budget_message(phase="learning")
+        assert "50,000" in msg
+        assert "Good progress" in msg
+
+    def test_budget_message_learning_low(self):
+        tracker = TokenTracker(budget=100_000)
+        tracker.record(50_000, 25_000)  # 75% used, 25% remaining
+        msg = tracker.budget_message(phase="learning")
+        assert "25,000" in msg
+        assert "evaluate" in msg.lower()
+
+    def test_budget_message_nearly_exhausted(self):
+        tracker = TokenTracker(budget=100_000)
+        tracker.record(50_000, 47_000)  # 97% used, 3% remaining
+        msg = tracker.budget_message(phase="learning")
+        assert "nearly exhausted" in msg.lower()
+
+    def test_budget_message_exhausted(self):
+        tracker = TokenTracker(budget=1_000)
+        tracker.record(600, 400)
+        msg = tracker.budget_message(phase="evaluation")
+        assert "exhausted" in msg.lower()
+
+    def test_budget_message_evaluation(self):
+        tracker = TokenTracker(budget=100_000)
+        tracker.record(40_000, 10_000)
+        msg = tracker.budget_message(phase="evaluation")
+        assert "rated evaluation" in msg.lower()
+
+    def test_budget_message_baseline(self):
+        tracker = TokenTracker(budget=100_000)
+        tracker.record(5_000, 1_000)
+        msg = tracker.budget_message(phase="baseline")
+        assert "starting ELO" in msg
+
 
 # ── GameLibrary ───────────────────────────────────────────────
 

@@ -20,7 +20,7 @@ Every session progresses through phases:
 
     BASELINE  ->  LEARNING  ->  EVALUATION  ->  COMPLETED
 
-    BASELINE:   Play rated games with rules-only knowledge.
+    BASELINE:   Play rated games with rules-only knowledge (measures starting ELO).
     LEARNING:   Study GM games, play practice games to improve.
     EVALUATION: Play rated games to measure final ELO.
     COMPLETED:  Session done — retrieve results.
@@ -30,12 +30,25 @@ Every session progresses through phases:
       LEARNING -> EVALUATION   explicit via `evaluate` command
       EVALUATION -> COMPLETED  automatic after convergence or budget exhausted
 
-    Use --skip-baseline on `create` to start directly in LEARNING.
+    --skip-baseline on `create` starts directly in LEARNING. Not recommended
+    for real benchmarks — baseline is needed to measure ELO gain.
+
+Token Budget
+------------
+Your token budget represents your learning opportunity. Every token you spend
+studying GM games, practicing against opponents, and refining your strategy
+makes you stronger. The benchmark measures how efficiently you convert tokens
+into chess skill (ELO gain).
+
+    - Every CLI response includes a "budget" section with tokens remaining.
+    - Report your token usage with --tokens on any command (see below).
+    - Don't rush to evaluation — exhaust your learning budget first!
+    - More studying and practice = higher final ELO = better benchmark score.
 
 Commands
 --------
 Every command prints JSON to stdout. Every response includes "session_file"
-so the caller never loses the path.
+and a "budget" section with your token usage and remaining budget.
 
   create    Create a new benchmark session.
             python scripts/agent_cli.py create --name "my-run" [options]
@@ -43,7 +56,7 @@ so the caller never loses the path.
               --baseline-games N    Baseline rated games (default: 10)
               --eval-min-games N    Min eval games before convergence check (default: 10)
               --eval-max-games N    Max eval games (default: 200)
-              --skip-baseline       Start in LEARNING (skip baseline)
+              --skip-baseline       Start in LEARNING (skip baseline — not recommended)
               --checkpoint PATH     Neural network checkpoint for MCTS opponents
               --calibration PATH    Calibration JSON (from calibrate_opponents.py)
             Output: {"session_file": "...", "phase": "...", "game_id": "...", ...}
@@ -89,6 +102,11 @@ so the caller never loses the path.
             Agents should self-report approximate token usage after each
             interaction to keep the budget tracker accurate.
 
+Global Options (all commands except create)
+-------------------------------------------
+  --tokens PROMPT COMPLETION   Report token usage inline with any command.
+    Example: python scripts/agent_cli.py move session.pkl "Wd2-d3" --tokens 5000 2000
+
 DCN Notation
 ------------
     Move:     Xa1-b2     e.g. Wc1-c2  (Warrior c1 to c2)
@@ -111,40 +129,47 @@ Opponent Calibration (MCTSLite, no neural network)
 
 Example: Full Benchmark Run
 ----------------------------
-    # 1. Create session (skip baseline for simplicity)
-    PYTHONPATH=. python scripts/agent_cli.py create --name "my-agent" \\
-        --skip-baseline --budget 500000
+    # 1. Create session (baseline measures your starting ELO)
+    python scripts/agent_cli.py create --name "my-agent" --budget 500000
 
-    # 2. Read the rules
-    PYTHONPATH=. python scripts/agent_cli.py rules <session_file>
+    # 2. Play baseline games (automatic — just play moves until LEARNING phase)
+    python scripts/agent_cli.py move <session_file> "Wd2-d3" --tokens 3000 500
+    # ... keep playing moves until phase transitions to LEARNING
 
-    # 3. Study some GM games
-    PYTHONPATH=. python scripts/agent_cli.py study <session_file> 5
+    # 3. Read the rules
+    python scripts/agent_cli.py rules <session_file>
 
-    # 4. Play practice games to learn
-    PYTHONPATH=. python scripts/agent_cli.py practice <session_file> 800
-    PYTHONPATH=. python scripts/agent_cli.py move <session_file> "Wd2-d3"
+    # 4. Study some GM games
+    python scripts/agent_cli.py study <session_file> 5
+
+    # 5. Play practice games to learn
+    python scripts/agent_cli.py practice <session_file> 800
+    python scripts/agent_cli.py move <session_file> "Wd2-d3" --tokens 3000 500
     # ... keep playing moves until game_over=true
 
-    # 5. Transition to evaluation
-    PYTHONPATH=. python scripts/agent_cli.py evaluate <session_file>
+    # 6. Transition to evaluation (only when you've used most of your budget!)
+    python scripts/agent_cli.py evaluate <session_file>
 
-    # 6. Play rated games (move until game_over, repeat for each new game)
-    PYTHONPATH=. python scripts/agent_cli.py move <session_file> "Wd2-d3"
+    # 7. Play rated games (move until game_over, repeat for each new game)
+    python scripts/agent_cli.py move <session_file> "Wd2-d3" --tokens 3000 500
     # ... phase auto-completes after convergence
 
-    # 7. Get results
-    PYTHONPATH=. python scripts/agent_cli.py result <session_file>
+    # 8. Get results
+    python scripts/agent_cli.py result <session_file>
 
 Tips for AI Agents
 ------------------
+    - Your token budget is your learning opportunity — use it all!
+    - Report tokens with --tokens on every command to track your budget.
+    - Every CLI response includes a "budget" section showing tokens remaining.
+    - More studying and practice = higher final ELO = better benchmark score.
+    - Don't rush to evaluation — exhaust your learning budget first.
     - Always pick moves from the legal_moves list in the state/move response.
     - Check game_over after each move. When a game ends, look for next_game_id.
     - Study GM games early to learn piece interactions and strategy.
     - Start practice at low ELO (800), increase as you improve.
     - When ready, call `evaluate` — you can't go back to studying after.
     - Use `resume` if context is lost — it returns full current state.
-    - Self-report tokens via `report-tokens` to keep budget tracking accurate.
 """
 
 import argparse
@@ -204,8 +229,19 @@ def _load_session(path: str) -> BenchmarkSession:
         return pickle.load(f)
 
 
-def _print(data):
-    """Print dict as indented JSON."""
+def _raw_print(data):
+    """Print dict as indented JSON (no budget info — used before session exists)."""
+    print(json.dumps(data, indent=2, default=str))
+
+
+def _print_response(data, session: BenchmarkSession, session_file: str):
+    """Print dict as indented JSON with budget info injected."""
+    data["session_file"] = session_file
+    tracker = session.token_tracker
+    data["budget"] = {
+        **tracker.summary(),
+        "message": tracker.budget_message(phase=session.phase.value),
+    }
     print(json.dumps(data, indent=2, default=str))
 
 
@@ -243,7 +279,6 @@ def cmd_create(args):
     _save_session(session, session_file)
 
     output = {
-        "session_file": session_file,
         "phase": session.phase.value,
         "library_games": loaded,
     }
@@ -256,19 +291,21 @@ def cmd_create(args):
     else:
         output["info"] = "Session started in LEARNING phase (baseline skipped)."
 
-    _print(output)
+    _print_response(output, session, session_file)
 
 
 def cmd_status(args):
     session = _load_session(args.session_file)
     status = session.get_status()
-    status["session_file"] = args.session_file
-    _print(status)
+    _print_response(status, session, args.session_file)
 
 
 def cmd_rules(args):
     session = _load_session(args.session_file)
     print(session.get_rules())
+    # Append budget reminder as plain-text footer
+    tracker = session.token_tracker
+    print(f"\n---\nBudget: {tracker.budget_message(phase=session.phase.value)}")
 
 
 def cmd_state(args):
@@ -298,8 +335,7 @@ def cmd_state(args):
     else:
         result = {"phase": session.phase.value, "info": "Session completed."}
 
-    result["session_file"] = args.session_file
-    _print(result)
+    _print_response(result, session, args.session_file)
     _save_session(session, args.session_file)
 
 
@@ -317,16 +353,16 @@ def cmd_move(args):
         if active:
             game_id = active[0].game_id
         else:
-            _print({"error": "No active practice game"})
+            _print_response({"error": "No active practice game"}, session, args.session_file)
             return
     else:
-        _print({"error": f"Cannot play moves in {session.phase.value} phase"})
+        _print_response({"error": f"Cannot play moves in {session.phase.value} phase"},
+                        session, args.session_file)
         return
 
     result = session.play_move(game_id, args.move_dcn)
     _save_session(session, args.session_file)
-    result["session_file"] = args.session_file
-    _print(result)
+    _print_response(result, session, args.session_file)
 
 
 def cmd_study(args):
@@ -334,15 +370,14 @@ def cmd_study(args):
     try:
         result = session.study_games(args.num_games)
     except Exception as e:
-        _print({"error": str(e), "session_file": args.session_file})
+        _print_response({"error": str(e)}, session, args.session_file)
         return
     _save_session(session, args.session_file)
-    _print({
-        "session_file": args.session_file,
+    _print_response({
         "num_returned": result["num_returned"],
         "remaining": result["remaining_in_library"],
         "games": result["games"],
-    })
+    }, session, args.session_file)
 
 
 def cmd_practice(args):
@@ -350,11 +385,10 @@ def cmd_practice(args):
     try:
         result = session.start_practice_game(args.opponent_elo)
     except Exception as e:
-        _print({"error": str(e), "session_file": args.session_file})
+        _print_response({"error": str(e)}, session, args.session_file)
         return
     _save_session(session, args.session_file)
-    result["session_file"] = args.session_file
-    _print(result)
+    _print_response(result, session, args.session_file)
 
 
 def cmd_evaluate(args):
@@ -362,11 +396,10 @@ def cmd_evaluate(args):
     try:
         result = session.request_evaluation()
     except Exception as e:
-        _print({"error": str(e), "session_file": args.session_file})
+        _print_response({"error": str(e)}, session, args.session_file)
         return
     _save_session(session, args.session_file)
-    result["session_file"] = args.session_file
-    _print(result)
+    _print_response(result, session, args.session_file)
 
 
 def cmd_resume(args):
@@ -374,7 +407,6 @@ def cmd_resume(args):
     session = _load_session(args.session_file)
     status = session.get_status()
     output = {
-        "session_file": args.session_file,
         "phase": status["phase"],
         "baseline_rating": status.get("baseline_rating"),
         "final_rating": status.get("final_rating"),
@@ -405,7 +437,7 @@ def cmd_resume(args):
         output["info"] = "Session is COMPLETED. Use 'result' to get final results."
 
     _save_session(session, args.session_file)
-    _print(output)
+    _print_response(output, session, args.session_file)
 
 
 def cmd_report_tokens(args):
@@ -414,11 +446,10 @@ def cmd_report_tokens(args):
     try:
         result = session.report_tokens(args.prompt_tokens, args.completion_tokens)
     except Exception as e:
-        _print({"error": str(e), "session_file": args.session_file})
+        _print_response({"error": str(e)}, session, args.session_file)
         return
     _save_session(session, args.session_file)
-    result["session_file"] = args.session_file
-    _print(result)
+    _print_response(result, session, args.session_file)
 
 
 def cmd_result(args):
@@ -426,14 +457,15 @@ def cmd_result(args):
     try:
         result = session.get_result()
     except Exception as e:
-        _print({"error": str(e), "session_file": args.session_file})
+        _print_response({"error": str(e)}, session, args.session_file)
         return
-    result["session_file"] = args.session_file
-    _print(result)
+    _print_response(result, session, args.session_file)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark agent CLI")
+    parser.add_argument("--tokens", nargs=2, type=int, metavar=("PROMPT", "COMPLETION"),
+                        help="Report token usage inline (prompt_tokens completion_tokens)")
     sub = parser.add_subparsers(dest="command")
 
     # create
@@ -499,6 +531,12 @@ def main():
     if not args.command:
         parser.print_help()
         return
+
+    # Handle global --tokens flag: record usage before running the command
+    if args.tokens and args.command != "create":
+        session = _load_session(args.session_file)
+        session.token_tracker.record(args.tokens[0], args.tokens[1])
+        _save_session(session, args.session_file)
 
     {
         "create": cmd_create,

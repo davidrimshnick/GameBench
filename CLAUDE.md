@@ -47,8 +47,8 @@ wandb login  # API key is in ~/.netrc
 # Install davechess as a package first: pip install -e . (from repo root)
 # All docs are in scripts/agent_cli.py — read the docstring for full reference.
 
-# Create a session (skip baseline for quick test)
-python scripts/agent_cli.py create --name "test" --skip-baseline --budget 500000
+# Create a session (baseline measures starting ELO for gain calculation)
+python scripts/agent_cli.py create --name "test" --budget 500000
 
 # Study GM games, practice, play moves, evaluate
 python scripts/agent_cli.py study <session_file> 5
@@ -211,8 +211,9 @@ cp -r data/gm_games "$SANDBOX/data/"
 cd "$SANDBOX" && claude -p "You are in a sandbox directory. \
   Read scripts/agent_cli.py — it has all the docs you need. \
   Run the full DaveChess benchmark: create a session \
-  (--skip-baseline --budget 500000 --eval-min-games 5 --eval-max-games 15), \
+  (--budget 500000 --eval-min-games 5 --eval-max-games 15), \
   read the rules, study GM games, play practice games, then evaluate. \
+  Report tokens with --tokens on every command. \
   Pick moves from legal_moves. Show the final result." \
   --allowedTools "Bash(run benchmark commands)" \
   --output-format stream-json \
