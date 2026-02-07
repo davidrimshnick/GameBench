@@ -15,7 +15,7 @@ mcts:
 
 selfplay:
   num_games_per_iteration: 20  # More games = more diverse training data
-  replay_buffer_size: 50000
+  replay_buffer_size: 20000
   num_workers: 4               # CPU worker processes for MCTS tree traversal
   min_buffer_size: 1000        # Train immediately on seed games
   random_opponent_fraction: 0.5   # 50% of games vs random MCTS (no NN) to prevent overfitting
@@ -26,7 +26,7 @@ training:
   learning_rate: 0.001         # Lower LR for more stable learning
   momentum: 0.9
   weight_decay: 0.0001
-  steps_per_iteration: 300     # More steps to better utilize large buffer
+  steps_per_iteration: 400     # ~2.5 passes through 20K buffer per iteration
   checkpoint_interval: 100
   eval_games: 10               # More eval games for reliable signal
   eval_simulations: 100        # Match self-play sim count
