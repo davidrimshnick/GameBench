@@ -18,7 +18,8 @@ selfplay:
   replay_buffer_size: 50000
   num_workers: 1               # Sequential GPU inference (no CPU multiprocessing)
   min_buffer_size: 1000        # Train immediately on seed games
-  random_opponent_fraction: 0.25  # 25% of games vs random MCTS (no NN) to prevent overfitting
+  random_opponent_fraction: 0.5   # 50% of games vs random MCTS (no NN) to prevent overfitting
+  parallel_games: 20             # All 20 games simultaneously for batched GPU eval
 
 training:
   batch_size: 128

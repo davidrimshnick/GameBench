@@ -22,7 +22,7 @@ except ImportError:
 from davechess.game.state import GameState, Player, Move
 from davechess.game.rules import generate_legal_moves, apply_move
 from davechess.engine.network import state_to_planes, move_to_policy_index, POLICY_SIZE
-from davechess.engine.mcts import MCTS
+from davechess.engine.mcts import MCTS, BatchedEvaluator
 
 
 class ReplayBuffer:
@@ -322,6 +322,256 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
         logger.info(f"  Self-play game {game_idx+1}/{num_games} ({game_type}): "
                     f"{game_len} moves, {len(all_examples)} total positions")
         gc.collect()  # Free MCTS tree circular references
+
+    stats = {
+        "white_wins": white_wins,
+        "black_wins": black_wins,
+        "draws": draws,
+        "white_win_pct": white_wins / max(white_wins + black_wins, 1),
+        "game_lengths": game_lengths,
+        "avg_game_length": sum(game_lengths) / len(game_lengths) if game_lengths else 0,
+        "min_game_length": min(game_lengths) if game_lengths else 0,
+        "max_game_length": max(game_lengths) if game_lengths else 0,
+        "game_details": game_details,
+        "game_records": game_records,
+        "num_random_games": num_random_games,
+    }
+
+    return all_examples, stats
+
+
+class _ActiveGame:
+    """Tracks state for one game in the parallel self-play batch."""
+    __slots__ = [
+        "game_idx", "state", "nn_engine", "opponent_engine",
+        "nn_plays_white", "move_count", "temperature_threshold",
+        "examples", "game_moves", "game_type", "finished", "winner_str",
+    ]
+
+    def __init__(self, game_idx: int, nn_engine: MCTS,
+                 opponent_engine: Optional[MCTS],
+                 nn_plays_white: bool, temperature_threshold: int,
+                 game_type: str):
+        self.game_idx = game_idx
+        self.state = GameState()
+        self.nn_engine = nn_engine
+        self.opponent_engine = opponent_engine
+        self.nn_plays_white = nn_plays_white
+        self.move_count = 0
+        self.temperature_threshold = temperature_threshold
+        self.examples: list[tuple[np.ndarray, dict, int]] = []
+        self.game_moves: list[tuple[GameState, Move]] = []
+        self.game_type = game_type
+        self.finished = False
+        self.winner_str = "draw"
+
+
+def _record_winner(g: _ActiveGame):
+    """Set the winner string on a finished game."""
+    if g.state.winner is not None:
+        g.winner_str = "white" if g.state.winner == Player.WHITE else "black"
+    else:
+        g.winner_str = "draw"
+
+
+def _finalize_game(g: _ActiveGame) -> tuple[list, dict]:
+    """Convert a finished game into training data and game record.
+
+    Returns (training_data, game_record) in same format as play_selfplay_game().
+    """
+    winner_str = g.winner_str
+    if winner_str == "white":
+        winner = int(Player.WHITE)
+    elif winner_str == "black":
+        winner = int(Player.BLACK)
+    else:
+        winner = -1
+
+    training_data = []
+    for planes, policy_dict, player in g.examples:
+        policy = np.zeros(POLICY_SIZE, dtype=np.float32)
+        for idx, prob in policy_dict.items():
+            policy[idx] = prob
+        if winner == -1:
+            value = 0.0
+        elif winner == player:
+            value = 1.0
+        else:
+            value = -1.0
+        training_data.append((planes, policy, value))
+
+    game_record = {"moves": g.game_moves, "winner": winner_str,
+                   "length": g.move_count}
+    return training_data, game_record
+
+
+def _apply_game_move(g: _ActiveGame, move: Move, info: dict, is_nn_turn: bool):
+    """Apply a move to an active game, collect training data if NN's turn."""
+    if is_nn_turn:
+        planes = state_to_planes(g.state)
+        g.examples.append((planes, info["policy_target"], int(g.state.current_player)))
+
+    g.game_moves.append((g.state.clone(), move))
+    g.state = apply_move(g.state, move)
+    g.move_count += 1
+
+    if g.state.done or not generate_legal_moves(g.state):
+        g.finished = True
+        _record_winner(g)
+
+
+def _play_wave(wave_games: list[_ActiveGame], nn_mcts: MCTS,
+               random_mcts: Optional[MCTS], evaluator: BatchedEvaluator,
+               temperature_threshold: int):
+    """Play a wave of games to completion with batched evaluation.
+
+    At each step:
+    1. Partition active games by engine type (NN vs random).
+    2. NN games: batched MCTS search via MCTS.batched_search().
+    3. Random games: sequential MCTS search (no NN needed).
+    4. Select moves, update states, check for game end.
+    """
+    while True:
+        nn_games: list[_ActiveGame] = []
+        random_games: list[_ActiveGame] = []
+
+        for g in wave_games:
+            if g.finished:
+                continue
+
+            moves = generate_legal_moves(g.state)
+            if not moves or g.state.done:
+                g.finished = True
+                _record_winner(g)
+                continue
+
+            # Determine whose turn it is
+            if g.opponent_engine is not None:
+                nn_player = Player.WHITE if g.nn_plays_white else Player.BLACK
+                is_nn_turn = (g.state.current_player == nn_player)
+            else:
+                is_nn_turn = True
+
+            if is_nn_turn:
+                nn_games.append(g)
+            else:
+                random_games.append(g)
+
+        if not nn_games and not random_games:
+            break
+
+        # Batched MCTS for NN games
+        if nn_games:
+            # Create per-game engine copies with correct temperature
+            engines: list[MCTS] = []
+            for g in nn_games:
+                temp = 1.0 if g.move_count < temperature_threshold else 0.1
+                eng = MCTS(nn_mcts.network, num_simulations=nn_mcts.num_simulations,
+                           cpuct=nn_mcts.cpuct, dirichlet_alpha=nn_mcts.dirichlet_alpha,
+                           dirichlet_epsilon=nn_mcts.dirichlet_epsilon,
+                           temperature=temp, device=nn_mcts.device)
+                engines.append(eng)
+
+            states = [g.state for g in nn_games]
+            noise_flags = [True] * len(nn_games)
+
+            roots = MCTS.batched_search(engines, states, evaluator, noise_flags)
+
+            for g, eng, root in zip(nn_games, engines, roots):
+                move, info = eng.get_move_from_root(root, g.state)
+                _apply_game_move(g, move, info, is_nn_turn=True)
+
+        # Sequential MCTS for random-opponent games
+        for g in random_games:
+            temp = 1.0 if g.move_count < temperature_threshold else 0.1
+            g.opponent_engine.temperature = temp
+            move, info = g.opponent_engine.get_move(g.state, add_noise=True)
+            _apply_game_move(g, move, info, is_nn_turn=False)
+
+
+def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 200,
+                                 temperature_threshold: int = 30,
+                                 dirichlet_alpha: float = 0.3,
+                                 dirichlet_epsilon: float = 0.25,
+                                 random_opponent_fraction: float = 0.0,
+                                 device: str = "cpu",
+                                 parallel_games: int = 10) -> tuple[list, dict]:
+    """Run self-play games with batched NN evaluation for GPU efficiency.
+
+    Plays multiple games simultaneously, collecting leaf evaluations from
+    all active MCTS searches into a single batched NN forward pass.
+
+    Args:
+        Same as run_selfplay_batch(), plus:
+        parallel_games: Number of games to play simultaneously.
+
+    Returns:
+        (all_examples, stats) — same format as run_selfplay_batch().
+    """
+    all_examples = []
+    white_wins = 0
+    black_wins = 0
+    draws = 0
+    game_lengths = []
+    game_details = []
+    game_records = []
+
+    evaluator = BatchedEvaluator(network, device=device)
+
+    nn_mcts = MCTS(network, num_simulations=num_simulations,
+                   dirichlet_alpha=dirichlet_alpha,
+                   dirichlet_epsilon=dirichlet_epsilon,
+                   device=device)
+    num_random_games = int(num_games * random_opponent_fraction)
+    random_mcts = None
+    if num_random_games > 0:
+        random_mcts = MCTS(None, num_simulations=num_simulations, device=device)
+
+    games_launched = 0
+    while games_launched < num_games:
+        wave_size = min(parallel_games, num_games - games_launched)
+        wave_games: list[_ActiveGame] = []
+
+        for i in range(wave_size):
+            game_global_idx = games_launched + i
+            is_random_game = game_global_idx < num_random_games
+            nn_plays_white = (game_global_idx % 2 == 0)
+
+            wave_games.append(_ActiveGame(
+                game_idx=game_global_idx,
+                nn_engine=nn_mcts,
+                opponent_engine=random_mcts if is_random_game else None,
+                nn_plays_white=nn_plays_white,
+                temperature_threshold=temperature_threshold,
+                game_type="vs_random" if is_random_game else "selfplay",
+            ))
+
+        _play_wave(wave_games, nn_mcts, random_mcts, evaluator,
+                   temperature_threshold)
+
+        for g in wave_games:
+            training_data, game_record = _finalize_game(g)
+            all_examples.extend(training_data)
+            game_lengths.append(len(training_data))
+
+            winner = game_record["winner"]
+            if winner == "white":
+                white_wins += 1
+            elif winner == "black":
+                black_wins += 1
+            else:
+                draws += 1
+
+            game_details.append({"game": g.game_idx + 1,
+                                 "length": game_record["length"],
+                                 "winner": winner, "type": g.game_type})
+            game_records.append(game_record)
+
+            logger.info(f"  Self-play game {g.game_idx+1}/{num_games} ({g.game_type}): "
+                        f"{game_record['length']} moves, {len(all_examples)} total positions")
+
+        games_launched += wave_size
+        gc.collect()
 
     stats = {
         "white_wins": white_wins,

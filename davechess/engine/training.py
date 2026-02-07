@@ -35,7 +35,7 @@ except ImportError:
     HAS_TB = False
 
 from davechess.engine.network import DaveChessNetwork, POLICY_SIZE, state_to_planes, move_to_policy_index
-from davechess.engine.selfplay import ReplayBuffer, run_selfplay_batch
+from davechess.engine.selfplay import ReplayBuffer, run_selfplay_batch, run_selfplay_batch_parallel
 from davechess.engine.mcts import MCTS
 from davechess.game.state import GameState, Player
 from davechess.game.rules import generate_legal_moves, apply_move
@@ -445,9 +445,12 @@ class Trainer:
             del random_mcts
             logger.info(f"Random eval: W:{random_wins} L:{random_losses} D:{random_draws}")
 
-            # If we lost any random game, fail eval — draws are tolerable at low sims
+            # Must win majority of random games with no losses
             if random_losses > 0:
                 logger.info("Failed random opponent check — lost to random, network is overfitting")
+                win_rate = 0.0  # Force rejection
+            elif random_wins < num_random_games // 2 + 1:
+                logger.info(f"Failed random opponent check — only won {random_wins}/{num_random_games}, need majority wins")
                 win_rate = 0.0  # Force rejection
 
         # Explicitly free MCTS trees (circular parent↔child refs)
@@ -594,16 +597,30 @@ class Trainer:
         num_sims = adaptive_simulations(self.best_elo_estimate, min_sims=25, max_sims=base_sims)
         logger.info(f"Self-play phase... (adaptive sims: {num_sims}, ELO={self.best_elo_estimate:.0f})")
         selfplay_start = time.time()
-        examples, sp_stats = run_selfplay_batch(
-            network=self.network,
-            num_games=sp_cfg.get("num_games_per_iteration", 100),
-            num_simulations=num_sims,
-            temperature_threshold=mcts_cfg.get("temperature_threshold", 30),
-            dirichlet_alpha=mcts_cfg.get("dirichlet_alpha", 0.3),
-            dirichlet_epsilon=mcts_cfg.get("dirichlet_epsilon", 0.25),
-            random_opponent_fraction=sp_cfg.get("random_opponent_fraction", 0.0),
-            device=self.device,
-        )
+        parallel_games = sp_cfg.get("parallel_games", 0)
+        if parallel_games > 0:
+            examples, sp_stats = run_selfplay_batch_parallel(
+                network=self.network,
+                num_games=sp_cfg.get("num_games_per_iteration", 100),
+                num_simulations=num_sims,
+                temperature_threshold=mcts_cfg.get("temperature_threshold", 30),
+                dirichlet_alpha=mcts_cfg.get("dirichlet_alpha", 0.3),
+                dirichlet_epsilon=mcts_cfg.get("dirichlet_epsilon", 0.25),
+                random_opponent_fraction=sp_cfg.get("random_opponent_fraction", 0.0),
+                device=self.device,
+                parallel_games=parallel_games,
+            )
+        else:
+            examples, sp_stats = run_selfplay_batch(
+                network=self.network,
+                num_games=sp_cfg.get("num_games_per_iteration", 100),
+                num_simulations=num_sims,
+                temperature_threshold=mcts_cfg.get("temperature_threshold", 30),
+                dirichlet_alpha=mcts_cfg.get("dirichlet_alpha", 0.3),
+                dirichlet_epsilon=mcts_cfg.get("dirichlet_epsilon", 0.25),
+                random_opponent_fraction=sp_cfg.get("random_opponent_fraction", 0.0),
+                device=self.device,
+            )
         selfplay_elapsed = time.time() - selfplay_start
 
         num_new_examples = len(examples)

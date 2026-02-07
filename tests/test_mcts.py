@@ -122,3 +122,114 @@ class TestMCTSWithNetwork:
         # Should find the Commander capture
         assert isinstance(move, MoveStep)
         assert move.to_rc == (1, 2)
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
+class TestBatchedMCTS:
+    def test_batched_evaluator_basic(self):
+        """BatchedEvaluator should return correct number of results."""
+        from davechess.engine.mcts import BatchedEvaluator, MCTSNode
+        from davechess.engine.network import DaveChessNetwork, state_to_planes
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        evaluator = BatchedEvaluator(net)
+
+        for _ in range(5):
+            state = GameState()
+            node = MCTSNode(state=state)
+            evaluator.submit(node, state_to_planes(state))
+
+        results = evaluator.evaluate_batch()
+        assert len(results) == 5
+        for policy, value in results:
+            assert policy.shape == (2816,)
+            assert -1.0 <= value <= 1.0
+
+    def test_batched_evaluator_no_network(self):
+        """Without a network, should return uniform policy and zero value."""
+        from davechess.engine.mcts import BatchedEvaluator, MCTSNode
+        from davechess.engine.network import state_to_planes, POLICY_SIZE
+
+        evaluator = BatchedEvaluator(None)
+        state = GameState()
+        node = MCTSNode(state=state)
+        evaluator.submit(node, state_to_planes(state))
+        results = evaluator.evaluate_batch()
+        assert len(results) == 1
+        policy, value = results[0]
+        assert abs(value) < 1e-6
+        assert abs(policy.sum() - 1.0) < 1e-5
+        assert policy.shape == (POLICY_SIZE,)
+
+    def test_batched_evaluator_empty(self):
+        """Empty evaluator should return empty results."""
+        from davechess.engine.mcts import BatchedEvaluator
+        evaluator = BatchedEvaluator(None)
+        assert evaluator.evaluate_batch() == []
+
+    def test_batched_search_produces_valid_roots(self):
+        """batched_search should produce root nodes with visit counts."""
+        from davechess.engine.mcts import MCTS, BatchedEvaluator
+        from davechess.engine.network import DaveChessNetwork
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        num_sims = 10
+        engines = [MCTS(net, num_simulations=num_sims) for _ in range(3)]
+        states = [GameState() for _ in range(3)]
+        evaluator = BatchedEvaluator(net)
+
+        roots = MCTS.batched_search(engines, states, evaluator, [True, True, True])
+
+        assert len(roots) == 3
+        for root in roots:
+            assert root.visit_count > 0
+            assert root.children
+            assert root.is_expanded
+
+    def test_get_move_from_root(self):
+        """get_move_from_root should return a legal move."""
+        from davechess.engine.mcts import MCTS
+        from davechess.engine.network import DaveChessNetwork
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        mcts = MCTS(net, num_simulations=10)
+
+        state = GameState()
+        root = mcts.search(state)
+        move, info = mcts.get_move_from_root(root, state)
+        legal = generate_legal_moves(state)
+        assert move in legal
+        assert "policy_target" in info
+
+    def test_parallel_selfplay_output_format(self):
+        """run_selfplay_batch_parallel should produce same output format."""
+        from davechess.engine.selfplay import run_selfplay_batch_parallel
+        from davechess.engine.network import DaveChessNetwork, POLICY_SIZE
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        examples, stats = run_selfplay_batch_parallel(
+            network=net, num_games=2, num_simulations=5,
+            parallel_games=2)
+
+        assert isinstance(examples, list)
+        assert "white_wins" in stats
+        assert "game_records" in stats
+        assert "game_details" in stats
+        for planes, policy, value in examples:
+            assert planes.shape == (15, 8, 8)
+            assert policy.shape == (POLICY_SIZE,)
+            assert -1.0 <= value <= 1.0
+
+    def test_parallel_selfplay_with_random_opponent(self):
+        """Parallel selfplay with random opponents should work."""
+        from davechess.engine.selfplay import run_selfplay_batch_parallel
+        from davechess.engine.network import DaveChessNetwork
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        examples, stats = run_selfplay_batch_parallel(
+            network=net, num_games=4, num_simulations=5,
+            random_opponent_fraction=0.5, parallel_games=4)
+
+        assert isinstance(examples, list)
+        assert len(examples) > 0
+        assert stats["num_random_games"] == 2

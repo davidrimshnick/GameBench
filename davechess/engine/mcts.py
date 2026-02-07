@@ -105,6 +105,52 @@ class MCTSNode:
             node = node.parent
 
 
+class BatchedEvaluator:
+    """Collects leaf states from multiple MCTS trees and evaluates in one batch."""
+
+    def __init__(self, network, device: str = "cpu"):
+        self.network = network
+        self.device = device
+        self._pending: list[tuple[MCTSNode, np.ndarray]] = []
+
+    def submit(self, node: MCTSNode, planes: np.ndarray):
+        """Queue a leaf node for batched evaluation."""
+        self._pending.append((node, planes))
+
+    def evaluate_batch(self) -> list[tuple[np.ndarray, float]]:
+        """Evaluate all pending leaves in a single forward pass.
+
+        Returns list of (policy, value) tuples in submission order.
+        """
+        if not self._pending:
+            return []
+
+        if not HAS_TORCH or self.network is None:
+            results = [(np.ones(POLICY_SIZE) / POLICY_SIZE, 0.0)
+                       for _ in self._pending]
+            self._pending.clear()
+            return results
+
+        planes_batch = np.stack([p for _, p in self._pending])
+        x = torch.from_numpy(planes_batch).to(self.device)
+
+        self.network.eval()
+        with torch.no_grad():
+            logits, values = self.network(x)
+
+        policies = torch.softmax(logits, dim=1).cpu().numpy()
+        values_np = values.cpu().numpy().flatten()
+
+        results = [(policies[i], float(values_np[i]))
+                    for i in range(len(self._pending))]
+        self._pending.clear()
+        return results
+
+    @property
+    def pending_count(self) -> int:
+        return len(self._pending)
+
+
 class MCTS:
     """Monte Carlo Tree Search with neural network evaluation."""
 
@@ -220,3 +266,123 @@ class MCTS:
             "policy_target": move_policies,
             "root_value": root.q_value,
         }
+
+    def get_move_from_root(self, root: MCTSNode, state: GameState) -> tuple[Move, dict]:
+        """Select a move from a completed search tree root.
+
+        Same logic as get_move() but works with a pre-computed root node.
+        """
+        if not root.children:
+            legal = generate_legal_moves(state)
+            if legal:
+                import random
+                return random.choice(legal), {"visits": {}, "value": 0.0}
+            raise ValueError("No legal moves")
+
+        visits = np.array([c.visit_count for c in root.children], dtype=np.float64)
+        moves = [c.move for c in root.children]
+        total_visits = visits.sum()
+
+        if total_visits == 0:
+            best_idx = np.random.randint(len(moves))
+            policy_target = np.ones(len(moves)) / len(moves)
+        elif self.temperature == 0:
+            best_idx = np.argmax(visits)
+            policy_target = visits / total_visits
+        elif self.temperature == float("inf"):
+            best_idx = np.random.randint(len(moves))
+            policy_target = visits / total_visits
+        else:
+            visits_temp = visits ** (1.0 / self.temperature)
+            probs = visits_temp / visits_temp.sum()
+            best_idx = np.random.choice(len(moves), p=probs)
+            policy_target = visits / total_visits
+        move_policies = {move_to_policy_index(m): p
+                         for m, p in zip(moves, policy_target)}
+
+        return moves[best_idx], {
+            "visit_counts": dict(zip(range(len(moves)), visits.tolist())),
+            "policy_target": move_policies,
+            "root_value": root.q_value,
+        }
+
+    def search_one_iteration_batched(self, root: MCTSNode,
+                                      evaluator: BatchedEvaluator) -> Optional[MCTSNode]:
+        """Run one MCTS iteration: select leaf, optionally submit to evaluator.
+
+        Returns the leaf node submitted for evaluation, or None if terminal.
+        """
+        node = root
+
+        while node.is_expanded and node.children:
+            node = node.select_child(self.cpuct)
+
+        node.ensure_state()
+
+        if node.state.done:
+            if node.state.winner is not None:
+                parent_player = node.parent.state.current_player if node.parent else node.state.current_player
+                v = 1.0 if node.state.winner == parent_player else -1.0
+            else:
+                v = 0.0
+            node.backpropagate(v)
+            return None
+
+        planes = state_to_planes(node.state)
+        evaluator.submit(node, planes)
+        return node
+
+    @staticmethod
+    def batched_search(engines: list[MCTS], states: list[GameState],
+                       evaluator: BatchedEvaluator,
+                       add_noise_flags: list[bool]) -> list[MCTSNode]:
+        """Run MCTS search on multiple states with batched NN evaluation.
+
+        Args:
+            engines: MCTS instance per game (may differ in temperature etc).
+            states: GameState per game.
+            evaluator: Shared BatchedEvaluator.
+            add_noise_flags: Per-game Dirichlet noise flag.
+
+        Returns:
+            List of root MCTSNode, one per game.
+        """
+        n = len(engines)
+
+        # Phase 1: create and batch-evaluate root nodes
+        roots: list[MCTSNode] = []
+        for i in range(n):
+            root = MCTSNode(state=states[i].clone())
+            roots.append(root)
+            evaluator.submit(root, state_to_planes(root.state))
+
+        root_results = evaluator.evaluate_batch()
+
+        for i in range(n):
+            policy, value = root_results[i]
+            roots[i].expand(policy)
+            if add_noise_flags[i] and roots[i].children:
+                eng = engines[i]
+                noise = np.random.dirichlet(
+                    [eng.dirichlet_alpha] * len(roots[i].children))
+                for child, ns in zip(roots[i].children, noise):
+                    child.prior = ((1 - eng.dirichlet_epsilon) * child.prior
+                                   + eng.dirichlet_epsilon * ns)
+
+        # Phase 2: run simulations in lockstep
+        num_sims = engines[0].num_simulations
+        for _ in range(num_sims):
+            pending_nodes: list[MCTSNode] = []
+
+            for i in range(n):
+                leaf = engines[i].search_one_iteration_batched(roots[i], evaluator)
+                if leaf is not None:
+                    pending_nodes.append(leaf)
+
+            if pending_nodes:
+                results = evaluator.evaluate_batch()
+                for node, (policy, value) in zip(pending_nodes, results):
+                    node.expand(policy)
+                    node.backpropagate(-value)
+
+        return roots
