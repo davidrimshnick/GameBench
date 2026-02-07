@@ -1,8 +1,8 @@
 # AlphaZero training configuration
 # Tuned for Jetson Orin Nano Super (8GB shared, CUDA 12.6)
 network:
-  num_res_blocks: 5
-  num_filters: 64
+  num_res_blocks: 8
+  num_filters: 96
   input_planes: 15
   board_size: 8
 
