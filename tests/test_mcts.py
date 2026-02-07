@@ -233,3 +233,86 @@ class TestBatchedMCTS:
         assert isinstance(examples, list)
         assert len(examples) > 0
         assert stats["num_random_games"] == 2
+
+
+class TestMultiprocessMCTS:
+    def test_remote_batched_evaluator_no_network(self):
+        """RemoteBatchedEvaluator with use_network=False returns uniform policy."""
+        import multiprocessing as mp
+        from davechess.engine.mcts_worker import RemoteBatchedEvaluator
+        from davechess.engine.mcts import MCTSNode
+        from davechess.engine.network import state_to_planes, POLICY_SIZE
+
+        # No queues needed when use_network=False
+        evaluator = RemoteBatchedEvaluator(
+            worker_id=0, request_queue=None, response_queue=None,
+            use_network=False)
+
+        state = GameState()
+        node = MCTSNode(state=state)
+        evaluator.submit(node, state_to_planes(state))
+        results = evaluator.evaluate_batch()
+
+        assert len(results) == 1
+        policy, value = results[0]
+        assert abs(value) < 1e-6
+        assert abs(policy.sum() - 1.0) < 1e-5
+        assert policy.shape == (POLICY_SIZE,)
+
+    def test_distribute_games(self):
+        """Games should be distributed evenly across workers."""
+        from davechess.engine.selfplay import _distribute_games
+
+        assignments = _distribute_games(num_games=20, num_workers=4,
+                                         num_random_games=10)
+        assert len(assignments) == 4
+        total = sum(len(a) for a in assignments)
+        assert total == 20
+
+        # Each worker should get 5 games
+        for a in assignments:
+            assert len(a) == 5
+
+        # First 10 games should be random
+        all_games = []
+        for a in assignments:
+            all_games.extend(a)
+        all_games.sort(key=lambda g: g["game_idx"])
+        for g in all_games[:10]:
+            assert g["is_random"]
+        for g in all_games[10:]:
+            assert not g["is_random"]
+
+    def test_multiprocess_selfplay_output_format(self):
+        """run_selfplay_multiprocess should produce same output format."""
+        from davechess.engine.selfplay import run_selfplay_multiprocess
+        from davechess.engine.network import DaveChessNetwork, POLICY_SIZE
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        examples, stats = run_selfplay_multiprocess(
+            network=net, num_games=4, num_simulations=5,
+            num_workers=2)
+
+        assert isinstance(examples, list)
+        assert len(examples) > 0
+        assert "white_wins" in stats
+        assert "game_records" in stats
+        assert "game_details" in stats
+        for planes, policy, value in examples:
+            assert planes.shape == (15, 8, 8)
+            assert policy.shape == (POLICY_SIZE,)
+            assert -1.0 <= value <= 1.0
+
+    def test_multiprocess_selfplay_with_random_opponent(self):
+        """Multiprocess selfplay with random opponents should work."""
+        from davechess.engine.selfplay import run_selfplay_multiprocess
+        from davechess.engine.network import DaveChessNetwork
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        examples, stats = run_selfplay_multiprocess(
+            network=net, num_games=4, num_simulations=5,
+            random_opponent_fraction=0.5, num_workers=2)
+
+        assert isinstance(examples, list)
+        assert len(examples) > 0
+        assert stats["num_random_games"] == 2

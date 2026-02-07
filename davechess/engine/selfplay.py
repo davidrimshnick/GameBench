@@ -588,3 +588,164 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
     }
 
     return all_examples, stats
+
+
+def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 200,
+                               temperature_threshold: int = 30,
+                               dirichlet_alpha: float = 0.3,
+                               dirichlet_epsilon: float = 0.25,
+                               random_opponent_fraction: float = 0.0,
+                               device: str = "cpu",
+                               num_workers: int = 4) -> tuple[list, dict]:
+    """Run self-play with multiprocess CPU workers and centralized GPU inference.
+
+    Each worker process runs MCTS tree traversal on a subset of games.
+    The main process runs the GPU inference server, batching leaf evaluations
+    from all workers into single forward passes.
+
+    Args:
+        Same as run_selfplay_batch_parallel(), plus:
+        num_workers: Number of CPU worker processes.
+
+    Returns:
+        (all_examples, stats) — same format as run_selfplay_batch().
+    """
+    import multiprocessing as mp
+    from davechess.engine.gpu_server import run_gpu_server
+    from davechess.engine.mcts_worker import worker_entry
+
+    num_random_games = int(num_games * random_opponent_fraction)
+
+    # Distribute games across workers
+    game_assignments = _distribute_games(num_games, num_workers, num_random_games)
+
+    mcts_config = {
+        "num_simulations": num_simulations,
+        "temperature_threshold": temperature_threshold,
+        "dirichlet_alpha": dirichlet_alpha,
+        "dirichlet_epsilon": dirichlet_epsilon,
+        "cpuct": 1.5,
+    }
+
+    # Create IPC queues
+    request_queue = mp.Queue()
+    response_queues = [mp.Queue() for _ in range(num_workers)]
+    results_queue = mp.Queue()
+
+    # Spawn workers
+    workers = []
+    for wid in range(num_workers):
+        p = mp.Process(
+            target=worker_entry,
+            args=(wid, request_queue, response_queues[wid], results_queue,
+                  game_assignments[wid], mcts_config),
+            daemon=True,
+        )
+        p.start()
+        workers.append(p)
+
+    logger.info(f"Multiprocess self-play: {num_workers} workers, "
+                f"{num_games} games ({num_random_games} vs random)")
+
+    # Main process runs GPU inference server (blocks until all workers done)
+    run_gpu_server(network, device, request_queue, response_queues,
+                   num_workers, workers)
+
+    # Collect results from all workers
+    all_worker_results = {}
+    for _ in range(num_workers):
+        try:
+            worker_id, worker_results = results_queue.get(timeout=30)
+            all_worker_results[worker_id] = worker_results
+        except Exception as e:
+            logger.warning(f"Timeout waiting for worker results: {e}")
+
+    # Wait for workers to exit
+    for p in workers:
+        p.join(timeout=10)
+        if p.is_alive():
+            logger.warning(f"Worker {p.pid} did not exit, terminating")
+            p.terminate()
+
+    # Aggregate results
+    return _aggregate_multiprocess_results(all_worker_results, num_games,
+                                            num_random_games)
+
+
+def _distribute_games(num_games: int, num_workers: int,
+                      num_random_games: int) -> list[list[dict]]:
+    """Distribute games evenly across workers.
+
+    Returns list of game assignments per worker, each a list of dicts with
+    game_idx, is_random, nn_plays_white.
+    """
+    assignments: list[list[dict]] = [[] for _ in range(num_workers)]
+
+    for i in range(num_games):
+        worker_id = i % num_workers
+        is_random = i < num_random_games
+        nn_plays_white = (i % 2 == 0)
+        assignments[worker_id].append({
+            "game_idx": i,
+            "is_random": is_random,
+            "nn_plays_white": nn_plays_white,
+        })
+
+    return assignments
+
+
+def _aggregate_multiprocess_results(all_worker_results: dict, num_games: int,
+                                     num_random_games: int) -> tuple[list, dict]:
+    """Aggregate results from all workers into the standard output format."""
+    all_examples = []
+    white_wins = 0
+    black_wins = 0
+    draws = 0
+    game_lengths = []
+    game_details = []
+    game_records = []
+
+    # Sort results by game_idx for deterministic ordering
+    all_game_results = []
+    for worker_id, results in all_worker_results.items():
+        all_game_results.extend(results)
+    all_game_results.sort(key=lambda r: r["game_idx"])
+
+    for r in all_game_results:
+        all_examples.extend(r["training_data"])
+        game_lengths.append(len(r["training_data"]))
+
+        winner = r["game_record"]["winner"]
+        if winner == "white":
+            white_wins += 1
+        elif winner == "black":
+            black_wins += 1
+        else:
+            draws += 1
+
+        game_details.append({
+            "game": r["game_idx"] + 1,
+            "length": r["game_record"]["length"],
+            "winner": winner,
+            "type": r["game_type"],
+        })
+        game_records.append(r["game_record"])
+
+        logger.info(f"  Self-play game {r['game_idx']+1}/{num_games} ({r['game_type']}): "
+                    f"{r['game_record']['length']} moves, {len(all_examples)} total positions")
+
+    stats = {
+        "white_wins": white_wins,
+        "black_wins": black_wins,
+        "draws": draws,
+        "white_win_pct": white_wins / max(white_wins + black_wins, 1),
+        "game_lengths": game_lengths,
+        "avg_game_length": sum(game_lengths) / len(game_lengths) if game_lengths else 0,
+        "min_game_length": min(game_lengths) if game_lengths else 0,
+        "max_game_length": max(game_lengths) if game_lengths else 0,
+        "game_details": game_details,
+        "game_records": game_records,
+        "num_random_games": num_random_games,
+    }
+
+    return all_examples, stats
