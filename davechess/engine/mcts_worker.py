@@ -107,23 +107,30 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
             device="cpu",
         )
 
-        random_mcts = None
-        has_random = any(g["is_random"] for g in game_assignments)
-        if has_random:
-            random_mcts = MCTS(
-                None,
-                num_simulations=mcts_config["num_simulations"],
-                device="cpu",
-            )
+        # Create per-sim-level random MCTS instances
+        random_mcts_by_sims: dict[int, MCTS] = {}
+        for g in game_assignments:
+            if g["is_random"]:
+                sims = g.get("random_sims", 25)
+                if sims not in random_mcts_by_sims:
+                    random_mcts_by_sims[sims] = MCTS(
+                        None, num_simulations=sims, device="cpu",
+                    )
+        random_mcts = next(iter(random_mcts_by_sims.values()), None)
 
         temperature_threshold = mcts_config["temperature_threshold"]
 
         wave_games: list[_ActiveGame] = []
         for g in game_assignments:
+            if g["is_random"]:
+                sims = g.get("random_sims", 25)
+                opp = random_mcts_by_sims[sims]
+            else:
+                opp = None
             wave_games.append(_ActiveGame(
                 game_idx=g["game_idx"],
                 nn_engine=nn_mcts,
-                opponent_engine=random_mcts if g["is_random"] else None,
+                opponent_engine=opp,
                 nn_plays_white=g["nn_plays_white"],
                 temperature_threshold=temperature_threshold,
                 game_type="vs_random" if g["is_random"] else "selfplay",

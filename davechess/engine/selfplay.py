@@ -282,19 +282,21 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
 
     game_records = []
 
-    # Create random opponent if needed
+    # Create random opponents at mixed difficulty levels
     num_random_games = int(num_games * random_opponent_fraction)
-    random_mcts = None
+    random_mcts_by_sims: dict[int, MCTS] = {}
     if num_random_games > 0:
-        random_mcts = MCTS(None, num_simulations=num_simulations, device=device)
+        for s in RANDOM_SIM_LEVELS:
+            random_mcts_by_sims[s] = MCTS(None, num_simulations=s, device=device)
 
     for game_idx in range(num_games):
         if game_idx < num_random_games:
-            # Play against random MCTS — alternate sides
+            # Play against random MCTS — alternate sides and difficulty
             nn_plays_white = (game_idx % 2 == 0)
+            sims = RANDOM_SIM_LEVELS[game_idx % len(RANDOM_SIM_LEVELS)]
             examples, game_record = play_selfplay_game(
                 mcts, temperature_threshold,
-                opponent_mcts=random_mcts,
+                opponent_mcts=random_mcts_by_sims[sims],
                 nn_plays_white=nn_plays_white,
             )
             game_type = "vs_random"
@@ -523,9 +525,11 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                    dirichlet_epsilon=dirichlet_epsilon,
                    device=device)
     num_random_games = int(num_games * random_opponent_fraction)
-    random_mcts = None
+    random_mcts_by_sims: dict[int, MCTS] = {}
     if num_random_games > 0:
-        random_mcts = MCTS(None, num_simulations=num_simulations, device=device)
+        for s in RANDOM_SIM_LEVELS:
+            random_mcts_by_sims[s] = MCTS(None, num_simulations=s, device=device)
+    random_mcts = next(iter(random_mcts_by_sims.values()), None)
 
     games_launched = 0
     while games_launched < num_games:
@@ -536,11 +540,16 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
             game_global_idx = games_launched + i
             is_random_game = game_global_idx < num_random_games
             nn_plays_white = (game_global_idx % 2 == 0)
+            if is_random_game:
+                sims = RANDOM_SIM_LEVELS[game_global_idx % len(RANDOM_SIM_LEVELS)]
+                opp = random_mcts_by_sims[sims]
+            else:
+                opp = None
 
             wave_games.append(_ActiveGame(
                 game_idx=game_global_idx,
                 nn_engine=nn_mcts,
-                opponent_engine=random_mcts if is_random_game else None,
+                opponent_engine=opp,
                 nn_plays_white=nn_plays_white,
                 temperature_threshold=temperature_threshold,
                 game_type="vs_random" if is_random_game else "selfplay",
@@ -672,12 +681,15 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
                                             num_random_games)
 
 
+RANDOM_SIM_LEVELS = [5, 10, 15, 25, 40]
+
+
 def _distribute_games(num_games: int, num_workers: int,
                       num_random_games: int) -> list[list[dict]]:
     """Distribute games evenly across workers.
 
     Returns list of game assignments per worker, each a list of dicts with
-    game_idx, is_random, nn_plays_white.
+    game_idx, is_random, nn_plays_white, random_sims.
     """
     assignments: list[list[dict]] = [[] for _ in range(num_workers)]
 
@@ -685,10 +697,12 @@ def _distribute_games(num_games: int, num_workers: int,
         worker_id = i % num_workers
         is_random = i < num_random_games
         nn_plays_white = (i % 2 == 0)
+        random_sims = RANDOM_SIM_LEVELS[i % len(RANDOM_SIM_LEVELS)] if is_random else 0
         assignments[worker_id].append({
             "game_idx": i,
             "is_random": is_random,
             "nn_plays_white": nn_plays_white,
+            "random_sims": random_sims,
         })
 
     return assignments

@@ -406,7 +406,7 @@ class Trainer:
         random_losses = 0
         random_draws = 0
         if num_random_games > 0:
-            random_mcts = MCTS(None, num_simulations=num_simulations,
+            random_mcts = MCTS(None, num_simulations=10,
                                device=self.device)
             for game_idx in range(num_random_games):
                 state = GameState()
