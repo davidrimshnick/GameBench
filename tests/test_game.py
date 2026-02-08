@@ -132,8 +132,8 @@ class TestLegalMoves:
         moves = generate_legal_moves(state)
         assert len(moves) == 0
 
-    def test_warrior_moves_orthogonal(self):
-        """Warriors can only move orthogonally."""
+    def test_warrior_moves_forward_and_sideways(self):
+        """Warriors can move forward or sideways, but not backward."""
         state = GameState()
         # Clear board
         state.board = [[None] * 8 for _ in range(8)]
@@ -143,15 +143,32 @@ class TestLegalMoves:
 
         moves = generate_legal_moves(state)
         warrior_moves = [m for m in moves if isinstance(m, MoveStep) and m.from_rc == (3, 3)]
-        # Should have 4 orthogonal moves
         destinations = {m.to_rc for m in warrior_moves}
-        assert (3, 4) in destinations  # right
-        assert (3, 2) in destinations  # left
-        assert (4, 3) in destinations  # up
-        assert (2, 3) in destinations  # down
+        # White warriors: forward (+row) and sideways OK, backward (-row) NOT OK
+        assert (3, 4) in destinations  # right (sideways)
+        assert (3, 2) in destinations  # left (sideways)
+        assert (4, 3) in destinations  # up (forward for White)
+        assert (2, 3) not in destinations  # down (backward for White — blocked!)
         # Diagonal should NOT be possible for warrior
         assert (4, 4) not in destinations
         assert (2, 2) not in destinations
+
+    def test_black_warrior_moves_forward(self):
+        """Black warriors move toward row 0 (forward for Black)."""
+        state = GameState()
+        state.board = [[None] * 8 for _ in range(8)]
+        state.board[4][3] = Piece(PieceType.WARRIOR, Player.BLACK)
+        state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
+        state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
+        state.current_player = Player.BLACK
+
+        moves = generate_legal_moves(state)
+        warrior_moves = [m for m in moves if isinstance(m, MoveStep) and m.from_rc == (4, 3)]
+        destinations = {m.to_rc for m in warrior_moves}
+        assert (3, 3) in destinations  # down (forward for Black)
+        assert (4, 4) in destinations  # right (sideways)
+        assert (4, 2) in destinations  # left (sideways)
+        assert (5, 3) not in destinations  # up (backward for Black — blocked!)
 
     def test_commander_moves(self):
         """Commander moves 1 square, any direction."""

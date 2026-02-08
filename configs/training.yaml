@@ -1,8 +1,8 @@
 # AlphaZero training configuration
 # Tuned for Jetson Orin Nano Super (8GB shared, CUDA 12.6)
 network:
-  num_res_blocks: 8
-  num_filters: 96
+  num_res_blocks: 20
+  num_filters: 256
   input_planes: 15
   board_size: 8
 
@@ -15,7 +15,7 @@ mcts:
 
 selfplay:
   num_games_per_iteration: 20  # More games = more diverse training data
-  replay_buffer_size: 20000
+  replay_buffer_size: 50000
   num_workers: 4               # CPU worker processes for MCTS tree traversal
   min_buffer_size: 1000        # Train immediately on seed games
   random_opponent_fraction: 0.5   # 50% of games vs random MCTS (no NN) to prevent overfitting
@@ -26,7 +26,7 @@ training:
   learning_rate: 0.001         # Lower LR for more stable learning
   momentum: 0.9
   weight_decay: 0.0001
-  steps_per_iteration: 400     # ~2.5 passes through 20K buffer per iteration
+  steps_per_iteration: 800     # ~2 passes through 50K buffer per iteration
   checkpoint_interval: 100
   eval_games: 10               # More eval games for reliable signal
   eval_simulations: 100        # Match self-play sim count

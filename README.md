@@ -26,7 +26,7 @@ Each turn, you earn **+1 resource for each Gold node you have a piece on or adja
 | Piece | Symbol | Deploy Cost | Move | Strength |
 |-------|--------|-------------|------|----------|
 | Commander | C | starts on board | 1 square, any direction | 2 |
-| Warrior | W | 2 | 1 square, orthogonal | 1 (+1 per adjacent friendly Warrior) |
+| Warrior | W | 2 | 1 square, forward or sideways (no retreat) | 1 (+1 per adjacent friendly Warrior) |
 | Rider | R | 4 | Up to 2 squares, straight line | 2 |
 | Bombard | B | 5 | 1 square, any direction | 0 (melee) |
 | Lancer | L | 6 | Up to 4 squares, diagonal only, can jump one piece | 3 |
@@ -39,7 +39,7 @@ Each turn, you earn **+1 resource for each Gold node you have a piece on or adja
 
 ### Combat
 
-Move onto an enemy piece to attack. Compare total strength (including Power node bonus) — higher wins, tie removes both. **Warrior clustering** is key: a lone Warrior has strength 1, but three adjacent Warriors each have strength 3.
+Move onto an enemy piece to attack. Compare total strength (including Power node bonus) — higher wins, tie removes both. **Warrior clustering** is key: a lone Warrior has strength 1, but three adjacent Warriors each have strength 3. Warriors cannot retreat — like pawns in chess, once pushed forward, they create permanent structure.
 
 **Bombard special ability:** Ranged attack at exactly 2 squares distance (straight line, clear path). Target is removed; Bombard stays put. Cannot target Commanders with ranged attacks.
 

@@ -105,17 +105,17 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 1. **Commander Safety**: Must resolve check immediately (move/block/capture)
 2. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player, excluding resources) = draw. 50-move rule: 50 moves per side (100 halfmoves) with no capture or deploy = draw.
-3. **Piece Types**: Commander (C, str 2), Warrior (W, str 1 + adjacency), Rider (R, str 2), Bombard (B, str 0), Lancer (L, str 3, diagonal up to 4 squares with jump)
+3. **Piece Types**: Commander (C, str 2), Warrior (W, str 1 + adjacency, forward/sideways only — no retreat), Rider (R, str 2), Bombard (B, str 0), Lancer (L, str 3, diagonal up to 4 squares with jump)
 4. **Deploy Costs**: W=2, R=4, B=5, L=6
-5. **Warrior Strength**: Base 1 + 1 per adjacent friendly Warrior (clustering bonus)
+5. **Warrior Movement**: Forward or sideways only (no retreat). White Warriors move toward row 8, Black toward row 1. Base strength 1 + 1 per adjacent friendly Warrior (clustering bonus)
 6. **Power Node Bonus**: Any piece on or adjacent (8-directional) to a Power node gets +1 strength
 7. **Bombard**: Can't use ranged attack against Commander (prevents cheese)
 8. **Lancer**: Moves diagonally up to 4 squares, can jump over exactly one piece (any color)
 
 ### Known Issues & Solutions
 
-1. **Defensive Stalemates**: Games naturally tend toward long defensive play ending in turn-100 draws. Warrior-toggle pattern (Wb1-c1/Wc1-b1 oscillation) wastes moves in drawn positions.
-   - Solution: Commander hunting strategies, aggressive heuristics, discard drawn games from training entirely, correct +1/-1 value targets with tanh head, threefold repetition draw rule (ends repetitive games early instead of grinding to turn 100)
+1. **Defensive Stalemates**: Games naturally tend toward long defensive play ending in turn-100 draws. Warrior-toggle pattern (Wb1-c1/Wc1-b1 oscillation) was the worst offender.
+   - Solution: Warriors now move forward/sideways only (no retreat), eliminating toggle oscillation. Also: threefold repetition draw rule, correct +1/-1 value targets with tanh head, Commander hunting heuristics
 
 2. **Value Target / Activation Mismatch**: Using 0/1 value targets with tanh output [-1,+1] caused the network to learn that losing positions are neutral (0 = tanh midpoint). The network couldn't distinguish losses from draws, contributing to defensive play.
    - Solution: Standard AlphaZero targets (+1 win, -1 loss) matching the tanh output range. All value target assignments must use +1/-1 (selfplay.py, smart_seeds.py, training.py MCTSLite fallback).
@@ -159,8 +159,8 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 ### Hardware Constraints (Jetson Orin Nano)
 
 - 8GB shared RAM (CPU + GPU)
-- Sequential GPU inference only (no multiprocessing)
-- Batch size 128, 5 ResBlocks, 64 filters optimized for memory
+- Multiprocess MCTS: 4 CPU workers + GPU inference server in main process
+- Network: 20 ResBlocks, 256 filters (~24M params, ~1GB GPU with training)
 - Training uses mixed precision (FP16) when available
 - Replay buffer capped at 50K positions (~940MB). Save/load uses chunked I/O (5K chunks) to avoid temp array spikes
 - All buffer data enforced as float32 on push — prevents accidental float64 doubling

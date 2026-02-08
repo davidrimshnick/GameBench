@@ -133,7 +133,12 @@ def _is_square_attacked(state: GameState, tr: int, tc: int, by_player: Player) -
                 if pt == PieceType.COMMANDER or pt == PieceType.BOMBARD or pt == PieceType.RIDER:
                     return True
                 if pt == PieceType.WARRIOR and (dr == 0 or dc == 0):
-                    return True
+                    # Warrior can only attack forward/sideways (no retreat)
+                    # Warrior at (r1,c1) moves (-dr,-dc) to reach target
+                    move_dr = -dr
+                    warrior_backward = -1 if by_player == Player.WHITE else 1
+                    if move_dr != warrior_backward:
+                        return True
 
         # Distance 2: Rider only (straight line, clear path)
         r2, c2 = tr + dr * 2, tc + dc * 2
@@ -349,8 +354,15 @@ def _gen_commander_moves(state: GameState, row: int, col: int, player: Player,
 
 def _gen_warrior_moves(state: GameState, row: int, col: int, player: Player,
                        moves: list[Move]):
-    """Warrior: 1 square, orthogonal only."""
+    """Warrior: 1 square, forward or sideways only (no retreat).
+
+    Forward is +row for White, -row for Black. Sideways is column changes.
+    Can capture in all forward/sideways directions.
+    """
+    backward = -1 if player == Player.WHITE else 1  # direction warriors CAN'T go
     for dr, dc in ORTHOGONAL:
+        if dr == backward:
+            continue  # No retreat
         r2, c2 = row + dr, col + dc
         if not _in_bounds(r2, c2):
             continue

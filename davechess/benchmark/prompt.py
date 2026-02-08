@@ -17,7 +17,7 @@ RULES_TEXT = """# DaveChess Rules
 | Piece | Symbol | Move | Base Strength | Deploy Cost |
 |-------|--------|------|---------------|-------------|
 | Commander | C | 1 square, any direction | 2 | Cannot be deployed |
-| Warrior | W | 1 square, orthogonal only | 1 (+1 per adjacent friendly Warrior) | 2 resources |
+| Warrior | W | 1 square, forward or sideways only (no retreat) | 1 (+1 per adjacent friendly Warrior) | 2 resources |
 | Rider | R | Up to 2 squares, straight line (no jumping) | 2 | 4 resources |
 | Bombard | B | 1 square, any direction | 0 (melee) | 5 resources |
 | Lancer | L | Up to 4 squares diagonal, can jump one piece | 3 | 6 resources |

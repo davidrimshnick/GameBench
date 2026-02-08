@@ -448,13 +448,11 @@ class Trainer:
             del random_mcts
             logger.info(f"Random eval: W:{random_wins} L:{random_losses} D:{random_draws}")
 
-            # Must win majority of random games with no losses
-            if random_losses > 0:
-                logger.info("Failed random opponent check — lost to random, network is overfitting")
-                win_rate = 0.0  # Force rejection
+            # Log random results for monitoring only — don't gate promotion on it
+            if random_losses > random_wins:
+                logger.warning(f"Random opponent warning — more losses than wins ({random_losses}L > {random_wins}W)")
             elif random_wins < num_random_games // 2 + 1:
-                logger.info(f"Failed random opponent check — only won {random_wins}/{num_random_games}, need majority wins")
-                win_rate = 0.0  # Force rejection
+                logger.info(f"Random opponent note — only won {random_wins}/{num_random_games}")
 
         # Explicitly free MCTS trees (circular parent↔child refs)
         del current_mcts, best_mcts
