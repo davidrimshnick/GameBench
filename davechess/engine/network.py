@@ -1,13 +1,12 @@
 """ResNet policy+value network for DaveChess AlphaZero.
 
-Input: 15 planes of 8x8
+Input: 14 planes of 8x8
   Planes 0-4: Current player's C/W/R/B/L positions (binary)
   Planes 5-9: Opponent's C/W/R/B/L positions (binary)
   Plane 10: Gold node positions (binary)
-  Plane 11: Power node positions (binary)
-  Plane 12: Current player indicator (all 1s or 0s)
-  Plane 13: Current player resources (scalar broadcast, normalized)
-  Plane 14: Opponent resources (scalar broadcast, normalized)
+  Plane 11: Current player indicator (all 1s or 0s)
+  Plane 12: Current player resources (scalar broadcast, normalized)
+  Plane 13: Opponent resources (scalar broadcast, normalized)
 
 Output:
   Policy: flat logit vector over all possible moves (2816 logits)
@@ -26,7 +25,7 @@ try:
 except ImportError:
     HAS_TORCH = False
 
-from davechess.game.board import BOARD_SIZE, GOLD_NODES, POWER_NODES
+from davechess.game.board import BOARD_SIZE, GOLD_NODES
 from davechess.game.state import GameState, Player, PieceType, Move, MoveStep, Deploy, BombardAttack
 
 # Move encoding per source square:
@@ -46,11 +45,11 @@ RESOURCE_NORM = 50.0
 
 
 def state_to_planes(state: GameState) -> np.ndarray:
-    """Convert game state to 15x8x8 input planes.
+    """Convert game state to 14x8x8 input planes.
 
     The planes are always from the perspective of the current player.
     """
-    planes = np.zeros((15, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
+    planes = np.zeros((14, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
     current = state.current_player
     opponent = Player(1 - current)
 
@@ -69,16 +68,12 @@ def state_to_planes(state: GameState) -> np.ndarray:
     for r, c in GOLD_NODES:
         planes[10, r, c] = 1.0
 
-    # Power nodes
-    for r, c in POWER_NODES:
-        planes[11, r, c] = 1.0
-
     # Current player indicator
-    planes[12, :, :] = 1.0 if current == Player.WHITE else 0.0
+    planes[11, :, :] = 1.0 if current == Player.WHITE else 0.0
 
     # Resources (normalized, broadcast)
-    planes[13, :, :] = min(state.resources[current] / RESOURCE_NORM, 1.0)
-    planes[14, :, :] = min(state.resources[opponent] / RESOURCE_NORM, 1.0)
+    planes[12, :, :] = min(state.resources[current] / RESOURCE_NORM, 1.0)
+    planes[13, :, :] = min(state.resources[opponent] / RESOURCE_NORM, 1.0)
 
     return planes
 
@@ -189,7 +184,7 @@ if HAS_TORCH:
         """ResNet policy+value network for DaveChess."""
 
         def __init__(self, num_res_blocks: int = 5, num_filters: int = 64,
-                     input_planes: int = 15):
+                     input_planes: int = 14):
             super().__init__()
 
             # Initial convolution
@@ -216,7 +211,7 @@ if HAS_TORCH:
             """Forward pass.
 
             Args:
-                x: (batch, 15, 8, 8) tensor.
+                x: (batch, 14, 8, 8) tensor.
 
             Returns:
                 (policy_logits, value) where policy is (batch, POLICY_SIZE)

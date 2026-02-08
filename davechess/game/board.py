@@ -10,14 +10,8 @@ GOLD_NODES: list[tuple[int, int]] = [
     (4, 3), (4, 4),  # Central gold nodes
 ]
 
-# Power nodes: give +1 strength to adjacent friendly pieces (near-side positions)
-POWER_NODES: list[tuple[int, int]] = [
-    (2, 1), (2, 6),  # White-side power nodes
-    (5, 1), (5, 6),  # Black-side power nodes
-]
-
-# All nodes combined
-ALL_NODES: list[tuple[int, int]] = GOLD_NODES + POWER_NODES
+# All nodes (just Gold nodes now — Power nodes removed in v2)
+ALL_NODES: list[tuple[int, int]] = GOLD_NODES
 
 # Backward compatibility alias
 RESOURCE_NODES = ALL_NODES
@@ -80,7 +74,6 @@ def render_board(board, resource_counts: tuple[int, int] | None = None,
     lines.append("")
 
     gold_set = set(GOLD_NODES)
-    power_set = set(POWER_NODES)
 
     lines.append("    a   b   c   d   e   f   g   h")
     lines.append("  +---+---+---+---+---+---+---+---+")
@@ -90,12 +83,7 @@ def render_board(board, resource_counts: tuple[int, int] | None = None,
         for col in range(BOARD_SIZE):
             cell = board[row][col]
             pos = (row, col)
-            if pos in gold_set:
-                marker = "$"
-            elif pos in power_set:
-                marker = "^"
-            else:
-                marker = None
+            marker = "$" if pos in gold_set else None
             if cell is not None:
                 piece_char, player = cell
                 # Lowercase for black, uppercase for white

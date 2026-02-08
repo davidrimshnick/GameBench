@@ -1,12 +1,17 @@
-"""Legal move generation, move execution, capture resolution, win conditions."""
+"""Legal move generation, move execution, capture resolution, win conditions.
+
+DaveChess v2: Chess-style capture (attacker always takes defender).
+No strength stat. Warriors capture diagonally forward (like pawns).
+Bombard has ranged attack at exactly 2 squares (stays in place).
+"""
 
 from __future__ import annotations
 
 from typing import Optional
 
-from davechess.game.board import BOARD_SIZE, GOLD_NODES, POWER_NODES, ALL_NODES, RESOURCE_NODES
+from davechess.game.board import BOARD_SIZE, GOLD_NODES, ALL_NODES, RESOURCE_NODES
 from davechess.game.state import (
-    BASE_STRENGTH, DEPLOY_COST, GameState, Move, MoveStep, Deploy,
+    DEPLOY_COST, GameState, Move, MoveStep, Deploy,
     BombardAttack, Piece, PieceType, Player,
 )
 
@@ -19,9 +24,7 @@ STRAIGHT_DIRS = ALL_DIRS
 DIAGONAL_DIRS = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
 
 _GOLD_SET = frozenset(GOLD_NODES)
-_POWER_SET = frozenset(POWER_NODES)
 _ALL_NODES_SET = frozenset(ALL_NODES)
-_ORTHOGONAL_SET = frozenset(ORTHOGONAL)
 
 
 def _in_bounds(r: int, c: int) -> bool:
@@ -57,10 +60,7 @@ def _player_controls_node(state: GameState, player: Player, nr: int, nc: int) ->
 
 
 def _count_controlled_nodes(state: GameState, player: Player) -> int:
-    """Count resource nodes exclusively controlled by player.
-
-    A node is exclusively controlled if the player controls it and the opponent does not.
-    """
+    """Count resource nodes exclusively controlled by player."""
     opponent = Player(1 - player)
     count = 0
     for nr, nc in ALL_NODES:
@@ -68,41 +68,6 @@ def _count_controlled_nodes(state: GameState, player: Player) -> int:
            not _player_controls_node(state, opponent, nr, nc):
             count += 1
     return count
-
-
-def _get_warrior_strength(state: GameState, row: int, col: int, player: Player) -> int:
-    """Get warrior strength including adjacency bonus.
-
-    +1 per adjacent friendly Warrior (orthogonal only).
-    """
-    strength = BASE_STRENGTH[PieceType.WARRIOR]
-    for dr, dc in ORTHOGONAL:
-        r2, c2 = row + dr, col + dc
-        if _in_bounds(r2, c2):
-            p2 = state.board[r2][c2]
-            if p2 is not None and p2.player == player and p2.piece_type == PieceType.WARRIOR:
-                strength += 1
-    return strength
-
-
-def _get_power_node_bonus(row: int, col: int) -> int:
-    """Return +1 if (row, col) is on or adjacent (8-directional) to a Power node."""
-    for pr, pc in POWER_NODES:
-        if abs(row - pr) <= 1 and abs(col - pc) <= 1:
-            return 1
-    return 0
-
-
-def _get_piece_strength(state: GameState, row: int, col: int) -> int:
-    """Get total strength of piece at (row, col), including Power node bonus."""
-    piece = state.board[row][col]
-    if piece is None:
-        return 0
-    if piece.piece_type == PieceType.WARRIOR:
-        base = _get_warrior_strength(state, row, col, piece.player)
-    else:
-        base = BASE_STRENGTH[piece.piece_type]
-    return base + _get_power_node_bonus(row, col)
 
 
 def _find_commander(state: GameState, player: Player) -> tuple[int, int] | None:
@@ -122,9 +87,9 @@ def _is_square_attacked(state: GameState, tr: int, tc: int, by_player: Player) -
     """
     board = state.board
 
-    # Check all 8 adjacent squares and 2-square Rider reach in one pass
+    # Check all 8 adjacent squares and 2-square Rider reach
     for dr, dc in ALL_DIRS:
-        # Distance 1: Commander, Warrior (ortho only), Bombard melee, Rider
+        # Distance 1: Commander (any dir), Bombard (any dir melee), Rider (any dir)
         r1, c1 = tr + dr, tc + dc
         if _in_bounds(r1, c1):
             p = board[r1][c1]
@@ -132,13 +97,22 @@ def _is_square_attacked(state: GameState, tr: int, tc: int, by_player: Player) -
                 pt = p.piece_type
                 if pt == PieceType.COMMANDER or pt == PieceType.BOMBARD or pt == PieceType.RIDER:
                     return True
-                if pt == PieceType.WARRIOR and (dr == 0 or dc == 0):
-                    # Warrior can only attack forward/sideways (no retreat)
-                    # Warrior at (r1,c1) moves (-dr,-dc) to reach target
+                # Warrior captures diagonally forward only
+                if pt == PieceType.WARRIOR:
+                    # Warrior at (r1,c1) captures by moving (-dr,-dc) to reach target
+                    # For White: forward is +row, so capture dirs are (+1,+1) and (+1,-1)
+                    # A White Warrior at r1 captures at r1+1 diagonally, so target is at r1+1
+                    # From target perspective: dr = r1 - tr, so Warrior row = tr + dr
+                    # The Warrior moves -dr to reach target. For White forward capture:
+                    # move_dr must be +1 (forward), so -dr == +1, meaning dr == -1
+                    # i.e. Warrior is one row BEHIND target (lower row for White)
                     move_dr = -dr
-                    warrior_backward = -1 if by_player == Player.WHITE else 1
-                    if move_dr != warrior_backward:
-                        return True
+                    move_dc = -dc
+                    # Must be diagonal
+                    if move_dr != 0 and move_dc != 0:
+                        forward = 1 if by_player == Player.WHITE else -1
+                        if move_dr == forward:
+                            return True
 
         # Distance 2: Rider only (straight line, clear path)
         r2, c2 = tr + dr * 2, tc + dc * 2
@@ -162,6 +136,22 @@ def _is_square_attacked(state: GameState, tr: int, tc: int, by_player: Player) -
                 blocking += 1
                 if blocking > 1:
                     break
+
+    # Bombard ranged: exactly 2 squares orthogonal, clear path, but NOT against Commander
+    # We only need this for general "is square attacked" — but Bombard can't target Commander
+    # So for check detection this doesn't apply (Commanders can't be bombarded)
+    # For other purposes (like protecting squares), we check:
+    target_piece = board[tr][tc]
+    if target_piece is None or target_piece.piece_type != PieceType.COMMANDER:
+        for dr, dc in STRAIGHT_DIRS:
+            br, bc = tr + dr * 2, tc + dc * 2
+            if _in_bounds(br, bc):
+                bp = board[br][bc]
+                if bp is not None and bp.player == by_player and bp.piece_type == PieceType.BOMBARD:
+                    # Check clear path
+                    mr, mc = tr + dr, tc + dc
+                    if _in_bounds(mr, mc) and board[mr][mc] is None:
+                        return True
 
     return False
 
@@ -213,23 +203,9 @@ def _apply_move_no_checks(state: GameState, move: Move) -> GameState:
         fr, fc = move.from_rc
         tr, tc = move.to_rc
         attacker = state.board[fr][fc]
-
-        if move.is_capture:
-            defender = state.board[tr][tc]
-            atk_str = _get_piece_strength(state, fr, fc)
-            def_str = _get_piece_strength(state, tr, tc)
-
-            if atk_str > def_str:
-                state.board[tr][tc] = attacker
-                state.board[fr][fc] = None
-            elif atk_str < def_str:
-                state.board[fr][fc] = None
-            else:
-                state.board[fr][fc] = None
-                state.board[tr][tc] = None
-        else:
-            state.board[tr][tc] = attacker
-            state.board[fr][fc] = None
+        # Chess-style: attacker always takes the square
+        state.board[tr][tc] = attacker
+        state.board[fr][fc] = None
 
     elif isinstance(move, Deploy):
         tr, tc = move.to_rc
@@ -246,7 +222,6 @@ def generate_legal_moves(state: GameState) -> list[Move]:
     """Generate all legal moves for the current player.
 
     Filters out moves that leave the player's own Commander in check.
-    Uses make/unmake optimization to avoid full state cloning.
     Also detects checkmate/stalemate: if no legal moves exist, sets state.done.
     """
     if state.done:
@@ -286,30 +261,9 @@ def _is_move_legal(state: GameState, move: Move, player: Player) -> bool:
         moving_piece = board[fr][fc]
         captured_piece = board[tr][tc]
 
-        if move.is_capture:
-            atk_str = _get_piece_strength(state, fr, fc)
-            def_str = _get_piece_strength(state, tr, tc)
-            if atk_str > def_str:
-                # Attacker wins: piece moves to target
-                board[fr][fc] = None
-                board[tr][tc] = moving_piece
-            elif atk_str < def_str:
-                # Attacker loses: attacker removed
-                board[fr][fc] = None
-            else:
-                # Tie: both removed
-                board[fr][fc] = None
-                board[tr][tc] = None
-        else:
-            board[fr][fc] = None
-            board[tr][tc] = moving_piece
-
-        # If the moving piece was our Commander and it was removed
-        # (lost a capture or tied), the move is illegal.
-        if moving_piece.piece_type == PieceType.COMMANDER and board[tr][tc] is not moving_piece:
-            board[fr][fc] = moving_piece
-            board[tr][tc] = captured_piece
-            return False
+        # Chess-style: attacker always takes the square
+        board[fr][fc] = None
+        board[tr][tc] = moving_piece
 
         # Check if our Commander is safe
         safe = not is_in_check(state, player)
@@ -321,7 +275,6 @@ def _is_move_legal(state: GameState, move: Move, player: Player) -> bool:
 
     elif isinstance(move, Deploy):
         tr, tc = move.to_rc
-        # Deploy adds a piece; doesn't move anything
         board[tr][tc] = Piece(move.piece_type, player)
         safe = not is_in_check(state, player)
         board[tr][tc] = None  # unmake
@@ -340,7 +293,7 @@ def _is_move_legal(state: GameState, move: Move, player: Player) -> bool:
 
 def _gen_commander_moves(state: GameState, row: int, col: int, player: Player,
                          moves: list[Move]):
-    """Commander: 1 square, any direction."""
+    """Commander: 1 square, any direction. Captures same as movement."""
     for dr, dc in ALL_DIRS:
         r2, c2 = row + dr, col + dc
         if not _in_bounds(r2, c2):
@@ -354,28 +307,30 @@ def _gen_commander_moves(state: GameState, row: int, col: int, player: Player,
 
 def _gen_warrior_moves(state: GameState, row: int, col: int, player: Player,
                        moves: list[Move]):
-    """Warrior: 1 square, forward or sideways only (no retreat).
+    """Warrior: moves 1 square forward, captures 1 square diagonal-forward.
 
-    Forward is +row for White, -row for Black. Sideways is column changes.
-    Can capture in all forward/sideways directions.
+    Like a chess pawn. Forward is +row for White, -row for Black.
     """
-    backward = -1 if player == Player.WHITE else 1  # direction warriors CAN'T go
-    for dr, dc in ORTHOGONAL:
-        if dr == backward:
-            continue  # No retreat
-        r2, c2 = row + dr, col + dc
+    forward = 1 if player == Player.WHITE else -1
+
+    # Forward move (non-capture only)
+    r2 = row + forward
+    if _in_bounds(r2, col) and state.board[r2][col] is None:
+        moves.append(MoveStep((row, col), (r2, col)))
+
+    # Diagonal-forward captures
+    for dc in (-1, 1):
+        c2 = col + dc
         if not _in_bounds(r2, c2):
             continue
         target = state.board[r2][c2]
-        if target is None:
-            moves.append(MoveStep((row, col), (r2, c2)))
-        elif target.player != player:
+        if target is not None and target.player != player:
             moves.append(MoveStep((row, col), (r2, c2), is_capture=True))
 
 
 def _gen_rider_moves(state: GameState, row: int, col: int, player: Player,
                      moves: list[Move]):
-    """Rider: up to 2 squares, straight line, no jumping."""
+    """Rider: up to 2 squares, any straight line (orthogonal + diagonal), no jumping."""
     for dr, dc in STRAIGHT_DIRS:
         for dist in range(1, 3):
             r2, c2 = row + dr * dist, col + dc * dist
@@ -393,8 +348,13 @@ def _gen_rider_moves(state: GameState, row: int, col: int, player: Player,
 
 def _gen_bombard_moves(state: GameState, row: int, col: int, player: Player,
                        moves: list[Move]):
-    """Bombard: 1 square movement (any direction) + ranged capture at exactly 2 squares."""
-    # Normal movement: 1 square, any direction
+    """Bombard: 1 square movement (any direction) + ranged capture at exactly 2 squares.
+
+    Melee: moves 1 square any direction, can capture adjacent enemies.
+    Ranged: attacks at exactly 2 squares orthogonal/diagonal, clear path,
+            Bombard stays in place. Cannot target Commanders.
+    """
+    # Normal movement/capture: 1 square, any direction
     for dr, dc in ALL_DIRS:
         r2, c2 = row + dr, col + dc
         if not _in_bounds(r2, c2):
@@ -403,7 +363,6 @@ def _gen_bombard_moves(state: GameState, row: int, col: int, player: Player,
         if target is None:
             moves.append(MoveStep((row, col), (r2, c2)))
         elif target.player != player:
-            # Melee capture with strength 0 - still allowed, will likely lose
             moves.append(MoveStep((row, col), (r2, c2), is_capture=True))
 
     # Ranged attack: exactly 2 squares away, straight line, clear path
@@ -472,6 +431,7 @@ def apply_move(state: GameState, move: Move) -> GameState:
     """Apply a move and return the new state.
 
     This modifies the state in-place for performance, so clone first if needed.
+    Chess-style capture: attacker always takes the defender's square.
     """
     player = state.current_player
     opponent = Player(1 - player)
@@ -483,38 +443,13 @@ def apply_move(state: GameState, move: Move) -> GameState:
 
         if move.is_capture:
             defender = state.board[tr][tc]
-            atk_str = _get_piece_strength(state, fr, fc)
-            def_str = _get_piece_strength(state, tr, tc)
-
-            if atk_str > def_str:
-                # Attacker wins
-                state.board[tr][tc] = attacker
-                state.board[fr][fc] = None
-                # Check if defender was Commander
-                if defender.piece_type == PieceType.COMMANDER:
-                    state.done = True
-                    state.winner = player
-            elif atk_str < def_str:
-                # Defender wins, attacker removed
-                state.board[fr][fc] = None
-                if attacker.piece_type == PieceType.COMMANDER:
-                    state.done = True
-                    state.winner = opponent
-            else:
-                # Tie: both removed
-                state.board[fr][fc] = None
-                state.board[tr][tc] = None
-                if attacker.piece_type == PieceType.COMMANDER:
-                    state.done = True
-                    state.winner = opponent
-                if defender.piece_type == PieceType.COMMANDER:
-                    state.done = True
-                    # If both commanders die, the attacker's side loses
-                    # (their commander walked into a tie)
-                    if attacker.piece_type == PieceType.COMMANDER:
-                        state.winner = opponent
-                    else:
-                        state.winner = player
+            # Chess-style: attacker always wins
+            state.board[tr][tc] = attacker
+            state.board[fr][fc] = None
+            # Check if defender was Commander
+            if defender.piece_type == PieceType.COMMANDER:
+                state.done = True
+                state.winner = player
         else:
             # Simple move
             state.board[tr][tc] = attacker
@@ -566,16 +501,12 @@ def apply_move(state: GameState, move: Move) -> GameState:
             state.winner = None  # Draw by 50-move rule
 
         # Check threefold repetition — draw if same position occurs 3 times
-        # Uses board + player only (excludes resources, which change every turn)
         if not state.done:
             pos_key = state.get_position_key()
             state.position_counts[pos_key] = state.position_counts.get(pos_key, 0) + 1
             if state.position_counts[pos_key] >= 3:
                 state.done = True
                 state.winner = None  # Draw by repetition
-
-    # Checkmate/stalemate detection is handled lazily by generate_legal_moves()
-    # when the next player tries to move and has no legal moves.
 
     return state
 
@@ -603,32 +534,12 @@ def apply_move_fast(state: GameState, move: Move) -> GameState:
 
         if move.is_capture:
             defender = state.board[tr][tc]
-            atk_str = _get_piece_strength(state, fr, fc)
-            def_str = _get_piece_strength(state, tr, tc)
-
-            if atk_str > def_str:
-                state.board[tr][tc] = attacker
-                state.board[fr][fc] = None
-                if defender.piece_type == PieceType.COMMANDER:
-                    state.done = True
-                    state.winner = player
-            elif atk_str < def_str:
-                state.board[fr][fc] = None
-                if attacker.piece_type == PieceType.COMMANDER:
-                    state.done = True
-                    state.winner = opponent
-            else:
-                state.board[fr][fc] = None
-                state.board[tr][tc] = None
-                if attacker.piece_type == PieceType.COMMANDER:
-                    state.done = True
-                    state.winner = opponent
-                if defender.piece_type == PieceType.COMMANDER:
-                    state.done = True
-                    if attacker.piece_type == PieceType.COMMANDER:
-                        state.winner = opponent
-                    else:
-                        state.winner = player
+            # Chess-style: attacker always wins
+            state.board[tr][tc] = attacker
+            state.board[fr][fc] = None
+            if defender.piece_type == PieceType.COMMANDER:
+                state.done = True
+                state.winner = player
         else:
             state.board[tr][tc] = attacker
             state.board[fr][fc] = None
@@ -646,9 +557,6 @@ def apply_move_fast(state: GameState, move: Move) -> GameState:
         if defender is not None and defender.piece_type == PieceType.COMMANDER:
             state.done = True
             state.winner = player
-
-    # Skip move_history for fast rollouts
-    # state.move_history.append(move)
 
     # Update halfmove clock (50-move rule)
     if isinstance(move, MoveStep) and move.is_capture:

@@ -76,7 +76,7 @@ class ReplayBuffer:
 
         n = len(self)
         if n == 0:
-            np.savez_compressed(path, planes=np.empty((0, 15, 8, 8)),
+            np.savez_compressed(path, planes=np.empty((0, 14, 8, 8)),
                                 policies=np.empty((0, POLICY_SIZE)),
                                 values=np.empty(0))
             return
@@ -85,7 +85,7 @@ class ReplayBuffer:
             # Write each array in chunks using memory-mapped files
             planes_path = os.path.join(tmp, "planes.npy")
             planes_mmap = np.lib.format.open_memmap(
-                planes_path, mode="w+", dtype=np.float32, shape=(n, 15, 8, 8))
+                planes_path, mode="w+", dtype=np.float32, shape=(n, 14, 8, 8))
             for start in range(0, n, chunk_size):
                 end = min(start + chunk_size, n)
                 chunk = np.stack([self.planes[i] for i in range(start, end)])

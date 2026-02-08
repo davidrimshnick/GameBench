@@ -34,21 +34,12 @@ PIECE_CHARS = {
 }
 PIECE_NAMES = {v: k for k, v in PIECE_CHARS.items()}
 
-# Base strength per piece type
-BASE_STRENGTH = {
-    PieceType.COMMANDER: 2,
-    PieceType.WARRIOR: 1,
-    PieceType.RIDER: 2,
-    PieceType.BOMBARD: 0,
-    PieceType.LANCER: 3,
-}
-
 # Deploy cost per piece type (Commander cannot be deployed)
 DEPLOY_COST = {
     PieceType.WARRIOR: 2,
-    PieceType.RIDER: 4,
-    PieceType.BOMBARD: 5,
-    PieceType.LANCER: 6,
+    PieceType.RIDER: 3,
+    PieceType.BOMBARD: 4,
+    PieceType.LANCER: 5,
 }
 
 

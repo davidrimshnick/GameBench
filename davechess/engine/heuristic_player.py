@@ -9,7 +9,7 @@ import random
 import math
 
 from davechess.game.state import GameState, Player, PieceType, Move, MoveStep, Deploy
-from davechess.game.board import GOLD_NODES, POWER_NODES
+from davechess.game.board import GOLD_NODES
 from davechess.game.rules import generate_legal_moves, apply_move, check_winner
 
 
@@ -156,14 +156,7 @@ class HeuristicPlayer:
                 else:
                     forward_bonus = (7 - r) / 7
 
-                # Power node proximity bonus
-                power_bonus = 0.0
-                for pr, pc in POWER_NODES:
-                    if abs(r - pr) <= 1 and abs(c - pc) <= 1:
-                        power_bonus = 0.3
-                        break
-
-                piece_score = (center_bonus * 0.4 + forward_bonus * 0.4 + power_bonus * 0.2)
+                piece_score = (center_bonus * 0.5 + forward_bonus * 0.5)
 
                 if piece.player == state.current_player:
                     score += piece_score

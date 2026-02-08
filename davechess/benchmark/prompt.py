@@ -4,23 +4,23 @@ from __future__ import annotations
 
 from davechess.game.state import GameState, Move
 from davechess.game.rules import generate_legal_moves
-from davechess.game.board import GOLD_NODES, POWER_NODES, rc_to_notation
+from davechess.game.board import GOLD_NODES, rc_to_notation
 from davechess.game.notation import move_to_dcn, game_to_dcn
 from davechess.data.storage import replay_game
 
 RULES_TEXT = """# DaveChess Rules
 
 ## Board
-8x8 grid with 4 Gold nodes (resource income) at {gold_positions} and 4 Power nodes (strength bonus) at {power_positions}.
+8x8 grid with 4 Gold nodes (resource income) at {gold_positions}.
 
 ## Pieces
-| Piece | Symbol | Move | Base Strength | Deploy Cost |
-|-------|--------|------|---------------|-------------|
-| Commander | C | 1 square, any direction | 2 | Cannot be deployed |
-| Warrior | W | 1 square, forward or sideways only (no retreat) | 1 (+1 per adjacent friendly Warrior) | 2 resources |
-| Rider | R | Up to 2 squares, straight line (no jumping) | 2 | 4 resources |
-| Bombard | B | 1 square, any direction | 0 (melee) | 5 resources |
-| Lancer | L | Up to 4 squares diagonal, can jump one piece | 3 | 6 resources |
+| Piece | Symbol | Move | Capture | Deploy Cost |
+|-------|--------|------|---------|-------------|
+| Commander | C | 1 square, any direction | Same as move | Cannot be deployed |
+| Warrior | W | 1 square forward | 1 square diagonal-forward | 2 resources |
+| Rider | R | Up to 2 squares, any straight line (no jumping) | Same as move | 3 resources |
+| Bombard | B | 1 square, any direction | Melee: same as move. Ranged: exactly 2 squares, straight line, clear path (stays in place, cannot target Commanders) | 4 resources |
+| Lancer | L | Up to 4 squares diagonal, can jump one piece | Same as move | 5 resources |
 
 ## Starting Position
 White (rows 1-2): W at c1, C at d1, R at e1, W at f1, W at d2, W at e2
@@ -30,13 +30,12 @@ Black (rows 7-8): W at c8, C at d8, R at e8, W at f8, W at d7, W at e7
 1. Gain resources: +1 per Gold node you have a piece on or orthogonally adjacent to
 2. One action: Move a piece OR Deploy a new piece on your back 2 rows (empty cell)
 
-## Node Types
-- **Gold nodes** ($): Give +1 resource per turn to the player controlling them.
-- **Power nodes** (^): Any piece on or adjacent to a Power node gets +1 strength bonus.
-
 ## Capture
-Attacker moves onto defender. Compare total strength (including Power node bonus). Higher wins. Tie = both removed.
-Bombard special: ranged capture at exactly 2 squares distance, straight line, clear path. Target is simply removed (Bombard stays). Commanders cannot be targeted by ranged attacks. Bombard melee capture uses strength 0.
+Attacker moves onto defender's square. The defender is removed, the attacker takes its place. Any piece can capture any piece (like chess).
+Bombard ranged: attacks at exactly 2 squares distance, straight line, clear path. Target is removed, Bombard stays in place. Cannot target Commanders with ranged attacks.
+
+## Warriors
+Warriors move 1 square forward (toward row 8 for White, toward row 1 for Black). They capture 1 square diagonally forward — like chess pawns. Warriors cannot move backward or sideways.
 
 ## Lancer
 The Lancer moves diagonally up to 4 squares. It can jump over exactly one piece (friendly or enemy) in its path. It captures by landing on an enemy piece. It cannot move orthogonally.
@@ -69,8 +68,7 @@ You cannot make a move that leaves your own Commander in check.
 def get_rules_prompt() -> str:
     """Get the rules description with node positions filled in."""
     gold_pos = ", ".join(rc_to_notation(r, c) for r, c in GOLD_NODES)
-    power_pos = ", ".join(rc_to_notation(r, c) for r, c in POWER_NODES)
-    return RULES_TEXT.format(gold_positions=gold_pos, power_positions=power_pos)
+    return RULES_TEXT.format(gold_positions=gold_pos)
 
 
 def format_example_games(games: list[tuple[list[Move], str]],

@@ -17,23 +17,19 @@ class TestMCTSLite:
         assert move in legal
 
     def test_finds_obvious_win(self):
-        """MCTS should find an immediate winning Warrior capture on Commander."""
+        """MCTS should find an immediate winning capture on Commander."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
-        # Constrained position: attacker at (1,1) with 3 adjacent Warriors
-        # gives strength 1+3=4 > Commander str 2 → attacker wins
-        state.board[1][1] = Piece(PieceType.WARRIOR, Player.WHITE)  # attacker
-        state.board[0][1] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent (above)
-        state.board[2][1] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent (below)
-        state.board[1][0] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent (left)
-        state.board[1][2] = Piece(PieceType.COMMANDER, Player.BLACK)  # target (right)
+        # Rider can capture Black Commander directly (chess-style capture)
+        state.board[3][3] = Piece(PieceType.RIDER, Player.WHITE)
+        state.board[4][3] = Piece(PieceType.COMMANDER, Player.BLACK)  # target
         state.board[7][7] = Piece(PieceType.COMMANDER, Player.WHITE)  # safe
 
         mcts = MCTSLite(num_simulations=300)
         move = mcts.search(state)
         # Should capture the Commander
         assert isinstance(move, MoveStep)
-        assert move.to_rc == (1, 2)
+        assert move.to_rc == (4, 3)
         assert move.is_capture
 
     def test_single_move(self):
@@ -109,19 +105,15 @@ class TestMCTSWithNetwork:
 
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
-        # Constrained position: attacker at (1,1) with 3 adjacent Warriors
-        # gives strength 1+3=4 > Commander str 2 → attacker wins
-        state.board[1][1] = Piece(PieceType.WARRIOR, Player.WHITE)  # attacker
-        state.board[0][1] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent (above)
-        state.board[2][1] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent (below)
-        state.board[1][0] = Piece(PieceType.WARRIOR, Player.WHITE)  # adjacent (left)
-        state.board[1][2] = Piece(PieceType.COMMANDER, Player.BLACK)  # target (right)
+        # Rider can capture Commander directly (chess-style capture)
+        state.board[3][3] = Piece(PieceType.RIDER, Player.WHITE)
+        state.board[4][3] = Piece(PieceType.COMMANDER, Player.BLACK)  # target
         state.board[7][7] = Piece(PieceType.COMMANDER, Player.WHITE)  # safe
 
         move, _ = mcts.get_move(state, add_noise=False)
         # Should find the Commander capture
         assert isinstance(move, MoveStep)
-        assert move.to_rc == (1, 2)
+        assert move.to_rc == (4, 3)
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
@@ -216,7 +208,7 @@ class TestBatchedMCTS:
         assert "game_records" in stats
         assert "game_details" in stats
         for planes, policy, value in examples:
-            assert planes.shape == (15, 8, 8)
+            assert planes.shape == (14, 8, 8)
             assert policy.shape == (POLICY_SIZE,)
             assert -1.0 <= value <= 1.0
 
@@ -299,7 +291,7 @@ class TestMultiprocessMCTS:
         assert "game_records" in stats
         assert "game_details" in stats
         for planes, policy, value in examples:
-            assert planes.shape == (15, 8, 8)
+            assert planes.shape == (14, 8, 8)
             assert policy.shape == (POLICY_SIZE,)
             assert -1.0 <= value <= 1.0
 

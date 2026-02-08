@@ -28,7 +28,7 @@ logger = logging.getLogger("davechess.gpu_server")
 class BatchRequest:
     """Request from a worker to evaluate leaf states."""
     worker_id: int
-    planes_list: list  # list of np.ndarray, each (15, 8, 8) float32
+    planes_list: list  # list of np.ndarray, each (14, 8, 8) float32
 
 
 @dataclass

@@ -14,36 +14,29 @@ An original strategic board game on an 8x8 grid combining positional resource co
 
 ### Board & Setup
 
-Each side starts with 6 pieces on their back two rows: a Commander (king), 4 Warriors (infantry), and a Rider (cavalry). The board has two types of nodes at fixed symmetric positions:
-
-- **Gold nodes** ($) — 4 in the center. Control these for resource income.
-- **Power nodes** (^) — 2 near each side. Pieces near these get +1 combat strength.
+Each side starts with 6 pieces on their back two rows: a Commander (king), 4 Warriors (infantry), and a Rider (cavalry). The board has 4 **Gold nodes** ($) in the center at fixed symmetric positions — control these for resource income.
 
 ### Resources & Deployment
 
 Each turn, you earn **+1 resource for each Gold node you have a piece on or adjacent to** (orthogonally). You spend resources to **deploy new pieces** onto empty squares in your back two rows. This is the core economic loop: control Gold nodes → earn resources → deploy reinforcements → control more territory.
 
-| Piece | Symbol | Deploy Cost | Move | Strength |
-|-------|--------|-------------|------|----------|
-| Commander | C | starts on board | 1 square, any direction | 2 |
-| Warrior | W | 2 | 1 square, forward or sideways (no retreat) | 1 (+1 per adjacent friendly Warrior) |
-| Rider | R | 4 | Up to 2 squares, straight line | 2 |
-| Bombard | B | 5 | 1 square, any direction | 0 (melee) |
-| Lancer | L | 6 | Up to 4 squares, diagonal only, can jump one piece | 3 |
+| Piece | Symbol | Deploy Cost | Move | Capture |
+|-------|--------|-------------|------|---------|
+| Commander | C | starts on board | 1 square, any direction | Same as move |
+| Warrior | W | 2 | 1 square forward | 1 square diagonal-forward |
+| Rider | R | 3 | Up to 2 squares, any straight line (no jumping) | Same as move |
+| Bombard | B | 4 | 1 square, any direction | Melee: same as move. Ranged: exactly 2 squares, straight line, clear path (stays in place, cannot target Commanders) |
+| Lancer | L | 5 | Up to 4 squares, diagonal only, can jump one piece | Same as move |
 
-### Node Types
+### Capture
 
-**Gold nodes** provide economic power — each one you control gives +1 resource per turn.
+**Chess-style:** move onto an enemy piece to capture it. The attacker always takes the defender's square — any piece can capture any piece. This enables sacrifices, forks, pins, and the full range of chess-like tactics.
 
-**Power nodes** provide military power — any piece on or adjacent to a Power node gets **+1 strength** in combat. This creates a strategic tension: Gold nodes fuel your economy, Power nodes strengthen your army. You must decide where to invest your forces.
+**Warriors** move 1 square forward and capture 1 square diagonal-forward (like chess pawns). Warriors cannot move backward or sideways, creating irreversible pawn structure.
 
-### Combat
+**Bombard ranged attack:** attacks at exactly 2 squares distance (straight line, clear path). Target is removed; Bombard stays put. Cannot target Commanders with ranged attacks.
 
-Move onto an enemy piece to attack. Compare total strength (including Power node bonus) — higher wins, tie removes both. **Warrior clustering** is key: a lone Warrior has strength 1, but three adjacent Warriors each have strength 3. Warriors cannot retreat — like pawns in chess, once pushed forward, they create permanent structure.
-
-**Bombard special ability:** Ranged attack at exactly 2 squares distance (straight line, clear path). Target is removed; Bombard stays put. Cannot target Commanders with ranged attacks.
-
-**Lancer:** Diagonal-only piece that can jump over exactly one piece (friend or foe) in its path, similar to a limited bishop with jumping. At strength 3 and deploy cost 6, the Lancer is a powerful late-game attacker.
+**Lancer:** Diagonal-only piece that can jump over exactly one piece (friend or foe) in its path, similar to a limited bishop with jumping. At deploy cost 5, the Lancer is a powerful late-game attacker.
 
 ### Check & Checkmate
 
@@ -103,14 +96,14 @@ GameBench/
 │   ├── calibrate_opponents.py   # Generate opponent calibration data
 │   ├── run_benchmark.py         # Legacy static benchmark
 │   └── compare_models.py
-└── tests/             # 142 tests across 6 suites
+└── tests/             # 149 tests across 6 suites
 ```
 
 ## Phases
 
 1. **Game Engine** -- DaveChess rules, state representation, DCN notation, CLI
 2. **Game Validation** -- Lightweight MCTS stress-tests rules for degenerate strategies
-3. **AlphaZero Training** -- ResNet policy+value network (746K params), PUCT MCTS, self-play
+3. **AlphaZero Training** -- ResNet policy+value network, PUCT MCTS, self-play
 4. **Game Generation & ELO Calibration** -- Calibrated opponent ladder (random to 1600 sims)
 5. **Agentic Benchmark** -- Token budget + tools, autonomous learning, Glicko-2 ELO measurement
 

@@ -14,7 +14,7 @@ class TestStateToPlanes:
     def test_output_shape(self):
         state = GameState()
         planes = state_to_planes(state)
-        assert planes.shape == (15, 8, 8)
+        assert planes.shape == (14, 8, 8)
 
     def test_dtype(self):
         state = GameState()
@@ -29,20 +29,12 @@ class TestStateToPlanes:
         for r, c in GOLD_NODES:
             assert planes[10, r, c] == 1.0
 
-    def test_power_nodes_plane(self):
-        """Plane 11 should mark power node positions."""
-        state = GameState()
-        planes = state_to_planes(state)
-        from davechess.game.board import POWER_NODES
-        for r, c in POWER_NODES:
-            assert planes[11, r, c] == 1.0
-
     def test_current_player_plane(self):
-        """Plane 12 should indicate current player."""
+        """Plane 11 should indicate current player."""
         state = GameState()
         planes = state_to_planes(state)
         # White to move: all 1s
-        assert planes[12, 0, 0] == 1.0
+        assert planes[11, 0, 0] == 1.0
 
     def test_piece_planes(self):
         """Current player's pieces should be on planes 0-4, opponent on 5-9."""
@@ -141,7 +133,7 @@ class TestNetworkForward:
     def test_forward_pass_shapes(self):
         from davechess.engine.network import DaveChessNetwork
         net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
-        x = torch.randn(4, 15, 8, 8)
+        x = torch.randn(4, 14, 8, 8)
         policy, value = net(x)
         assert policy.shape == (4, POLICY_SIZE)
         assert value.shape == (4, 1)
@@ -150,7 +142,7 @@ class TestNetworkForward:
         """Value head output should be in [-1, 1] (tanh)."""
         from davechess.engine.network import DaveChessNetwork
         net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
-        x = torch.randn(8, 15, 8, 8)
+        x = torch.randn(8, 14, 8, 8)
         _, value = net(x)
         assert (value >= -1.0).all()
         assert (value <= 1.0).all()

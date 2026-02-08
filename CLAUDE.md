@@ -13,7 +13,7 @@ GameBench is a benchmark measuring how efficiently LLMs learn novel strategic re
 # Install with development dependencies
 pip install -e ".[dev]"
 
-# Run all tests (142 tests across 6 suites)
+# Run all tests (149 tests across 6 suites)
 pytest
 
 # Run specific test suite
@@ -95,27 +95,27 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 ### Game State Representation
 
 - **Board**: 8x8 grid stored as `state.board[row][col]` containing `Piece` objects
-- **Nodes**: 4 Gold nodes (give resource income) at (3,3), (3,4), (4,3), (4,4) + 4 Power nodes (give +1 strength to adjacent pieces) at (2,1), (2,6), (5,1), (5,6)
-- **Neural Network Input**: 15 planes (5 piece types × 2 players + 2 node types + player + 2 resources) via `state_to_planes()`
+- **Nodes**: 4 Gold nodes (give resource income) at (3,3), (3,4), (4,3), (4,4)
+- **Neural Network Input**: 14 planes (5 piece types × 2 players + gold nodes + player + 2 resources) via `state_to_planes()`
 - **Move Encoding**: Policy size of 2816 (64×44 move slots per square) via `move_to_policy_index()`
 
 ### Critical Game Rules
 
 **When changing game rules, update ALL three locations: `davechess/game/rules.py`, `davechess/benchmark/prompt.py` (RULES_TEXT), and `README.md` (DaveChess section).**
 
-1. **Commander Safety**: Must resolve check immediately (move/block/capture)
-2. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player, excluding resources) = draw. 50-move rule: 50 moves per side (100 halfmoves) with no capture or deploy = draw.
-3. **Piece Types**: Commander (C, str 2), Warrior (W, str 1 + adjacency, forward/sideways only — no retreat), Rider (R, str 2), Bombard (B, str 0), Lancer (L, str 3, diagonal up to 4 squares with jump)
-4. **Deploy Costs**: W=2, R=4, B=5, L=6
-5. **Warrior Movement**: Forward or sideways only (no retreat). White Warriors move toward row 8, Black toward row 1. Base strength 1 + 1 per adjacent friendly Warrior (clustering bonus)
-6. **Power Node Bonus**: Any piece on or adjacent (8-directional) to a Power node gets +1 strength
-7. **Bombard**: Can't use ranged attack against Commander (prevents cheese)
+1. **Capture (Chess-style)**: Any piece can capture any piece by moving onto it. Attacker always takes the defender's square — no strength comparison. Enables sacrifices, forks, pins, and tactical depth.
+2. **Commander Safety**: Must resolve check immediately (move/block/capture). Cannot make a move that leaves own Commander in check.
+3. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player, excluding resources) = draw. 50-move rule: 50 moves per side (100 halfmoves) with no capture or deploy = draw.
+4. **Piece Types**: Commander (C), Warrior (W, pawn-like), Rider (R, up to 2 squares any direction), Bombard (B, 1 sq move + ranged attack), Lancer (L, diagonal up to 4 squares with jump)
+5. **Deploy Costs**: W=2, R=3, B=4, L=5
+6. **Warrior Movement**: Forward only (like chess pawns). Captures diagonal-forward only. White Warriors move toward row 8, Black toward row 1. No retreat, no sideways movement.
+7. **Bombard**: 1 square movement any direction. Ranged attack at exactly 2 squares (straight line, clear path). Stays in place when attacking. Can't use ranged attack against Commander.
 8. **Lancer**: Moves diagonally up to 4 squares, can jump over exactly one piece (any color)
 
 ### Known Issues & Solutions
 
-1. **Defensive Stalemates**: Games naturally tend toward long defensive play ending in turn-100 draws. Warrior-toggle pattern (Wb1-c1/Wc1-b1 oscillation) was the worst offender.
-   - Solution: Warriors now move forward/sideways only (no retreat), eliminating toggle oscillation. Also: threefold repetition draw rule, correct +1/-1 value targets with tanh head, Commander hunting heuristics
+1. **Defensive Stalemates (v1)**: Strength-based capture made defense always optimal — no sacrifices possible, material snowballed. Warrior-toggle pattern exploited sideways movement.
+   - Solution (v2): Complete game redesign — chess-style capture (attacker always wins), pawn-like Warriors (forward move, diagonal-forward capture only), removed strength stat and Power nodes. Threefold repetition draw rule, correct +1/-1 value targets with tanh head.
 
 2. **Value Target / Activation Mismatch**: Using 0/1 value targets with tanh output [-1,+1] caused the network to learn that losing positions are neutral (0 = tanh midpoint). The network couldn't distinguish losses from draws, contributing to defensive play.
    - Solution: Standard AlphaZero targets (+1 win, -1 loss) matching the tanh output range. All value target assignments must use +1/-1 (selfplay.py, smart_seeds.py, training.py MCTSLite fallback).
