@@ -42,9 +42,9 @@ class TestStateToPlanes:
         planes = state_to_planes(state)
         # White Commander at (0, 4) - should be on plane 0 (Commander)
         assert planes[0, 0, 4] == 1.0
-        # White Warriors at (0, 2) and (0, 6)
-        assert planes[1, 0, 2] == 1.0
-        assert planes[1, 0, 6] == 1.0
+        # White Bombards at (0, 2) and (0, 6)
+        assert planes[3, 0, 2] == 1.0
+        assert planes[3, 0, 6] == 1.0
         # Black Commander at (7, 4) - opponent, plane 5
         assert planes[5, 7, 4] == 1.0
 

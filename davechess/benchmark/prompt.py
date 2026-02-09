@@ -18,21 +18,21 @@ RULES_TEXT = """# DaveChess Rules
 |-------|--------|------|---------|----------------|
 | Commander | C | 1 square, any direction | Same as move | Cannot promote |
 | Warrior | W | 1 square forward | 1 square diagonal-forward | Base piece |
-| Rider | R | Up to 2 squares, any straight line (no jumping) | Same as move | 5 resources |
-| Bombard | B | 1 square, any direction | Melee: same as move. Ranged: exactly 2 squares, straight line, clear path (stays in place, cannot target Commanders) | 7 resources |
-| Lancer | L | Up to 4 squares diagonal, can jump one piece | Same as move | 9 resources |
+| Rider | R | Up to 3 squares, any straight line (no jumping) | Same as move | 3 resources |
+| Bombard | B | 1 square, any direction | Melee: same as move. Ranged: exactly 2 squares, straight line, clear path (stays in place, cannot target Commanders) | 5 resources |
+| Lancer | L | Up to 4 squares diagonal, can jump one piece | Same as move | 7 resources |
 
 ## Starting Position
 Each side starts with 12 pieces on their back two rows:
-White (rows 1-2): R at b1, W at c1, B at d1, C at e1, R at f1, W at g1; Warriors at b2-g2
-Black (rows 7-8): R at b8, W at c8, B at d8, C at e8, R at f8, W at g8; Warriors at b7-g7
+White (rows 1-2): R at b1, B at c1, R at d1, C at e1, R at f1, B at g1; Warriors at b2-g2
+Black (rows 7-8): R at b8, B at c8, R at d8, C at e8, R at f8, B at g8; Warriors at b7-g7
 
 ## Turn Structure
 1. Gain resources: +1 per Gold node you have a piece directly on
 2. One action: Move a piece OR Promote a piece (upgrade it in place by spending resources)
 
 ## Promotion
-Spend resources to upgrade any non-Commander piece to a higher type, in place. The piece stays on its square and changes type. Cost = full price of the target type. Any piece can promote to Rider (5), Bombard (7), or Lancer (9). You cannot promote a Commander.
+Spend resources to upgrade any non-Commander piece to a higher type, in place. The piece stays on its square and changes type. Cost = full price of the target type. Any piece can promote to Rider (3), Bombard (5), or Lancer (7). You cannot promote a Commander.
 
 ## Capture
 Attacker moves onto defender's square. The defender is removed, the attacker takes its place. Any piece can capture any piece (like chess).

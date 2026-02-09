@@ -37,9 +37,9 @@ PIECE_NAMES = {v: k for k, v in PIECE_CHARS.items()}
 # Promotion cost per target type (spend resources to upgrade a piece in place)
 # Commander cannot be a promotion target. Warriors are the base unit.
 PROMOTION_COST = {
-    PieceType.RIDER: 5,
-    PieceType.BOMBARD: 7,
-    PieceType.LANCER: 9,
+    PieceType.RIDER: 3,
+    PieceType.BOMBARD: 5,
+    PieceType.LANCER: 7,
 }
 
 

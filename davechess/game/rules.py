@@ -93,7 +93,7 @@ def _is_square_attacked(state: GameState, tr: int, tc: int, by_player: Player) -
     """
     board = state.board
 
-    # Check all 8 adjacent squares and 2-square Rider reach
+    # Check all 8 directions for short-range pieces and Rider (up to 3 squares)
     for dr, dc in ALL_DIRS:
         # Distance 1: Commander (any dir), Bombard (any dir melee), Rider (any dir)
         r1, c1 = tr + dr, tc + dc
@@ -105,27 +105,26 @@ def _is_square_attacked(state: GameState, tr: int, tc: int, by_player: Player) -
                     return True
                 # Warrior captures diagonally forward only
                 if pt == PieceType.WARRIOR:
-                    # Warrior at (r1,c1) captures by moving (-dr,-dc) to reach target
-                    # For White: forward is +row, so capture dirs are (+1,+1) and (+1,-1)
-                    # A White Warrior at r1 captures at r1+1 diagonally, so target is at r1+1
-                    # From target perspective: dr = r1 - tr, so Warrior row = tr + dr
-                    # The Warrior moves -dr to reach target. For White forward capture:
-                    # move_dr must be +1 (forward), so -dr == +1, meaning dr == -1
-                    # i.e. Warrior is one row BEHIND target (lower row for White)
                     move_dr = -dr
                     move_dc = -dc
-                    # Must be diagonal
                     if move_dr != 0 and move_dc != 0:
                         forward = 1 if by_player == Player.WHITE else -1
                         if move_dr == forward:
                             return True
 
-        # Distance 2: Rider only (straight line, clear path)
-        r2, c2 = tr + dr * 2, tc + dc * 2
-        if _in_bounds(r2, c2):
-            p2 = board[r2][c2]
-            if p2 is not None and p2.player == by_player and p2.piece_type == PieceType.RIDER:
-                if _in_bounds(r1, c1) and board[r1][c1] is None:
+        # Distance 2-3: Rider only (straight line, clear path, no jumping)
+        path_clear = True
+        for dist in range(2, 4):
+            # Check that the intermediate square (dist-1) is clear
+            mid_r, mid_c = tr + dr * (dist - 1), tc + dc * (dist - 1)
+            if not _in_bounds(mid_r, mid_c) or board[mid_r][mid_c] is not None:
+                path_clear = False
+            if not path_clear:
+                break
+            rd, cd = tr + dr * dist, tc + dc * dist
+            if _in_bounds(rd, cd):
+                pd = board[rd][cd]
+                if pd is not None and pd.player == by_player and pd.piece_type == PieceType.RIDER:
                     return True
 
     # Lancer: diagonal directions, distance 1-4, can jump over one piece
@@ -337,9 +336,9 @@ def _gen_warrior_moves(state: GameState, row: int, col: int, player: Player,
 
 def _gen_rider_moves(state: GameState, row: int, col: int, player: Player,
                      moves: list[Move]):
-    """Rider: up to 2 squares, any straight line (orthogonal + diagonal), no jumping."""
+    """Rider: up to 3 squares, any straight line (orthogonal + diagonal), no jumping."""
     for dr, dc in STRAIGHT_DIRS:
-        for dist in range(1, 3):
+        for dist in range(1, 4):
             r2, c2 = row + dr * dist, col + dc * dist
             if not _in_bounds(r2, c2):
                 break

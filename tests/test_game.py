@@ -36,7 +36,7 @@ class TestBoard:
         """Verify starting positions are correct."""
         white_pieces = [(r, c, pt) for (r, c), (pt, p) in STARTING_POSITIONS.items() if p == 0]
         black_pieces = [(r, c, pt) for (r, c), (pt, p) in STARTING_POSITIONS.items() if p == 1]
-        assert len(white_pieces) == 12  # 1C + 2R + 1B + 8W
+        assert len(white_pieces) == 12  # 1C + 3R + 2B + 6W
         assert len(black_pieces) == 12
 
     def test_notation_conversion(self):
@@ -205,7 +205,7 @@ class TestLegalMoves:
         assert len(destinations) == 8  # 8 adjacent squares
 
     def test_rider_moves(self):
-        """Rider moves up to 2 squares in straight line."""
+        """Rider moves up to 3 squares in straight line."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
         state.board[3][3] = Piece(PieceType.RIDER, Player.WHITE)
@@ -215,14 +215,16 @@ class TestLegalMoves:
         moves = generate_legal_moves(state)
         rider_moves = [m for m in moves if isinstance(m, MoveStep) and m.from_rc == (3, 3)]
         destinations = {m.to_rc for m in rider_moves}
-        # Can reach up to 2 squares away
+        # Can reach up to 3 squares away
         assert (5, 3) in destinations  # 2 up
+        assert (6, 3) in destinations  # 3 up
         assert (1, 3) in destinations  # 2 down
-        assert (3, 5) in destinations  # 2 right
-        assert (5, 5) in destinations  # 2 diagonal
-        # Cannot reach 3 squares away
-        assert (6, 3) not in destinations
-        assert (3, 6) not in destinations
+        assert (0, 3) in destinations  # 3 down
+        assert (3, 6) in destinations  # 3 right
+        assert (6, 6) in destinations  # 3 diagonal
+        # Cannot reach 4 squares away
+        assert (7, 3) not in destinations
+        assert (3, 7) not in destinations
 
     def test_rider_blocked(self):
         """Rider cannot jump over pieces."""
@@ -353,15 +355,15 @@ class TestLegalMoves:
     def test_promote_to_lancer(self):
         """Can promote a piece to Lancer with enough resources."""
         state = GameState()
-        state.resources[0] = 9  # Lancer costs 9
+        state.resources[0] = 7  # Lancer costs 7
         moves = generate_legal_moves(state)
         lancer_promotes = [m for m in moves if isinstance(m, Promote) and m.to_type == PieceType.LANCER]
         assert len(lancer_promotes) > 0
 
     def test_no_promote_to_lancer_insufficient_resources(self):
-        """Cannot promote to Lancer with fewer than 9 resources."""
+        """Cannot promote to Lancer with fewer than 7 resources."""
         state = GameState()
-        state.resources[0] = 8
+        state.resources[0] = 6
         moves = generate_legal_moves(state)
         lancer_promotes = [m for m in moves if isinstance(m, Promote) and m.to_type == PieceType.LANCER]
         assert len(lancer_promotes) == 0

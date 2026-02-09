@@ -14,7 +14,7 @@ An original strategic board game on an 8x8 grid combining positional resource co
 
 ### Board & Setup
 
-Each side starts with 12 pieces on their back two rows: 1 Commander (king), 2 Riders (cavalry), 1 Bombard (artillery), and 8 Warriors (infantry). The board has 4 **Gold nodes** ($) in the center at fixed symmetric positions — control these for resource income.
+Each side starts with 12 pieces on their back two rows: 1 Commander (king), 3 Riders (cavalry), 2 Bombards (artillery), and 6 Warriors (infantry). The board has 4 **Gold nodes** ($) in the center at fixed symmetric positions — control these for resource income.
 
 ### Resources & Promotion
 
@@ -24,13 +24,13 @@ Each turn, you earn **+1 resource for each Gold node you have a piece directly o
 |-------|--------|----------------|------|---------|
 | Commander | C | cannot promote | 1 square, any direction | Same as move |
 | Warrior | W | base piece | 1 square forward | 1 square diagonal-forward |
-| Rider | R | 5 | Up to 2 squares, any straight line (no jumping) | Same as move |
-| Bombard | B | 7 | 1 square, any direction | Melee: same as move. Ranged: exactly 2 squares, straight line, clear path (stays in place, cannot target Commanders) |
-| Lancer | L | 9 | Up to 4 squares, diagonal only, can jump one piece | Same as move |
+| Rider | R | 3 | Up to 3 squares, any straight line (no jumping) | Same as move |
+| Bombard | B | 5 | 1 square, any direction | Melee: same as move. Ranged: exactly 2 squares, straight line, clear path (stays in place, cannot target Commanders) |
+| Lancer | L | 7 | Up to 4 squares, diagonal only, can jump one piece | Same as move |
 
 ### Promotion
 
-Spend resources to upgrade any non-Commander piece to a higher type, in place. The piece stays on its square and changes type. Cost = full price of the target type. Any piece can promote to Rider (5), Bombard (7), or Lancer (9). Commanders cannot promote. No new pieces are ever deployed — what you start with is all you get.
+Spend resources to upgrade any non-Commander piece to a higher type, in place. The piece stays on its square and changes type. Cost = full price of the target type. Any piece can promote to Rider (3), Bombard (5), or Lancer (7). Commanders cannot promote. No new pieces are ever deployed — what you start with is all you get.
 
 ### Capture
 
@@ -40,7 +40,7 @@ Spend resources to upgrade any non-Commander piece to a higher type, in place. T
 
 **Bombard ranged attack:** attacks at exactly 2 squares distance (straight line, clear path). Target is removed; Bombard stays put. Cannot target Commanders with ranged attacks.
 
-**Lancer:** Diagonal-only piece that can jump over exactly one piece (friend or foe) in its path, similar to a limited bishop with jumping. At promotion cost 9, the Lancer is a powerful late-game attacker.
+**Lancer:** Diagonal-only piece that can jump over exactly one piece (friend or foe) in its path, similar to a limited bishop with jumping. At promotion cost 7, the Lancer is a powerful mid-game attacker.
 
 ### Check & Checkmate
 

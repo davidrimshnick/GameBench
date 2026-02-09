@@ -106,9 +106,9 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 1. **Capture (Chess-style)**: Any piece can capture any piece by moving onto it. Attacker always takes the defender's square — no strength comparison. Enables sacrifices, forks, pins, and tactical depth.
 2. **Commander Safety**: Must resolve check immediately (move/block/capture). Cannot make a move that leaves own Commander in check.
 3. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player, excluding resources) = draw. 50-move rule: 50 moves per side (100 halfmoves) with no capture or promotion = draw.
-4. **Piece Types**: Commander (C), Warrior (W, pawn-like), Rider (R, up to 2 squares any direction), Bombard (B, 1 sq move + ranged attack), Lancer (L, diagonal up to 4 squares with jump)
-5. **Promotion Costs**: R=5, B=7, L=9. No deployment — pieces promote in place by spending Gold resources.
-6. **Starting Army**: 12 pieces per side — 1 Commander, 2 Riders, 1 Bombard, 8 Warriors. No new pieces are ever added.
+4. **Piece Types**: Commander (C), Warrior (W, pawn-like), Rider (R, up to 3 squares any direction), Bombard (B, 1 sq move + ranged attack), Lancer (L, diagonal up to 4 squares with jump)
+5. **Promotion Costs**: R=3, B=5, L=7. No deployment — pieces promote in place by spending Gold resources.
+6. **Starting Army**: 12 pieces per side — 1 Commander, 3 Riders, 2 Bombards, 6 Warriors. No new pieces are ever added.
 7. **Warrior Movement**: Forward only (like chess pawns). Captures diagonal-forward only. White Warriors move toward row 8, Black toward row 1. No retreat, no sideways movement.
 8. **Bombard**: 1 square movement any direction. Ranged attack at exactly 2 squares (straight line, clear path). Stays in place when attacking. Can't use ranged attack against Commander.
 9. **Lancer**: Moves diagonally up to 4 squares, can jump over exactly one piece (any color)
