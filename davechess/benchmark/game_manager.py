@@ -140,7 +140,11 @@ class GameManager:
 
         response = {"your_move": move_dcn}
 
-        # Check if game ended after agent's move
+        # Check if game ended after agent's move (captures, draws, turn limit)
+        # Also detect checkmate/stalemate: generate_legal_moves sets state.done
+        # when the opponent has no legal moves.
+        if not game.state.done:
+            generate_legal_moves(game.state)
         if game.state.done:
             self._finalize_game(game)
             response["game_over"] = True
@@ -154,7 +158,10 @@ class GameManager:
         game.move_history_dcn.append(opp_dcn)
         response["opponent_move"] = opp_dcn
 
-        # Check if game ended after opponent's move
+        # Check if game ended after opponent's move (captures, draws, turn limit)
+        # Also detect checkmate/stalemate for the agent's next turn.
+        if not game.state.done:
+            generate_legal_moves(game.state)
         if game.state.done:
             self._finalize_game(game)
             response["game_over"] = True

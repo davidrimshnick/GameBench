@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GameBench is a benchmark measuring how efficiently LLMs learn novel strategic reasoning from examples using DaveChess, a custom board game designed to be absent from training data. The system uses AlphaZero self-play training on a Jetson Orin Nano to create synthetic grandmaster games for LLM evaluation.
+GameBench is a benchmark measuring how efficiently LLMs learn novel strategic reasoning from examples using DaveChess, a custom board game designed to be absent from training data. The system uses AlphaZero self-play training on a Jetson Orin Nano to produce an expert neural network that serves dual roles: generating synthetic grandmaster games for LLM study, and acting as the calibrated opponent that agents play against during evaluation.
 
 ## Key Commands
 
@@ -76,7 +76,8 @@ client = BenchmarkClient("http://localhost:8000")
 # Run benchmark with direct API calls and token budget enforcement
 python scripts/run_benchmark.py --provider anthropic --model claude-sonnet-4-20250514 --budget 500000
 
-# Calibrate opponent pool (generates checkpoints/calibration.json)
+# Calibrate opponent pool against the trained NN (generates checkpoints/calibration.json)
+# MUST use --checkpoint — calibration is only valid for the model agents will face
 python scripts/calibrate_opponents.py --checkpoint checkpoints/best.pt
 ```
 
@@ -213,7 +214,7 @@ Session lifecycle: `BASELINE -> LEARNING -> EVALUATION -> COMPLETED`
 
 Key commands: `create`, `rules`, `study`, `practice`, `move`, `state`, `evaluate`, `result`, `report-tokens`
 
-Opponents use MCTSLite (random rollouts, no neural network). The neural network checkpoint (`checkpoints/best.pt`) plays too defensively against out-of-distribution opponents (draws 50% vs random) because it was trained via self-play. MCTSLite produces decisive games with clear winners, which is better for ELO measurement.
+Opponents use the trained neural network (`checkpoints/best.pt`) with MCTS at varying simulation counts. The NN is the same model being trained on the Jetson — it produces the GM games for study AND serves as the benchmark opponent. ELO calibration must be done against NN-backed MCTS (not MCTSLite), since the calibrated ELO values are only meaningful relative to the actual opponent the agents will face. The `agent_cli.py` hardcoded defaults are placeholders — real runs must use `--calibration checkpoints/calibration.json` with a calibration generated against the current best.pt.
 
 ### Running the Benchmark with a Coding Agent
 
@@ -221,11 +222,13 @@ To test the benchmark with a coding agent (Claude Code, Codex CLI, etc.), launch
 
 **Sandbox setup:**
 ```bash
-# Create minimal sandbox with only the CLI script and game data
+# Create minimal sandbox with CLI script, game data, model, and calibration
 SANDBOX="/tmp/benchmark-sandbox"  # or any temp directory
 mkdir -p "$SANDBOX/scripts" "$SANDBOX/data" "$SANDBOX/checkpoints/agent_sessions"
 cp scripts/agent_cli.py "$SANDBOX/scripts/"
 cp -r data/gm_games "$SANDBOX/data/"
+cp checkpoints/best.pt "$SANDBOX/checkpoints/"
+cp checkpoints/calibration.json "$SANDBOX/checkpoints/"
 
 # davechess must be installed as a package: pip install -e . (from repo root)
 ```
@@ -235,7 +238,8 @@ cp -r data/gm_games "$SANDBOX/data/"
 cd "$SANDBOX" && claude -p "You are in a sandbox directory. \
   Read scripts/agent_cli.py — it has all the docs you need. \
   Run the full DaveChess benchmark: create a session \
-  (--budget 500000 --eval-min-games 5 --eval-max-games 15), \
+  (--budget 500000 --eval-min-games 5 --eval-max-games 15 \
+   --checkpoint checkpoints/best.pt --calibration checkpoints/calibration.json), \
   read the rules, study GM games, play practice games, then evaluate. \
   Report tokens with --tokens on every command. \
   Pick moves from legal_moves. Show the final result." \
@@ -257,6 +261,22 @@ Each practice/eval game involves ~30-100 individual `move` commands. A full run 
 
 **Why a sandbox?** The agent should only see `agent_cli.py` (the interface) and game data. If it has access to the full repo, it could read the game engine, opponent logic, or rules implementation — defeating the purpose of measuring learning from examples.
 
+### Benchmark Pipeline Prerequisites
+
+The trained neural network is the foundation of the entire benchmark. It serves two roles:
+
+1. **GM game generator** — Self-play games from the trained model are the "grandmaster" games that agents study during the LEARNING phase. These are saved as DCN files in `data/gm_games/`.
+2. **Benchmark opponent** — During BASELINE, PRACTICE, and EVALUATION, the agent plays against NN-backed MCTS at calibrated simulation counts. The opponent's strength is controlled by varying the number of MCTS simulations.
+
+**Pipeline order:**
+1. **Train the model** on Jetson (W&B tracks progress). Wait for sufficient ELO.
+2. **Download best.pt** from W&B artifacts to `checkpoints/best.pt`.
+3. **Generate GM games** — Run the model's self-play to produce DCN game files in `data/gm_games/`.
+4. **Calibrate opponents** — Run `calibrate_opponents.py --checkpoint checkpoints/best.pt` to generate `checkpoints/calibration.json` with ELO ratings for each MCTS sim count against this specific model.
+5. **Run benchmark** — Launch agents in sandboxes with the CLI, GM games, and calibration data.
+
+Calibration is model-specific: if the model is retrained, the calibration must be re-run. The hardcoded defaults in `agent_cli.py` and `api_server.yaml` are rough placeholders; real runs must use the calibration JSON.
+
 ### Agentic Benchmark Architecture (Legacy Harness)
 
 The `run_benchmark.py` harness gives an LLM a token budget and tools, then measures ELO achieved through autonomous learning. It calls the LLM API directly and enforces token budgets.
@@ -264,7 +284,7 @@ The `run_benchmark.py` harness gives an LLM a token budget and tools, then measu
 Key design decisions:
 - **Rolling context window** (20 messages): forces agents to use external memory at large budgets
 - **Eval from same budget**: agent must budget tokens wisely between learning and evaluation
-- **Opponent pool**: ELO-to-MCTS-sims mapping with log-space interpolation between calibrated points
+- **Opponent pool**: ELO-to-NN-MCTS-sims mapping with log-space interpolation between calibrated points
 - **Move-by-move play**: agent plays each move individually via tool calls (not pre-committed strategies)
 
 Key files:
@@ -287,7 +307,7 @@ Key files:
 - `davechess/engine/` - AlphaZero training & MCTS
   - `network.py` - ResNet policy+value network (14 input planes, 4288 policy size)
   - `mcts.py` - Full PUCT MCTS with neural network evaluation
-  - `mcts_lite.py` - Lightweight MCTS with random rollouts (no NN), used for opponents & validation
+  - `mcts_lite.py` - Lightweight MCTS with random rollouts (no NN), used for validation & seed generation
   - `mcts_worker.py` - Worker process for multiprocess self-play
   - `gpu_server.py` - GPU inference server batching requests from CPU workers
   - `selfplay.py` - ReplayBuffer, self-play game generation, training data extraction
@@ -307,7 +327,7 @@ Key files:
   - `agent_harness.py` - Autonomous learning loop with rolling message window
   - `agentic_protocol.py` - Full pipeline orchestrator (learning→eval→scoring)
   - `sequential_eval.py` - Adaptive Glicko-2 testing against calibrated opponents
-  - `opponent_pool.py` - ELO-to-MCTS-sims mapping with log-space interpolation
+  - `opponent_pool.py` - ELO-to-MCTS-sims mapping with log-space interpolation (uses NN-backed MCTS)
   - `game_manager.py` - Concurrent practice/evaluation game management
   - `game_library.py` - GM game library (DCN), serves without replacement per session
   - `tools.py` - Tool definitions (study_games, start_practice_game, play_move, get_game_state)
@@ -323,7 +343,7 @@ Key files:
 - `scripts/run_benchmark.py` - External harness driving LLM via subprocess
 - `scripts/run_agentic_benchmark.py` - Multi-budget agentic benchmark (100K/1M/10M)
 - `scripts/generate_and_save_seeds.py` - Smart seed generator (heuristic + endgame, `--append` mode)
-- `scripts/calibrate_opponents.py` - Round-robin Glicko-2 calibration, saves calibration.json
+- `scripts/calibrate_opponents.py` - Round-robin Glicko-2 calibration against NN-backed MCTS, saves calibration.json
 - `scripts/validate_game.py` - Game health validation (win rate, draw rate, game length)
 - `scripts/analyze_games.py` - Opening frequencies, move diversity, strategy patterns
 - `scripts/endgame_analysis.py` - All static checkmate positions, minimax evaluation
