@@ -60,6 +60,17 @@ python scripts/agent_cli.py result <session_file>
 # Launch a coding agent in a sandbox — see "Running the Benchmark with a Coding Agent" below
 ```
 
+### REST API Server
+```bash
+# Start benchmark REST API (FastAPI)
+pip install -e ".[api]"  # Install fastapi, uvicorn, pydantic
+python scripts/run_api_server.py --config configs/api_server.yaml
+
+# Use Python SDK client
+from davechess.benchmark.sdk import BenchmarkClient
+client = BenchmarkClient("http://localhost:8000")
+```
+
 ### Legacy Harness (API-level token tracking)
 ```bash
 # Run benchmark with direct API calls and token budget enforcement
@@ -74,8 +85,11 @@ python scripts/calibrate_opponents.py --checkpoint checkpoints/best.pt
 # Validate game balance with MCTSLite
 python scripts/validate_game.py --num-games 500 --sims 50
 
-# Generate and save smart seed games (only needed once)
-python scripts/generate_and_save_seeds.py --num-games 500 --output checkpoints/smart_seeds.pkl
+# Generate full seed set (heuristic games + endgame wins)
+python scripts/generate_and_save_seeds.py --num-games 100 --num-endgames 100 --endgame-sims 100 --force
+
+# Append more endgame seeds to existing pickle (incremental)
+python scripts/generate_and_save_seeds.py --append --num-endgames 150 --endgame-sims 100
 
 # Check existing seed games
 python scripts/generate_and_save_seeds.py  # Shows stats without regenerating
@@ -87,6 +101,10 @@ python scripts/quick_balance_check.py
 
 # Detailed game analysis
 python scripts/analyze_games.py
+
+# Endgame analysis (theoretical checkmate positions, R+C vs C barriers)
+python scripts/endgame_analysis.py
+python scripts/endgame_barrier_analysis.py
 ```
 
 ## Architecture & Key Design Decisions
@@ -97,12 +115,18 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 1. **Value Target Structure**: Uses standard AlphaZero three-valued targets (+1.0 for wins, 0.0 for draws, -1.0 for losses) with tanh output head. Drawn games are included in training data so the model learns that draw-prone positions are worse than winning ones. Earlier versions incorrectly used 0/1 targets with a tanh head, causing the network to treat losses as neutral (tanh midpoint = 0 = "uncertain"). Another earlier version discarded draws entirely, but with the threefold repetition rule, draws carry meaningful signal.
 
-2. **Smart Seed Generation**: Instead of MCTSLite's expensive random rollouts, uses heuristic players (`HeuristicPlayer`, `CommanderHunter`) that provide strategic seed games. Seeds are generated once and saved to `checkpoints/smart_seeds.pkl` (~20k positions, backed up as W&B artifact `smart-seeds:latest`). **Not committed to git** (233MB) — download from W&B if missing. Training automatically loads these instead of regenerating. All seed games end in checkmate (draws are discarded). The model pre-trains on seed data before starting self-play. Located in:
-   - `davechess/engine/heuristic_player.py` - Position evaluation and strategic play
-   - `davechess/engine/smart_seeds.py` - Seed game generation module
-   - `scripts/generate_and_save_seeds.py` - Standalone seed generator
+2. **Smart Seed Generation**: Two types of seeds bootstrap learning:
+   - **Heuristic games**: `CommanderHunter` and `HeuristicPlayer` provide strategic full-game seeds with middlegame patterns.
+   - **Endgame curriculum**: MCTS-solved mating sequences teach the network what checkmate looks like. Endgame types: 2R+C, 2L+C, R+L+C, R+B+C, L+B+C, 2R+L+C, R+L+B+C, 2R+B+C — all vs lone Commander. Black Commander biased to edges/corners for realistic mating scenarios.
 
-3. **Adaptive MCTS Simulations**: The `adaptive_simulations()` function in `training.py` scales simulation count based on model ELO (25 sims at ELO 0 → 100 sims at ELO 2000) to speed up early training. Min sims raised from 10→25 (selfplay) and 15→30 (eval) because too-shallow search produced low-quality data that couldn't learn from seed strategies.
+   Seeds are saved to `checkpoints/smart_seeds.pkl` (~8-10K positions, ~170MB, backed up as W&B artifact `smart-seeds:latest`). **Not committed to git** — download from W&B if missing. Training automatically loads these instead of regenerating. The model pre-trains on seed data before starting self-play. Located in:
+   - `davechess/engine/heuristic_player.py` - Position evaluation and strategic play
+   - `davechess/engine/smart_seeds.py` - Seed game generation + endgame position generator
+   - `scripts/generate_and_save_seeds.py` - Standalone seed generator (`--append` to add endgame seeds to existing pickle)
+
+3. **Warm-Start from W&B**: If `checkpoints/best.pt` exists when starting "fresh" training (no step checkpoint), the trainer loads those weights into both networks instead of starting from random. This enables restoring a model from W&B artifacts and injecting new seed data without losing learned knowledge.
+
+4. **Adaptive MCTS Simulations**: The `adaptive_simulations()` function in `training.py` scales simulation count based on model ELO (25 sims at ELO 0 → 100 sims at ELO 2000) to speed up early training. Min sims raised from 10→25 (selfplay) and 15→30 (eval) because too-shallow search produced low-quality data that couldn't learn from seed strategies.
 
 ### Game State Representation
 
@@ -254,13 +278,78 @@ Key files:
 
 ## File Structure Notes
 
-- `davechess/game/` - Core game engine, state representation, rules
-- `davechess/engine/` - Neural network, MCTS, training loop, heuristic players
+### Source Code
+- `davechess/game/` - Core game engine
+  - `board.py` - Board representation, Gold nodes, starting positions, notation utils
+  - `state.py` - GameState, Piece, Player, Move types (MoveStep, Promote, BombardAttack)
+  - `rules.py` - Legal move generation, move application, check/checkmate, threefold repetition, 50-move rule
+  - `notation.py` - DCN (DaveChess Notation) encoding/decoding
+- `davechess/engine/` - AlphaZero training & MCTS
+  - `network.py` - ResNet policy+value network (14 input planes, 4288 policy size)
+  - `mcts.py` - Full PUCT MCTS with neural network evaluation
+  - `mcts_lite.py` - Lightweight MCTS with random rollouts (no NN), used for opponents & validation
+  - `mcts_worker.py` - Worker process for multiprocess self-play
+  - `gpu_server.py` - GPU inference server batching requests from CPU workers
+  - `selfplay.py` - ReplayBuffer, self-play game generation, training data extraction
+  - `smart_seeds.py` - Heuristic seed games + endgame curriculum generator
+  - `training.py` - Main trainer: iteration loop, adaptive sims, eval, checkpointing, W&B
+  - `heuristic_player.py` - Position evaluation and strategic agents for seed generation
 - `davechess/data/` - Game generation, ELO calibration
-- `davechess/benchmark/` - LLM evaluation framework (legacy static + agentic)
-- `configs/` - YAML configurations for all components
-- `checkpoints/` - Model checkpoints and seed game storage (gitignored, use W&B artifacts)
+  - `elo.py` - Glicko-2 rating system
+  - `generator.py` - Agent base class, RandomAgent, MCTSAgent, play_game()
+  - `storage.py` - DCN file I/O, replay_game() state reconstruction
+- `davechess/benchmark/` - LLM evaluation framework
+  - `api/server.py` - FastAPI REST server (sessions, games, study, eval endpoints)
+  - `api/session.py` - BenchmarkSession: phase-gated state machine (BASELINE→LEARNING→EVALUATION→COMPLETED)
+  - `api/session_manager.py` - Creates/tracks sessions, holds shared OpponentPool/GameLibrary
+  - `api/models.py` - Pydantic request/response models
+  - `sdk.py` - BenchmarkClient HTTP wrapper + in-process session import
+  - `agent_harness.py` - Autonomous learning loop with rolling message window
+  - `agentic_protocol.py` - Full pipeline orchestrator (learning→eval→scoring)
+  - `sequential_eval.py` - Adaptive Glicko-2 testing against calibrated opponents
+  - `opponent_pool.py` - ELO-to-MCTS-sims mapping with log-space interpolation
+  - `game_manager.py` - Concurrent practice/evaluation game management
+  - `game_library.py` - GM game library (DCN), serves without replacement per session
+  - `tools.py` - Tool definitions (study_games, start_practice_game, play_move, get_game_state)
+  - `prompt.py` - RULES_TEXT, system prompts for agents
+  - `scoring.py` - ELO computation, learning curves, GameBench AUC score
+  - `token_tracker.py` - Token budget enforcement
+
+### Scripts
+- `scripts/train.py` - AlphaZero training orchestrator
+- `scripts/play.py` - Interactive play (human vs human/MCTS)
+- `scripts/agent_cli.py` - **Core benchmark CLI** — single-file interface with full docs
+- `scripts/run_api_server.py` - FastAPI REST server startup
+- `scripts/run_benchmark.py` - External harness driving LLM via subprocess
+- `scripts/run_agentic_benchmark.py` - Multi-budget agentic benchmark (100K/1M/10M)
+- `scripts/generate_and_save_seeds.py` - Smart seed generator (heuristic + endgame, `--append` mode)
+- `scripts/calibrate_opponents.py` - Round-robin Glicko-2 calibration, saves calibration.json
+- `scripts/validate_game.py` - Game health validation (win rate, draw rate, game length)
+- `scripts/analyze_games.py` - Opening frequencies, move diversity, strategy patterns
+- `scripts/endgame_analysis.py` - All static checkmate positions, minimax evaluation
+- `scripts/endgame_barrier_analysis.py` - Tests R+C vs C forcing patterns
+- `scripts/quick_balance_check.py` - Fast 100-game balance check
+- `scripts/download_artifacts.py` - Download W&B artifacts (models, buffers, seeds)
+
+### Configuration & Data
+- `configs/training.yaml` - AlphaZero training (network, MCTS, self-play, buffer, optimizer)
+- `configs/api_server.yaml` - REST server host/port, opponent calibration, game library config
+- `configs/agentic_benchmark.yaml` - API provider, token budgets, rolling window, opponent pool
+- `checkpoints/` - Model checkpoints, seed games, calibration (gitignored, use W&B artifacts)
+- `data/gm_games/` - GM game library in DCN format (loaded at runtime for benchmark)
+- `docs/index.html` - GitHub Pages leaderboard dashboard
 - `wandb/` - Weights & Biases tracking (auto-generated, gitignored)
+
+### Tests (149 tests across 6+ suites)
+- `tests/test_game.py` - Board, state, moves, capture, promotion, check/checkmate, draw rules
+- `tests/test_mcts.py` - MCTS correctness, UCB1, tree traversal, batched eval
+- `tests/test_network.py` - Network inference, state encoding, policy/value shapes
+- `tests/test_benchmark.py` - Legacy benchmark orchestration
+- `tests/test_agentic_benchmark.py` - Agent harness, tools, token tracking, Glicko-2
+- `tests/test_api_endpoints.py` - FastAPI endpoint tests (session lifecycle, game play)
+- `tests/test_api_session.py` - BenchmarkSession phase transitions, baseline, eval
+- `tests/test_sdk.py` - BenchmarkClient HTTP wrapper, round-trip correctness
+- `tests/conftest.py` - Fixtures (short_games monkeypatch for fast API testing)
 
 ## Training Monitoring
 
