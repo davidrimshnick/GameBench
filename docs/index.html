@@ -3,109 +3,485 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GameBench — Measuring How LLMs Learn Strategy</title>
+<title>GameBench — LLM Strategy Learning Leaderboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0f1117;
-    --surface: #161922;
-    --surface2: #1c1f2e;
-    --border: #2a2d3e;
-    --text: #e1e4ed;
-    --text-dim: #8b8fa3;
-    --accent: #6c8cff;
-    --accent2: #a78bfa;
-    --green: #4ade80;
+    --bg: #08090d;
+    --bg2: #0e1018;
+    --surface: #141620;
+    --surface2: #1a1d2e;
+    --surface3: #20243a;
+    --border: #252940;
+    --border-bright: #3a3f5c;
+    --text: #e4e7f1;
+    --text-dim: #7c819a;
+    --text-muted: #50546e;
+    --cyan: #22d3ee;
+    --cyan-dim: rgba(34, 211, 238, 0.12);
+    --cyan-glow: rgba(34, 211, 238, 0.25);
+    --green: #34d399;
+    --green-bg: rgba(52, 211, 153, 0.1);
     --red: #f87171;
+    --red-bg: rgba(248, 113, 113, 0.1);
     --gold: #fbbf24;
-    --orange: #fb923c;
+    --gold-bg: rgba(251, 191, 36, 0.08);
+    --amber: #f59e0b;
+    --purple: #a78bfa;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'DM Sans', sans-serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
   }
 
-  .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+  /* Subtle grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      linear-gradient(rgba(34, 211, 238, 0.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34, 211, 238, 0.015) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+    z-index: 0;
+  }
 
-  /* Hero */
-  .hero {
-    padding: 80px 0 60px;
-    text-align: center;
+  body > * { position: relative; z-index: 1; }
+
+  /* ========== NAV ========== */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 32px;
+    height: 56px;
     border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    backdrop-filter: blur(12px);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .topbar-logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 1.15rem;
+    letter-spacing: -0.03em;
+    color: var(--text);
+  }
+  .topbar-logo span { color: var(--cyan); }
+
+  .tab-nav {
+    display: flex;
+    gap: 0;
+    height: 100%;
+  }
+  .tab-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0 20px;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.2s;
+    height: 100%;
+    display: flex;
+    align-items: center;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active {
+    color: var(--cyan);
+  }
+  .tab-btn.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 12px;
+    right: 12px;
+    height: 2px;
+    background: var(--cyan);
+    border-radius: 2px 2px 0 0;
+    box-shadow: 0 0 8px var(--cyan-glow);
+  }
+
+  .topbar-gh {
+    color: var(--text-dim);
+    text-decoration: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    transition: color 0.2s;
+  }
+  .topbar-gh:hover { color: var(--cyan); }
+
+  /* ========== LAYOUT ========== */
+  .container { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ========== HERO ========== */
+  .hero {
+    padding: 52px 0 40px;
+    text-align: center;
+  }
+  .hero-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .hero-label::before, .hero-label::after {
+    content: '';
+    width: 24px;
+    height: 1px;
+    background: var(--cyan);
+    opacity: 0.4;
   }
   .hero h1 {
-    font-size: 3rem;
-    font-weight: 700;
-    letter-spacing: -0.03em;
-    margin-bottom: 8px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 2.6rem;
+    letter-spacing: -0.04em;
+    line-height: 1.1;
+    margin-bottom: 10px;
   }
-  .hero h1 span { color: var(--accent); }
-  .hero .tagline {
-    font-size: 1.25rem;
+  .hero-sub {
     color: var(--text-dim);
-    max-width: 640px;
-    margin: 0 auto 32px;
+    font-size: 1.05rem;
+    max-width: 580px;
+    margin: 0 auto;
   }
-  .hero .headline-metric {
-    display: inline-block;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 24px;
-    font-size: 0.95rem;
-    color: var(--text-dim);
-  }
-  .hero .headline-metric strong { color: var(--gold); }
 
-  /* Sections */
-  section { padding: 60px 0; border-bottom: 1px solid var(--border); }
-  section:last-child { border-bottom: none; }
-  section h2 {
-    font-size: 1.75rem;
-    font-weight: 600;
-    margin-bottom: 24px;
+  /* ========== BANNER ========== */
+  .banner {
+    margin: 0 0 36px;
+    padding: 12px 20px;
+    background: var(--gold-bg);
+    border: 1px solid rgba(251, 191, 36, 0.2);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.85rem;
+    color: var(--gold);
+  }
+  .banner-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--gold);
+    flex-shrink: 0;
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ========== LEADERBOARD TABLE ========== */
+  .leaderboard {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 36px;
+  }
+  .leaderboard-header {
+    display: grid;
+    grid-template-columns: 48px 1fr 160px 120px 120px 100px 80px;
+    padding: 14px 20px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .leaderboard-row {
+    display: grid;
+    grid-template-columns: 48px 1fr 160px 120px 120px 100px 80px;
+    padding: 18px 20px;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+    cursor: pointer;
+  }
+  .leaderboard-row:last-child { border-bottom: none; }
+  .leaderboard-row:hover { background: var(--surface2); }
+  .leaderboard-row.expanded { background: var(--surface2); }
+
+  .lb-rank {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 1.2rem;
+    color: var(--text-muted);
+  }
+  .lb-rank.gold { color: var(--gold); }
+  .lb-rank.silver { color: #94a3b8; }
+  .lb-rank.bronze { color: #d97706; }
+
+  .lb-agent {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .lb-agent-name {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 1rem;
+    letter-spacing: -0.01em;
+  }
+  .lb-agent-model {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+
+  .lb-gain {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 1.25rem;
     letter-spacing: -0.02em;
   }
-  section h3 {
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin: 24px 0 12px;
-    color: var(--accent2);
-  }
-  section p { color: var(--text-dim); margin-bottom: 16px; max-width: 720px; }
+  .lb-gain.positive { color: var(--green); }
+  .lb-gain.negative { color: var(--red); }
+  .lb-gain.dnf { color: var(--text-muted); font-size: 0.9rem; }
 
-  /* Key Concepts grid */
+  .lb-elo {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: var(--text);
+  }
+  .lb-elo.muted { color: var(--text-muted); }
+
+  .lb-games {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+
+  .lb-status {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    border-radius: 4px;
+    text-align: center;
+  }
+  .lb-status.done {
+    color: var(--green);
+    background: var(--green-bg);
+  }
+  .lb-status.fail {
+    color: var(--red);
+    background: var(--red-bg);
+  }
+
+  /* ========== DETAIL PANEL ========== */
+  .detail-panel {
+    display: none;
+    grid-column: 1 / -1;
+    padding: 0 20px 20px;
+    background: var(--surface2);
+  }
+  .detail-panel.open { display: block; }
+
+  .detail-inner {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+
+  .detail-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .detail-stat {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .detail-stat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .detail-stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: var(--text);
+  }
+
+  .detail-notes {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .detail-notes h4 {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: var(--cyan);
+    letter-spacing: 0.02em;
+  }
+  .detail-notes p {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    line-height: 1.55;
+  }
+  .detail-notes .caveat {
+    font-size: 0.8rem;
+    color: var(--amber);
+    background: var(--gold-bg);
+    border: 1px solid rgba(251, 191, 36, 0.15);
+    border-radius: 5px;
+    padding: 10px 14px;
+    line-height: 1.5;
+  }
+
+  /* Row expand arrow */
+  .lb-expand {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-left: auto;
+    color: var(--text-muted);
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+  .leaderboard-row.expanded .lb-expand { transform: rotate(180deg); }
+
+  /* ========== SUMMARY STATS ========== */
+  .run-meta {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 36px;
+  }
+  .run-meta-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    flex: 1;
+    min-width: 140px;
+  }
+  .run-meta-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .run-meta-value {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 1.5rem;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .run-meta-value .unit {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+
+  /* ========== METHODOLOGY TAB ========== */
+  .meth-section {
+    padding: 48px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .meth-section:last-child { border-bottom: none; }
+
+  .meth-section h2 {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 1.7rem;
+    letter-spacing: -0.03em;
+    margin-bottom: 16px;
+  }
+  .meth-section h3 {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: var(--cyan);
+    margin: 28px 0 10px;
+  }
+  .meth-section p {
+    color: var(--text-dim);
+    margin-bottom: 14px;
+    max-width: 740px;
+    font-size: 0.95rem;
+  }
+
+  /* Concept cards */
   .concepts {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 16px;
-    margin-top: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
+    margin-top: 20px;
   }
   .concept-card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 20px;
+    transition: border-color 0.2s;
   }
-  .concept-card .label {
-    font-size: 0.75rem;
+  .concept-card:hover { border-color: var(--border-bright); }
+  .concept-card .card-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--accent);
+    letter-spacing: 0.1em;
+    color: var(--cyan);
     margin-bottom: 8px;
   }
-  .concept-card .title {
-    font-weight: 600;
-    font-size: 1rem;
+  .concept-card .card-title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
     margin-bottom: 6px;
   }
-  .concept-card .desc {
-    font-size: 0.875rem;
+  .concept-card .card-desc {
+    font-size: 0.82rem;
     color: var(--text-dim);
     line-height: 1.5;
   }
@@ -116,154 +492,73 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 24px;
-    margin: 24px 0;
+    margin: 20px 0;
     overflow-x: auto;
   }
   .board-wrap pre {
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 0.8rem;
-    line-height: 1.4;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    line-height: 1.35;
     color: var(--text);
   }
 
   /* Piece table */
-  table {
+  .piece-table {
     width: 100%;
     border-collapse: collapse;
-    margin: 16px 0;
-    font-size: 0.9rem;
-  }
-  th {
-    text-align: left;
-    padding: 10px 12px;
-    border-bottom: 2px solid var(--border);
-    color: var(--text-dim);
-    font-weight: 500;
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  td {
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border);
-    color: var(--text);
-  }
-  tr:last-child td { border-bottom: none; }
-
-  /* Results */
-  .results-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 16px;
-    margin-top: 24px;
-  }
-  .result-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 24px;
-    position: relative;
-  }
-  .result-card .agent-name {
-    font-weight: 600;
-    font-size: 1.1rem;
-    margin-bottom: 4px;
-  }
-  .result-card .agent-model {
-    font-size: 0.8rem;
-    color: var(--text-dim);
-    margin-bottom: 16px;
-  }
-  .result-card .elo-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 8px;
-  }
-  .result-card .elo-label {
-    font-size: 0.8rem;
-    color: var(--text-dim);
-  }
-  .result-card .elo-value {
-    font-size: 1.1rem;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-  }
-  .result-card .gain {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: 4px;
+    margin: 14px 0;
     font-size: 0.85rem;
-    font-weight: 600;
-    margin-top: 12px;
   }
-  .gain.positive { background: rgba(74, 222, 128, 0.15); color: var(--green); }
-  .gain.negative { background: rgba(248, 113, 113, 0.15); color: var(--red); }
-  .gain.neutral { background: rgba(139, 143, 163, 0.15); color: var(--text-dim); }
-
-  .placeholder-badge {
-    display: inline-block;
+  .piece-table th {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
     font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    padding: 3px 8px;
-    border-radius: 3px;
-    background: rgba(251, 191, 36, 0.15);
-    color: var(--gold);
-    margin-bottom: 16px;
   }
-
-  /* Stats row */
-  .stats-row {
-    display: flex;
-    gap: 32px;
-    flex-wrap: wrap;
-    margin: 24px 0;
+  .piece-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
   }
-  .stat {
-    text-align: center;
-  }
-  .stat .num {
-    font-size: 2rem;
-    font-weight: 700;
-    color: var(--accent);
-    font-variant-numeric: tabular-nums;
-  }
-  .stat .label {
-    font-size: 0.8rem;
-    color: var(--text-dim);
-    margin-top: 2px;
-  }
+  .piece-table tr:last-child td { border-bottom: none; }
 
   /* Lifecycle */
   .lifecycle {
     display: flex;
     align-items: center;
     gap: 0;
-    margin: 24px 0;
+    margin: 20px 0;
     flex-wrap: wrap;
   }
   .phase-box {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 12px 18px;
+    padding: 14px 18px;
     text-align: center;
-    min-width: 120px;
+    min-width: 130px;
+    transition: border-color 0.2s;
   }
-  .phase-box .name {
-    font-weight: 600;
+  .phase-box:hover { border-color: var(--cyan); }
+  .phase-name {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
     font-size: 0.9rem;
   }
-  .phase-box .detail {
-    font-size: 0.75rem;
+  .phase-detail {
+    font-size: 0.72rem;
     color: var(--text-dim);
     margin-top: 4px;
   }
   .phase-arrow {
-    color: var(--text-dim);
-    font-size: 1.2rem;
+    color: var(--text-muted);
+    font-size: 1.1rem;
     padding: 0 8px;
+    font-family: 'JetBrains Mono', monospace;
   }
 
   /* Code block */
@@ -273,99 +568,398 @@
     border-radius: 8px;
     padding: 20px;
     overflow-x: auto;
-    margin: 16px 0;
+    margin: 14px 0;
   }
   .code-block pre {
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 0.82rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
     line-height: 1.5;
     color: var(--text);
   }
-  .code-block .comment { color: var(--text-dim); }
+  .code-block .cmt { color: var(--text-muted); }
   .code-block .cmd { color: var(--green); }
 
-  /* Footer */
-  footer {
-    padding: 40px 0;
-    text-align: center;
-    color: var(--text-dim);
+  /* Agents table */
+  .agents-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
     font-size: 0.85rem;
   }
-  footer a { color: var(--accent); text-decoration: none; }
-  footer a:hover { text-decoration: underline; }
-
-  /* Responsive */
-  @media (max-width: 640px) {
-    .hero h1 { font-size: 2rem; }
-    .hero .tagline { font-size: 1rem; }
-    .lifecycle { flex-direction: column; align-items: stretch; }
-    .phase-arrow { transform: rotate(90deg); text-align: center; }
-    .stats-row { gap: 24px; }
+  .agents-table th {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
   }
+  .agents-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .agents-table tr:last-child td { border-bottom: none; }
+  .agents-table code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    background: var(--bg2);
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: var(--text);
+  }
+  .status-tested { color: var(--green); }
+  .status-untested { color: var(--gold); }
+  .status-limited { color: var(--amber); }
+  .status-planned { color: var(--text-muted); }
+
+  /* ========== FOOTER ========== */
+  footer {
+    padding: 32px 0;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    border-top: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  footer a {
+    color: var(--text-dim);
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+  footer a:hover { color: var(--cyan); }
+
+  /* ========== RESPONSIVE ========== */
+  @media (max-width: 860px) {
+    .leaderboard-header,
+    .leaderboard-row {
+      grid-template-columns: 36px 1fr 100px 80px;
+    }
+    .leaderboard-header > :nth-child(4),
+    .leaderboard-header > :nth-child(5),
+    .leaderboard-header > :nth-child(6),
+    .leaderboard-row > :nth-child(4),
+    .leaderboard-row > :nth-child(5),
+    .leaderboard-row > :nth-child(6) {
+      display: none;
+    }
+    .detail-inner {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .topbar { padding: 0 16px; }
+    .topbar-gh { display: none; }
+    .tab-btn { padding: 0 14px; font-size: 0.72rem; }
+    .container { padding: 0 16px; }
+    .hero h1 { font-size: 1.8rem; }
+    .hero-sub { font-size: 0.9rem; }
+    .run-meta { gap: 12px; }
+    .run-meta-item { min-width: 100px; padding: 12px 14px; }
+    .run-meta-value { font-size: 1.2rem; }
+    .leaderboard-header,
+    .leaderboard-row {
+      grid-template-columns: 32px 1fr 80px;
+      padding: 12px 14px;
+    }
+    .leaderboard-header > :nth-child(4),
+    .leaderboard-header > :nth-child(5),
+    .leaderboard-header > :nth-child(6),
+    .leaderboard-header > :nth-child(7),
+    .leaderboard-row > :nth-child(4),
+    .leaderboard-row > :nth-child(5),
+    .leaderboard-row > :nth-child(6),
+    .leaderboard-row > :nth-child(7) {
+      display: none;
+    }
+    .lb-gain { font-size: 1rem; }
+    .lifecycle { flex-direction: column; align-items: stretch; }
+    .phase-arrow { transform: rotate(90deg); text-align: center; padding: 4px 0; }
+  }
+
+  /* ========== ANIMATIONS ========== */
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-in {
+    animation: fade-up 0.4s ease-out both;
+  }
+  .delay-1 { animation-delay: 0.05s; }
+  .delay-2 { animation-delay: 0.1s; }
+  .delay-3 { animation-delay: 0.15s; }
+  .delay-4 { animation-delay: 0.2s; }
+  .delay-5 { animation-delay: 0.25s; }
 </style>
 </head>
 <body>
 
-<!-- Hero -->
-<header class="hero">
-  <div class="container">
-    <h1>Game<span>Bench</span></h1>
-    <p class="tagline">
-      Measuring how efficiently LLMs learn novel strategic reasoning from examples &mdash; not memorization.
-    </p>
-    <div class="headline-metric">
-      Headline metric: <strong>ELO gain per token</strong> &mdash; how much chess skill does a model acquire per unit of learning?
-    </div>
+<!-- Top Bar -->
+<nav class="topbar">
+  <div class="topbar-logo">Game<span>Bench</span></div>
+  <div class="tab-nav">
+    <button class="tab-btn active" data-tab="results">Results</button>
+    <button class="tab-btn" data-tab="methodology">Methodology</button>
   </div>
-</header>
+  <a class="topbar-gh" href="https://github.com/davidrimshnick/GameBench">github</a>
+</nav>
 
-<!-- Why -->
-<section>
+<!-- ==================== RESULTS TAB ==================== -->
+<div id="tab-results" class="tab-panel active">
   <div class="container">
-    <h2>Why GameBench?</h2>
-    <p>
-      LLMs trained on internet-scale data have seen chess, Go, and every popular board game.
-      To test whether a model can actually <em>learn</em> strategy rather than recall it, we need
-      a game that doesn't exist in any training corpus.
-    </p>
-    <p>
-      GameBench uses <strong>DaveChess</strong>, a custom board game designed from scratch, paired
-      with an AlphaZero-trained engine that generates expert-level games as study material.
-      Each coding agent gets a token budget, the CLI interface, and GM game examples &mdash;
-      then autonomously learns to play.
-    </p>
 
-    <div class="concepts">
-      <div class="concept-card">
-        <div class="label">Novel Game</div>
-        <div class="title">Zero training contamination</div>
-        <div class="desc">DaveChess was invented for this benchmark. No LLM has seen it in pre-training data.</div>
+    <!-- Hero -->
+    <div class="hero animate-in">
+      <div class="hero-label">Leaderboard</div>
+      <h1>Can your AI agent learn a game it has never seen?</h1>
+      <p class="hero-sub">
+        GameBench measures how efficiently coding agents learn novel strategic reasoning
+        from examples, using DaveChess &mdash; a game absent from all training data.
+      </p>
+    </div>
+
+    <!-- Placeholder banner -->
+    <div class="banner animate-in delay-1">
+      <div class="banner-dot"></div>
+      Harness validation run &mdash; MCTSLite opponents (no trained NN). These results verify
+      the benchmark lifecycle, not real agent skill. Final results pending.
+    </div>
+
+    <!-- Summary stats -->
+    <div class="run-meta animate-in delay-2">
+      <div class="run-meta-item">
+        <div class="run-meta-label">Agents Tested</div>
+        <div class="run-meta-value">3</div>
       </div>
-      <div class="concept-card">
-        <div class="label">Agentic</div>
-        <div class="title">Autonomous learning loop</div>
-        <div class="desc">Agents study GM games, practice against opponents, develop strategy, and evaluate themselves &mdash; all autonomously.</div>
+      <div class="run-meta-item">
+        <div class="run-meta-label">Token Budget</div>
+        <div class="run-meta-value">500<span class="unit">K</span></div>
       </div>
-      <div class="concept-card">
-        <div class="label">Measured</div>
-        <div class="title">ELO via Glicko-2</div>
-        <div class="desc">Baseline ELO (before learning) vs final ELO (after learning). Gain = skill acquired from the token budget.</div>
+      <div class="run-meta-item">
+        <div class="run-meta-label">Total Games</div>
+        <div class="run-meta-value">17</div>
+      </div>
+      <div class="run-meta-item">
+        <div class="run-meta-label">Test Date</div>
+        <div class="run-meta-value" style="font-size:1.1rem">2026-02-09</div>
       </div>
     </div>
-  </div>
-</section>
 
-<!-- DaveChess -->
-<section>
+    <!-- Leaderboard -->
+    <div class="leaderboard animate-in delay-3">
+      <!-- Header -->
+      <div class="leaderboard-header">
+        <div>#</div>
+        <div>Agent</div>
+        <div>ELO Gain</div>
+        <div>Baseline</div>
+        <div>Final</div>
+        <div>Games</div>
+        <div>Status</div>
+      </div>
+
+      <!-- Row 1: Codex CLI -->
+      <div class="leaderboard-row" data-detail="detail-codex" onclick="toggleDetail(this)">
+        <div class="lb-rank gold">1</div>
+        <div class="lb-agent">
+          <div class="lb-agent-name">Codex CLI</div>
+          <div class="lb-agent-model">GPT &middot; v0.87.0 &middot; OpenAI</div>
+        </div>
+        <div class="lb-gain positive">+414</div>
+        <div class="lb-elo">692</div>
+        <div class="lb-elo">1,106</div>
+        <div class="lb-games">10 / 1</div>
+        <div class="lb-status done">Done</div>
+      </div>
+      <div class="detail-panel" id="detail-codex">
+        <div class="detail-inner">
+          <div class="detail-stats">
+            <div class="detail-stat">
+              <div class="detail-stat-label">CLI Calls</div>
+              <div class="detail-stat-value">2,246</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Tokens Used</div>
+              <div class="detail-stat-value">674K</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Tokens/Move</div>
+              <div class="detail-stat-value">~300</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Rating Deviation</div>
+              <div class="detail-stat-value">266</div>
+            </div>
+          </div>
+          <div class="detail-notes">
+            <h4>Approach</h4>
+            <p>
+              Wrote an inline Python automation script piped through PowerShell.
+              Always picked <code style="font-family:'JetBrains Mono',monospace;font-size:0.8rem;background:var(--bg);padding:1px 5px;border-radius:3px">legal_moves[0]</code>
+              (first legal move). Used conservative token reporting (200 prompt + 100 completion per move).
+            </p>
+            <div class="caveat">
+              The +414 gain is a measurement artifact. Two baseline losses pulled ELO to 692,
+              then a single eval draw against ELO 1204 jumped it to 1106. With only 1 eval game,
+              the rating deviation (266) makes this estimate highly uncertain.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 2: Claude Code -->
+      <div class="leaderboard-row" data-detail="detail-claude" onclick="toggleDetail(this)">
+        <div class="lb-rank silver">2</div>
+        <div class="lb-agent">
+          <div class="lb-agent-name">Claude Code</div>
+          <div class="lb-agent-model">Claude Opus 4.6 &middot; v2.1.37 &middot; Anthropic</div>
+        </div>
+        <div class="lb-gain negative">&minus;25</div>
+        <div class="lb-elo">969</div>
+        <div class="lb-elo">944</div>
+        <div class="lb-games">5 / 1</div>
+        <div class="lb-status done">Done</div>
+      </div>
+      <div class="detail-panel" id="detail-claude">
+        <div class="detail-inner">
+          <div class="detail-stats">
+            <div class="detail-stat">
+              <div class="detail-stat-label">CLI Calls</div>
+              <div class="detail-stat-value">357</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Tokens Used</div>
+              <div class="detail-stat-value">896K</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Tokens/Move</div>
+              <div class="detail-stat-value">~2,500</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Estimated Cost</div>
+              <div class="detail-stat-value">$0.80</div>
+            </div>
+          </div>
+          <div class="detail-notes">
+            <h4>Approach</h4>
+            <p>
+              Wrote a heuristic move-scoring function prioritizing captures, bombard attacks,
+              gold node control, forward movement, and piece development. Switched from
+              subprocess CLI calls to direct Python imports for speed. Hit a Git Bash path
+              bug and self-corrected autonomously.
+            </p>
+            <div class="caveat">
+              Over-reported tokens (2,500/move) burned through budget during baseline,
+              triggering early transition after only 5 of 10 baseline games.
+              Only 1 eval game was played, so the -25 ELO change is within noise.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 3: OpenCode -->
+      <div class="leaderboard-row" data-detail="detail-opencode" onclick="toggleDetail(this)">
+        <div class="lb-rank bronze">3</div>
+        <div class="lb-agent">
+          <div class="lb-agent-name">OpenCode</div>
+          <div class="lb-agent-model">gpt-5-nano (free) &middot; v1.1.53</div>
+        </div>
+        <div class="lb-gain dnf">DNF</div>
+        <div class="lb-elo muted">&mdash;</div>
+        <div class="lb-elo muted">&mdash;</div>
+        <div class="lb-games">0 / 0</div>
+        <div class="lb-status fail">DNF</div>
+      </div>
+      <div class="detail-panel" id="detail-opencode">
+        <div class="detail-inner">
+          <div class="detail-stats">
+            <div class="detail-stat">
+              <div class="detail-stat-label">CLI Calls</div>
+              <div class="detail-stat-value">6</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Tokens Used</div>
+              <div class="detail-stat-value">35K</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Moves Played</div>
+              <div class="detail-stat-value">6</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Completed</div>
+              <div class="detail-stat-value" style="color:var(--red)">No</div>
+            </div>
+          </div>
+          <div class="detail-notes">
+            <h4>Approach</h4>
+            <p>
+              Made individual CLI calls per move. Played 6 baseline moves then stopped to
+              ask for user confirmation instead of continuing autonomously.
+            </p>
+            <div class="caveat">
+              opencode run is single-turn &mdash; it exits after one model response instead
+              of looping. The benchmark requires 100+ CLI calls per run. Needs a --continue
+              wrapper or multi-turn mode for benchmark use.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /leaderboard -->
+
+  </div><!-- /container -->
+</div><!-- /tab-results -->
+
+<!-- ==================== METHODOLOGY TAB ==================== -->
+<div id="tab-methodology" class="tab-panel">
   <div class="container">
-    <h2>DaveChess</h2>
-    <p>
-      An original strategic board game on an 8&times;8 grid combining positional resource control
-      with tactical combat. Chess-style capture, pawn-like Warriors, and a promotion economy
-      create deep strategic play.
-    </p>
 
-    <div class="board-wrap">
+    <!-- Why GameBench -->
+    <div class="meth-section">
+      <h2>Why GameBench?</h2>
+      <p>
+        LLMs trained on internet-scale data have seen chess, Go, and every popular board game.
+        To test whether a model can actually <em>learn</em> strategy rather than recall it,
+        we need a game that doesn't exist in any training corpus.
+      </p>
+      <p>
+        GameBench uses <strong>DaveChess</strong>, a custom board game designed from scratch,
+        paired with an AlphaZero-trained engine that generates expert-level games as study material.
+        Each coding agent gets a token budget, a CLI interface, and GM game examples &mdash;
+        then autonomously learns to play.
+      </p>
+
+      <div class="concepts">
+        <div class="concept-card">
+          <div class="card-label">Novel Game</div>
+          <div class="card-title">Zero training contamination</div>
+          <div class="card-desc">DaveChess was invented for this benchmark. No LLM has seen it in pre-training data.</div>
+        </div>
+        <div class="concept-card">
+          <div class="card-label">Agentic</div>
+          <div class="card-title">Autonomous learning loop</div>
+          <div class="card-desc">Agents study GM games, practice against opponents, develop strategy, and evaluate &mdash; all autonomously.</div>
+        </div>
+        <div class="concept-card">
+          <div class="card-label">Measured</div>
+          <div class="card-title">ELO via Glicko-2</div>
+          <div class="card-desc">Baseline ELO (before learning) vs final ELO (after learning). Gain = skill acquired from the token budget.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DaveChess -->
+    <div class="meth-section">
+      <h2>DaveChess</h2>
+      <p>
+        An original strategic board game on an 8&times;8 grid combining positional resource control
+        with tactical combat. Chess-style capture, pawn-like Warriors, and a promotion economy
+        create deep strategic play.
+      </p>
+
+      <div class="board-wrap">
 <pre>    a   b   c   d   e   f   g   h
   +---+---+---+---+---+---+---+---+
 8 |   | r | b | r | c | r | b |   |  Black (lowercase)
@@ -376,7 +970,7 @@
   +---+---+---+---+---+---+---+---+
 5 |   |   |   | $ | $ |   |   |   |  $ = Gold nodes (resource income)
   +---+---+---+---+---+---+---+---+
-4 |   |   |   | $ | $ |   |   |   |  Control Gold &rarr; earn resources &rarr; promote pieces
+4 |   |   |   | $ | $ |   |   |   |  Control Gold = earn resources = promote pieces
   +---+---+---+---+---+---+---+---+
 3 |   |   |   |   |   |   |   |   |
   +---+---+---+---+---+---+---+---+
@@ -385,320 +979,215 @@
 1 |   | R | B | R | C | R | B |   |  12 pieces per side, no reinforcements
   +---+---+---+---+---+---+---+---+
     a   b   c   d   e   f   g   h</pre>
+      </div>
+
+      <h3>Pieces</h3>
+      <table class="piece-table">
+        <thead>
+          <tr><th>Piece</th><th>Symbol</th><th>Movement</th><th>Promotion Cost</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Commander</td><td>C</td><td>1 square, any direction (king-like)</td><td>&mdash;</td></tr>
+          <tr><td>Warrior</td><td>W</td><td>1 forward; captures diagonal-forward (pawn-like)</td><td>base piece</td></tr>
+          <tr><td>Rider</td><td>R</td><td>Up to 7 orthogonal / 3 diagonal (no jumping)</td><td>3 Gold</td></tr>
+          <tr><td>Bombard</td><td>B</td><td>1 square any direction + ranged attack at 2 squares</td><td>5 Gold</td></tr>
+          <tr><td>Lancer</td><td>L</td><td>Up to 7 squares any direction, can jump 1 piece</td><td>7 Gold</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Key Rules</h3>
+      <p>
+        <strong>Chess-style capture:</strong> attacker always takes the defender's square.
+        <strong>Checkmate wins.</strong> Turn 100 with no checkmate = draw.
+        Threefold repetition = draw. 50-move rule (no capture/promotion) = draw.
+      </p>
     </div>
 
-    <h3>Pieces</h3>
-    <table>
-      <thead>
-        <tr><th>Piece</th><th>Symbol</th><th>Move</th><th>Promotion Cost</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Commander</td><td>C</td><td>1 square, any direction (king-like)</td><td>&mdash;</td></tr>
-        <tr><td>Warrior</td><td>W</td><td>1 forward; captures diagonal-forward (pawn-like)</td><td>base piece</td></tr>
-        <tr><td>Rider</td><td>R</td><td>Up to 7 orthogonal / 3 diagonal (no jumping)</td><td>3 Gold</td></tr>
-        <tr><td>Bombard</td><td>B</td><td>1 square any direction + ranged attack at 2 squares</td><td>5 Gold</td></tr>
-        <tr><td>Lancer</td><td>L</td><td>Up to 7 squares any direction, can jump 1 piece</td><td>7 Gold</td></tr>
-      </tbody>
-    </table>
+    <!-- How It Works -->
+    <div class="meth-section">
+      <h2>How It Works</h2>
+      <p>
+        Each coding agent is launched in an isolated sandbox with only the benchmark CLI script
+        and GM game data. The agent reads the docs, creates a session, and drives the entire
+        benchmark autonomously via bash commands.
+      </p>
 
-    <h3>Key Rules</h3>
-    <p>
-      <strong>Chess-style capture:</strong> attacker always takes the defender's square.
-      <strong>Checkmate wins.</strong> Turn 100 with no checkmate = draw.
-      Threefold repetition = draw. 50-move rule (no capture/promotion) = draw.
-    </p>
-  </div>
-</section>
+      <h3>Session Lifecycle</h3>
+      <div class="lifecycle">
+        <div class="phase-box">
+          <div class="phase-name">Baseline</div>
+          <div class="phase-detail">Play rated games<br>with zero knowledge</div>
+        </div>
+        <span class="phase-arrow">&rarr;</span>
+        <div class="phase-box">
+          <div class="phase-name">Learning</div>
+          <div class="phase-detail">Study GM games<br>Practice matches</div>
+        </div>
+        <span class="phase-arrow">&rarr;</span>
+        <div class="phase-box">
+          <div class="phase-name">Evaluation</div>
+          <div class="phase-detail">Play rated games<br>to measure final ELO</div>
+        </div>
+        <span class="phase-arrow">&rarr;</span>
+        <div class="phase-box">
+          <div class="phase-name">Complete</div>
+          <div class="phase-detail">ELO gain =<br>final &minus; baseline</div>
+        </div>
+      </div>
 
-<!-- How it works -->
-<section>
-  <div class="container">
-    <h2>How It Works</h2>
-    <p>
-      Each coding agent (Claude Code, Codex CLI, Gemini CLI, etc.) is launched in an isolated
-      sandbox with only the benchmark CLI script and GM game data. The agent reads the docs,
-      creates a session, and drives the entire benchmark autonomously via bash commands.
-    </p>
+      <h3>What Agents Get</h3>
+      <div class="concepts">
+        <div class="concept-card">
+          <div class="card-label">CLI Interface</div>
+          <div class="card-title">agent_cli.py</div>
+          <div class="card-desc">Single Python script with all docs in the docstring. Commands: create, rules, study, practice, move, evaluate, result.</div>
+        </div>
+        <div class="concept-card">
+          <div class="card-label">Study Material</div>
+          <div class="card-title">GM Games (DCN notation)</div>
+          <div class="card-desc">Expert-level games generated by AlphaZero self-play. Agents study these to learn strategy.</div>
+        </div>
+        <div class="concept-card">
+          <div class="card-label">Budget</div>
+          <div class="card-title">Token budget</div>
+          <div class="card-desc">Fixed token budget (e.g. 500K). Every CLI call costs tokens. Agents must balance learning vs evaluation.</div>
+        </div>
+      </div>
 
-    <h3>Session Lifecycle</h3>
-    <div class="lifecycle">
-      <div class="phase-box">
-        <div class="name">Baseline</div>
-        <div class="detail">Play rated games<br>with zero knowledge</div>
-      </div>
-      <span class="phase-arrow">&rarr;</span>
-      <div class="phase-box">
-        <div class="name">Learning</div>
-        <div class="detail">Study GM games<br>Practice matches</div>
-      </div>
-      <span class="phase-arrow">&rarr;</span>
-      <div class="phase-box">
-        <div class="name">Evaluation</div>
-        <div class="detail">Play rated games<br>to measure final ELO</div>
-      </div>
-      <span class="phase-arrow">&rarr;</span>
-      <div class="phase-box">
-        <div class="name">Complete</div>
-        <div class="detail">ELO gain =<br>final &minus; baseline</div>
-      </div>
-    </div>
-
-    <h3>What Agents Get</h3>
-    <div class="concepts">
-      <div class="concept-card">
-        <div class="label">CLI Interface</div>
-        <div class="title">agent_cli.py</div>
-        <div class="desc">Single Python script with all docs in the docstring. Commands: create, rules, study, practice, move, evaluate, result.</div>
-      </div>
-      <div class="concept-card">
-        <div class="label">Study Material</div>
-        <div class="title">GM Games (DCN notation)</div>
-        <div class="desc">Expert-level games generated by AlphaZero self-play. Agents study these to learn strategy.</div>
-      </div>
-      <div class="concept-card">
-        <div class="label">Budget</div>
-        <div class="title">Token budget</div>
-        <div class="desc">Fixed token budget (e.g. 500K). Every CLI call costs tokens. Agents must balance learning vs evaluation.</div>
-      </div>
-    </div>
-
-    <h3>Running a Benchmark</h3>
-    <div class="code-block">
-<pre><span class="comment"># Launch Claude Code in sandbox</span>
+      <h3>Running a Benchmark</h3>
+      <div class="code-block">
+<pre><span class="cmt"># Launch Claude Code in sandbox</span>
 <span class="cmd">cd "$SANDBOX" && claude -p "Read scripts/agent_cli.py. \
   Run the full DaveChess benchmark..." \
   --allowedTools "Bash(run benchmark commands)" \
   --output-format stream-json --verbose</span>
 
-<span class="comment"># Launch Codex CLI in sandbox</span>
-<span class="cmd">cd "$SANDBOX" && codex exec --full-auto --json "Read scripts/agent_cli.py. \
-  Run the full DaveChess benchmark..."</span>
+<span class="cmt"># Launch Codex CLI in sandbox</span>
+<span class="cmd">cd "$SANDBOX" && codex exec --full-auto --json \
+  "Read scripts/agent_cli.py. Run the full DaveChess benchmark..."</span>
 
-<span class="comment"># Launch Gemini CLI in sandbox</span>
+<span class="cmt"># Launch Gemini CLI in sandbox</span>
 <span class="cmd">cd "$SANDBOX" && gemini -p "Read scripts/agent_cli.py. \
   Run the full DaveChess benchmark..." --yolo</span></pre>
-    </div>
-  </div>
-</section>
-
-<!-- Results -->
-<section id="results">
-  <div class="container">
-    <h2>Results</h2>
-    <div class="placeholder-badge">Placeholder &mdash; harness validation run (MCTSLite opponents, no trained NN)</div>
-
-    <div class="stats-row">
-      <div class="stat">
-        <div class="num">3</div>
-        <div class="label">Agents Tested</div>
-      </div>
-      <div class="stat">
-        <div class="num">500K</div>
-        <div class="label">Token Budget</div>
-      </div>
-      <div class="stat">
-        <div class="num">2,609</div>
-        <div class="label">Total CLI Calls</div>
-      </div>
-      <div class="stat">
-        <div class="num">17</div>
-        <div class="label">Games Played</div>
       </div>
     </div>
 
-    <div class="results-grid">
-      <!-- Claude Code -->
-      <div class="result-card">
-        <div class="agent-name">Claude Code</div>
-        <div class="agent-model">Claude Opus 4.6 &bull; v2.1.37</div>
-        <div class="elo-row">
-          <span class="elo-label">Baseline ELO</span>
-          <span class="elo-value">969</span>
-        </div>
-        <div class="elo-row">
-          <span class="elo-label">Final ELO</span>
-          <span class="elo-value">944</span>
-        </div>
-        <div class="elo-row">
-          <span class="elo-label">Games (base / eval)</span>
-          <span class="elo-value">5 / 1</span>
-        </div>
-        <div class="elo-row">
-          <span class="elo-label">CLI Calls</span>
-          <span class="elo-value">357</span>
-        </div>
-        <div class="elo-row">
-          <span class="elo-label">Approach</span>
-          <span class="elo-value" style="font-size:0.85rem">Heuristic scorer</span>
-        </div>
-        <div class="gain negative">&minus;25 ELO</div>
-      </div>
-
-      <!-- Codex CLI -->
-      <div class="result-card">
-        <div class="agent-name">Codex CLI</div>
-        <div class="agent-model">GPT &bull; v0.87.0</div>
-        <div class="elo-row">
-          <span class="elo-label">Baseline ELO</span>
-          <span class="elo-value">692</span>
-        </div>
-        <div class="elo-row">
-          <span class="elo-label">Final ELO</span>
-          <span class="elo-value">1,106</span>
-        </div>
-        <div class="elo-row">
-          <span class="elo-label">Games (base / eval)</span>
-          <span class="elo-value">10 / 1</span>
-        </div>
-        <div class="elo-row">
-          <span class="elo-label">CLI Calls</span>
-          <span class="elo-value">2,246</span>
-        </div>
-        <div class="elo-row">
-          <span class="elo-label">Approach</span>
-          <span class="elo-value" style="font-size:0.85rem">Always first legal move</span>
-        </div>
-        <div class="gain positive">+414 ELO</div>
-      </div>
-
-      <!-- OpenCode -->
-      <div class="result-card">
-        <div class="agent-name">OpenCode</div>
-        <div class="agent-model">gpt-5-nano (free) &bull; v1.1.53</div>
-        <div class="elo-row">
-          <span class="elo-label">Baseline ELO</span>
-          <span class="elo-value">&mdash;</span>
-        </div>
-        <div class="elo-row">
-          <span class="elo-label">Final ELO</span>
-          <span class="elo-value">&mdash;</span>
-        </div>
-        <div class="elo-row">
-          <span class="elo-label">Games (base / eval)</span>
-          <span class="elo-value">0 / 0</span>
-        </div>
-        <div class="elo-row">
-          <span class="elo-label">CLI Calls</span>
-          <span class="elo-value">6</span>
-        </div>
-        <div class="elo-row">
-          <span class="elo-label">Approach</span>
-          <span class="elo-value" style="font-size:0.85rem">Single-turn (stopped)</span>
-        </div>
-        <div class="gain neutral">DNF</div>
-      </div>
+    <!-- Supported Agents -->
+    <div class="meth-section">
+      <h2>Supported Agents</h2>
+      <p>
+        GameBench works with any coding agent that has a non-interactive mode and can run bash commands.
+      </p>
+      <table class="agents-table">
+        <thead>
+          <tr><th>Agent</th><th>Non-interactive Command</th><th>Auto-approve</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Claude Code</td>
+            <td><code>claude -p "prompt"</code></td>
+            <td><code>--allowedTools "Bash(...)"</code></td>
+            <td class="status-tested">Tested</td>
+          </tr>
+          <tr>
+            <td>Codex CLI</td>
+            <td><code>codex exec "prompt"</code></td>
+            <td><code>--full-auto</code></td>
+            <td class="status-tested">Tested</td>
+          </tr>
+          <tr>
+            <td>Gemini CLI</td>
+            <td><code>gemini -p "prompt"</code></td>
+            <td><code>--yolo</code></td>
+            <td class="status-untested">Untested</td>
+          </tr>
+          <tr>
+            <td>OpenCode</td>
+            <td><code>opencode run "prompt"</code></td>
+            <td>default (auto)</td>
+            <td class="status-limited">Single-turn only</td>
+          </tr>
+          <tr>
+            <td>Goose</td>
+            <td><code>goose run -t "prompt"</code></td>
+            <td>&mdash;</td>
+            <td class="status-planned">Planned</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
-    <h3>Notes on Placeholder Results</h3>
-    <p>
-      These results are from a harness validation run using MCTSLite opponents (random rollouts,
-      no trained neural network). Most games end in draws at the 100-turn limit. ELO numbers
-      are not meaningful &mdash; real results require NN-trained opponents that produce decisive games.
-    </p>
-    <p>
-      Codex CLI's +414 ELO gain is a measurement artifact: its baseline ELO was pulled low by
-      two losses (692), then a single eval draw against ELO 1204 jumped it to 1106. With only
-      1 eval game, the rating deviation is 267 (very uncertain).
-    </p>
-    <p>
-      OpenCode's <code>run</code> mode is single-turn &mdash; it exits after one model response
-      instead of looping autonomously. This requires a wrapper script or the <code>--continue</code>
-      flag for benchmark use.
-    </p>
-  </div>
-</section>
+    <!-- Technical Details -->
+    <div class="meth-section">
+      <h2>Technical Details</h2>
 
-<!-- Tested Agents -->
-<section>
-  <div class="container">
-    <h2>Supported Agents</h2>
-    <p>
-      GameBench works with any coding agent that has a non-interactive mode and can run bash commands.
-    </p>
-    <table>
-      <thead>
-        <tr><th>Agent</th><th>Non-interactive Command</th><th>Auto-approve</th><th>Status</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Claude Code</td>
-          <td><code>claude -p "prompt"</code></td>
-          <td><code>--allowedTools "Bash(...)"</code></td>
-          <td style="color:var(--green)">Tested</td>
-        </tr>
-        <tr>
-          <td>Codex CLI</td>
-          <td><code>codex exec "prompt"</code></td>
-          <td><code>--full-auto</code></td>
-          <td style="color:var(--green)">Tested</td>
-        </tr>
-        <tr>
-          <td>Gemini CLI</td>
-          <td><code>gemini -p "prompt"</code></td>
-          <td><code>--yolo</code></td>
-          <td style="color:var(--gold)">Untested</td>
-        </tr>
-        <tr>
-          <td>OpenCode</td>
-          <td><code>opencode run "prompt"</code></td>
-          <td>default (auto)</td>
-          <td style="color:var(--orange)">Single-turn only</td>
-        </tr>
-        <tr>
-          <td>Goose</td>
-          <td><code>goose run -t "prompt"</code></td>
-          <td>&mdash;</td>
-          <td style="color:var(--text-dim)">Planned</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-</section>
+      <h3>AlphaZero Engine</h3>
+      <p>
+        DaveChess strategy is learned via AlphaZero self-play training on a Jetson Orin Nano.
+        The engine uses a 20-block, 256-filter ResNet (~24M parameters) with PUCT MCTS
+        (4 CPU workers + GPU inference). Self-play games serve as the "GM games" that
+        benchmark agents study to learn strategy.
+      </p>
 
-<!-- Technical -->
-<section>
-  <div class="container">
-    <h2>Technical Details</h2>
+      <h3>Opponent Calibration</h3>
+      <p>
+        Opponents are MCTS agents at varying simulation counts, calibrated via round-robin
+        Glicko-2 tournament. The opponent pool maps ELO to simulation count using log-space
+        interpolation, providing opponents at any difficulty level.
+      </p>
 
-    <h3>AlphaZero Engine</h3>
-    <p>
-      DaveChess strategy is learned via AlphaZero self-play training on a Jetson Orin Nano.
-      The engine uses a 20-block, 256-filter ResNet (~24M parameters) with PUCT MCTS
-      (4 CPU workers + GPU inference). Self-play games serve as the "GM games" that
-      benchmark agents study to learn strategy.
-    </p>
+      <h3>Rating System</h3>
+      <p>
+        Glicko-2 sequential testing with adaptive opponent selection (opponents chosen near
+        the agent's current estimated ELO for maximum information gain). Convergence when
+        rating deviation drops below threshold.
+      </p>
 
-    <h3>Opponent Calibration</h3>
-    <p>
-      Opponents are MCTS agents at varying simulation counts, calibrated via round-robin
-      Glicko-2 tournament. The opponent pool maps ELO to simulation count using log-space
-      interpolation, providing opponents at any difficulty level.
-    </p>
+      <h3>Sandbox Isolation</h3>
+      <p>
+        Agents run in an isolated directory containing only <code style="font-family:'JetBrains Mono',monospace;font-size:0.85rem;background:var(--bg);padding:1px 5px;border-radius:3px">agent_cli.py</code> and
+        GM game files. They cannot access the game engine source code, opponent logic, or
+        rules implementation &mdash; they must learn entirely from the CLI docs and game examples.
+      </p>
+    </div>
 
-    <h3>Rating System</h3>
-    <p>
-      Glicko-2 sequential testing with adaptive opponent selection (opponents chosen near
-      the agent's current estimated ELO for maximum information gain). Convergence when
-      rating deviation drops below threshold.
-    </p>
-
-    <h3>Sandbox Isolation</h3>
-    <p>
-      Agents run in an isolated directory containing only <code>agent_cli.py</code> and
-      GM game files. They cannot access the game engine source code, opponent logic, or
-      rules implementation &mdash; they must learn entirely from the CLI docs and game examples.
-    </p>
-  </div>
-</section>
+  </div><!-- /container -->
+</div><!-- /tab-methodology -->
 
 <footer>
   <div class="container">
-    <p>
-      GameBench &mdash; <a href="https://github.com/davidrimshnick/GameBench">GitHub</a>
-      &bull; MIT License
-    </p>
+    <a href="https://github.com/davidrimshnick/GameBench">GameBench</a> &middot; MIT License
   </div>
 </footer>
+
+<script>
+  // Tab switching
+  document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+      document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // Detail panel toggle
+  function toggleDetail(row) {
+    var id = row.getAttribute('data-detail');
+    var panel = document.getElementById(id);
+    var wasOpen = panel.classList.contains('open');
+
+    // Close all
+    document.querySelectorAll('.detail-panel').forEach(function(p) { p.classList.remove('open'); });
+    document.querySelectorAll('.leaderboard-row').forEach(function(r) { r.classList.remove('expanded'); });
+
+    // Toggle
+    if (!wasOpen) {
+      panel.classList.add('open');
+      row.classList.add('expanded');
+    }
+  }
+</script>
 
 </body>
 </html>
