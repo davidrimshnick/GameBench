@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 
-from davechess.game.state import GameState, Piece, Player, MoveStep, Deploy, BombardAttack, PieceType
+from davechess.game.state import GameState, Piece, Player, MoveStep, Promote, BombardAttack, PieceType
 from davechess.engine.network import (
     state_to_planes, move_to_policy_index, policy_index_to_move,
     POLICY_SIZE, BOARD_SIZE,
@@ -40,13 +40,13 @@ class TestStateToPlanes:
         """Current player's pieces should be on planes 0-4, opponent on 5-9."""
         state = GameState()
         planes = state_to_planes(state)
-        # White Commander at (0, 3) - should be on plane 0 (Commander)
-        assert planes[0, 0, 3] == 1.0
-        # White Warriors at (0, 2) and (0, 5)
+        # White Commander at (0, 4) - should be on plane 0 (Commander)
+        assert planes[0, 0, 4] == 1.0
+        # White Warriors at (0, 2) and (0, 6)
         assert planes[1, 0, 2] == 1.0
-        assert planes[1, 0, 5] == 1.0
-        # Black Commander at (7, 3) - opponent, plane 5
-        assert planes[5, 7, 3] == 1.0
+        assert planes[1, 0, 6] == 1.0
+        # Black Commander at (7, 4) - opponent, plane 5
+        assert planes[5, 7, 4] == 1.0
 
 
 class TestMoveEncoding:
@@ -56,8 +56,8 @@ class TestMoveEncoding:
         idx = move_to_policy_index(move)
         assert 0 <= idx < POLICY_SIZE
 
-    def test_deploy_encoding(self):
-        move = Deploy(PieceType.WARRIOR, (0, 3))
+    def test_promote_encoding(self):
+        move = Promote((0, 3), PieceType.RIDER)
         idx = move_to_policy_index(move)
         assert 0 <= idx < POLICY_SIZE
 
@@ -66,8 +66,8 @@ class TestMoveEncoding:
         idx = move_to_policy_index(move)
         assert 0 <= idx < POLICY_SIZE
 
-    def test_lancer_deploy_encoding(self):
-        move = Deploy(PieceType.LANCER, (0, 3))
+    def test_lancer_promote_encoding(self):
+        move = Promote((0, 3), PieceType.LANCER)
         idx = move_to_policy_index(move)
         assert 0 <= idx < POLICY_SIZE
 
@@ -94,7 +94,7 @@ class TestMoveEncoding:
         """Different moves should map to different indices."""
         m1 = MoveStep((3, 3), (4, 3))
         m2 = MoveStep((3, 3), (3, 4))
-        m3 = Deploy(PieceType.WARRIOR, (0, 3))
+        m3 = Promote((0, 3), PieceType.RIDER)
         m4 = BombardAttack((3, 3), (5, 3))
         indices = {move_to_policy_index(m) for m in [m1, m2, m3, m4]}
         assert len(indices) == 4
@@ -104,20 +104,20 @@ class TestMoveEncoding:
         state = GameState()
 
         # Simple move
-        move = MoveStep((0, 2), (1, 2))
+        move = MoveStep((1, 2), (2, 2))
         idx = move_to_policy_index(move)
         recovered = policy_index_to_move(idx, state)
         assert isinstance(recovered, MoveStep)
         assert recovered.from_rc == move.from_rc
         assert recovered.to_rc == move.to_rc
 
-        # Deploy
-        move = Deploy(PieceType.WARRIOR, (0, 0))
+        # Promotion
+        move = Promote((0, 2), PieceType.RIDER)
         idx = move_to_policy_index(move)
         recovered = policy_index_to_move(idx, state)
-        assert isinstance(recovered, Deploy)
-        assert recovered.piece_type == move.piece_type
-        assert recovered.to_rc == move.to_rc
+        assert isinstance(recovered, Promote)
+        assert recovered.to_type == move.to_type
+        assert recovered.from_rc == move.from_rc
 
 
 # Only run torch-dependent tests if torch is available

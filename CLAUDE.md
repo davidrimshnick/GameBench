@@ -95,9 +95,9 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 ### Game State Representation
 
 - **Board**: 8x8 grid stored as `state.board[row][col]` containing `Piece` objects
-- **Nodes**: 4 Gold nodes (give resource income) at (3,3), (3,4), (4,3), (4,4)
+- **Nodes**: 4 Gold nodes (give resource income for promotion) at (3,3), (3,4), (4,3), (4,4)
 - **Neural Network Input**: 14 planes (5 piece types × 2 players + gold nodes + player + 2 resources) via `state_to_planes()`
-- **Move Encoding**: Policy size of 2816 (64×44 move slots per square) via `move_to_policy_index()`
+- **Move Encoding**: Policy size of 2816 (64×44 move slots per square) via `move_to_policy_index()`. Slots 40-42 = promotion targets (R, B, L).
 
 ### Critical Game Rules
 
@@ -105,12 +105,13 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 1. **Capture (Chess-style)**: Any piece can capture any piece by moving onto it. Attacker always takes the defender's square — no strength comparison. Enables sacrifices, forks, pins, and tactical depth.
 2. **Commander Safety**: Must resolve check immediately (move/block/capture). Cannot make a move that leaves own Commander in check.
-3. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player, excluding resources) = draw. 50-move rule: 50 moves per side (100 halfmoves) with no capture or deploy = draw.
+3. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player, excluding resources) = draw. 50-move rule: 50 moves per side (100 halfmoves) with no capture or promotion = draw.
 4. **Piece Types**: Commander (C), Warrior (W, pawn-like), Rider (R, up to 2 squares any direction), Bombard (B, 1 sq move + ranged attack), Lancer (L, diagonal up to 4 squares with jump)
-5. **Deploy Costs**: W=2, R=3, B=4, L=5
-6. **Warrior Movement**: Forward only (like chess pawns). Captures diagonal-forward only. White Warriors move toward row 8, Black toward row 1. No retreat, no sideways movement.
-7. **Bombard**: 1 square movement any direction. Ranged attack at exactly 2 squares (straight line, clear path). Stays in place when attacking. Can't use ranged attack against Commander.
-8. **Lancer**: Moves diagonally up to 4 squares, can jump over exactly one piece (any color)
+5. **Promotion Costs**: R=5, B=7, L=9. No deployment — pieces promote in place by spending Gold resources.
+6. **Starting Army**: 12 pieces per side — 1 Commander, 2 Riders, 1 Bombard, 8 Warriors. No new pieces are ever added.
+7. **Warrior Movement**: Forward only (like chess pawns). Captures diagonal-forward only. White Warriors move toward row 8, Black toward row 1. No retreat, no sideways movement.
+8. **Bombard**: 1 square movement any direction. Ranged attack at exactly 2 squares (straight line, clear path). Stays in place when attacking. Can't use ranged attack against Commander.
+9. **Lancer**: Moves diagonally up to 4 squares, can jump over exactly one piece (any color)
 
 ### Known Issues & Solutions
 

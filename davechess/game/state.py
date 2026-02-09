@@ -34,12 +34,12 @@ PIECE_CHARS = {
 }
 PIECE_NAMES = {v: k for k, v in PIECE_CHARS.items()}
 
-# Deploy cost per piece type (Commander cannot be deployed)
-DEPLOY_COST = {
-    PieceType.WARRIOR: 2,
-    PieceType.RIDER: 3,
-    PieceType.BOMBARD: 4,
-    PieceType.LANCER: 5,
+# Promotion cost per target type (spend resources to upgrade a piece in place)
+# Commander cannot be a promotion target. Warriors are the base unit.
+PROMOTION_COST = {
+    PieceType.RIDER: 5,
+    PieceType.BOMBARD: 7,
+    PieceType.LANCER: 9,
 }
 
 
@@ -85,18 +85,18 @@ class MoveStep(Move):
 
 
 @dataclass
-class Deploy(Move):
-    """Deploy a new piece onto the board."""
-    piece_type: PieceType
-    to_rc: tuple[int, int]
+class Promote(Move):
+    """Promote a piece to a higher-cost type in place."""
+    from_rc: tuple[int, int]
+    to_type: PieceType
 
     def __eq__(self, other):
-        if not isinstance(other, Deploy):
+        if not isinstance(other, Promote):
             return NotImplemented
-        return self.piece_type == other.piece_type and self.to_rc == other.to_rc
+        return self.from_rc == other.from_rc and self.to_type == other.to_type
 
     def __hash__(self):
-        return hash(("deploy", self.piece_type, self.to_rc))
+        return hash(("promote", self.from_rc, self.to_type))
 
 
 @dataclass

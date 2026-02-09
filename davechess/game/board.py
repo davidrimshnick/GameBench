@@ -18,22 +18,39 @@ RESOURCE_NODES = ALL_NODES
 
 # Starting positions: dict mapping (row, col) -> (piece_type_char, player)
 # White on rows 0-1 (bottom), Black on rows 6-7 (top)
-# Symmetrical layout: Commander center, Warriors flanking, Rider on wing
+# 12 pieces per side: 1 Commander, 2 Riders, 1 Bombard, 8 Warriors
+# Back rank: officers. Front rank: Warrior screen.
 STARTING_POSITIONS: dict[tuple[int, int], tuple[str, int]] = {
     # White (player 0) - rows 0-1
+    # Row 0 (back rank): R W B C R W (officers spread across center)
+    (0, 1): ("R", 0),
     (0, 2): ("W", 0),
-    (0, 3): ("C", 0),
-    (0, 4): ("R", 0),
-    (0, 5): ("W", 0),
-    (1, 3): ("W", 0),  # defensive screen
-    (1, 4): ("W", 0),  # defensive screen
-    # Black (player 1) - rows 6-7 (mirrors White's layout)
+    (0, 3): ("B", 0),
+    (0, 4): ("C", 0),
+    (0, 5): ("R", 0),
+    (0, 6): ("W", 0),
+    # Row 1 (front rank): 6 Warriors as pawn screen
+    (1, 1): ("W", 0),
+    (1, 2): ("W", 0),
+    (1, 3): ("W", 0),
+    (1, 4): ("W", 0),
+    (1, 5): ("W", 0),
+    (1, 6): ("W", 0),
+    # Black (player 1) - rows 6-7 (mirrors White)
+    # Row 7 (back rank): mirrored
+    (7, 1): ("R", 1),
     (7, 2): ("W", 1),
-    (7, 3): ("C", 1),
-    (7, 4): ("R", 1),
-    (7, 5): ("W", 1),
-    (6, 3): ("W", 1),  # defensive screen
-    (6, 4): ("W", 1),  # defensive screen
+    (7, 3): ("B", 1),
+    (7, 4): ("C", 1),
+    (7, 5): ("R", 1),
+    (7, 6): ("W", 1),
+    # Row 6 (front rank): 6 Warriors as pawn screen
+    (6, 1): ("W", 1),
+    (6, 2): ("W", 1),
+    (6, 3): ("W", 1),
+    (6, 4): ("W", 1),
+    (6, 5): ("W", 1),
+    (6, 6): ("W", 1),
 }
 
 # Column labels for notation

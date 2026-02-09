@@ -14,19 +14,23 @@ An original strategic board game on an 8x8 grid combining positional resource co
 
 ### Board & Setup
 
-Each side starts with 6 pieces on their back two rows: a Commander (king), 4 Warriors (infantry), and a Rider (cavalry). The board has 4 **Gold nodes** ($) in the center at fixed symmetric positions — control these for resource income.
+Each side starts with 12 pieces on their back two rows: 1 Commander (king), 2 Riders (cavalry), 1 Bombard (artillery), and 8 Warriors (infantry). The board has 4 **Gold nodes** ($) in the center at fixed symmetric positions — control these for resource income.
 
-### Resources & Deployment
+### Resources & Promotion
 
-Each turn, you earn **+1 resource for each Gold node you have a piece on or adjacent to** (orthogonally). You spend resources to **deploy new pieces** onto empty squares in your back two rows. This is the core economic loop: control Gold nodes → earn resources → deploy reinforcements → control more territory.
+Each turn, you earn **+1 resource for each Gold node you have a piece directly on**. You spend resources to **promote pieces** — upgrading them in place to a stronger type. This is the core economic loop: control Gold nodes → earn resources → promote pieces → strengthen your army.
 
-| Piece | Symbol | Deploy Cost | Move | Capture |
-|-------|--------|-------------|------|---------|
-| Commander | C | starts on board | 1 square, any direction | Same as move |
-| Warrior | W | 2 | 1 square forward | 1 square diagonal-forward |
-| Rider | R | 3 | Up to 2 squares, any straight line (no jumping) | Same as move |
-| Bombard | B | 4 | 1 square, any direction | Melee: same as move. Ranged: exactly 2 squares, straight line, clear path (stays in place, cannot target Commanders) |
-| Lancer | L | 5 | Up to 4 squares, diagonal only, can jump one piece | Same as move |
+| Piece | Symbol | Promotion Cost | Move | Capture |
+|-------|--------|----------------|------|---------|
+| Commander | C | cannot promote | 1 square, any direction | Same as move |
+| Warrior | W | base piece | 1 square forward | 1 square diagonal-forward |
+| Rider | R | 5 | Up to 2 squares, any straight line (no jumping) | Same as move |
+| Bombard | B | 7 | 1 square, any direction | Melee: same as move. Ranged: exactly 2 squares, straight line, clear path (stays in place, cannot target Commanders) |
+| Lancer | L | 9 | Up to 4 squares, diagonal only, can jump one piece | Same as move |
+
+### Promotion
+
+Spend resources to upgrade any non-Commander piece to a higher type, in place. The piece stays on its square and changes type. Cost = full price of the target type. Any piece can promote to Rider (5), Bombard (7), or Lancer (9). Commanders cannot promote. No new pieces are ever deployed — what you start with is all you get.
 
 ### Capture
 
@@ -36,7 +40,7 @@ Each turn, you earn **+1 resource for each Gold node you have a piece on or adja
 
 **Bombard ranged attack:** attacks at exactly 2 squares distance (straight line, clear path). Target is removed; Bombard stays put. Cannot target Commanders with ranged attacks.
 
-**Lancer:** Diagonal-only piece that can jump over exactly one piece (friend or foe) in its path, similar to a limited bishop with jumping. At deploy cost 5, the Lancer is a powerful late-game attacker.
+**Lancer:** Diagonal-only piece that can jump over exactly one piece (friend or foe) in its path, similar to a limited bishop with jumping. At promotion cost 9, the Lancer is a powerful late-game attacker.
 
 ### Check & Checkmate
 
@@ -47,12 +51,12 @@ If your Commander is under attack, you **must** resolve it (move, block, or capt
 1. **Checkmate** opponent's Commander → you win
 2. **Turn 100** with no checkmate → draw
 3. **Threefold repetition** of the same board position → draw
-4. **50-move rule**: 50 moves per side with no capture or deploy → draw
+4. **50-move rule**: 50 moves per side with no capture or promotion → draw
 
 ### Turn Structure
 
 1. Gain resources from controlled Gold nodes
-2. Take one action: **move** a piece OR **deploy** a new piece
+2. Take one action: **move** a piece OR **promote** a piece
 
 ## Agentic Benchmark
 

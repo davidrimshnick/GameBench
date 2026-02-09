@@ -8,7 +8,7 @@ from typing import Optional, Tuple
 import random
 import math
 
-from davechess.game.state import GameState, Player, PieceType, Move, MoveStep, Deploy
+from davechess.game.state import GameState, Player, PieceType, Move, MoveStep, Promote
 from davechess.game.board import GOLD_NODES
 from davechess.game.rules import generate_legal_moves, apply_move, check_winner
 

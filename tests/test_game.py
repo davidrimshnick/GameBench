@@ -3,8 +3,8 @@
 import pytest
 
 from davechess.game.state import (
-    GameState, Player, PieceType, Piece, Move, MoveStep, Deploy, BombardAttack,
-    PIECE_CHARS, DEPLOY_COST,
+    GameState, Player, PieceType, Piece, Move, MoveStep, Promote, BombardAttack,
+    PIECE_CHARS, PROMOTION_COST,
 )
 from davechess.game.rules import (
     generate_legal_moves, apply_move, check_winner,
@@ -36,8 +36,8 @@ class TestBoard:
         """Verify starting positions are correct."""
         white_pieces = [(r, c, pt) for (r, c), (pt, p) in STARTING_POSITIONS.items() if p == 0]
         black_pieces = [(r, c, pt) for (r, c), (pt, p) in STARTING_POSITIONS.items() if p == 1]
-        assert len(white_pieces) == 6  # C + 4W + R
-        assert len(black_pieces) == 6
+        assert len(white_pieces) == 12  # 1C + 2R + 1B + 8W
+        assert len(black_pieces) == 12
 
     def test_notation_conversion(self):
         assert rc_to_notation(0, 0) == "a1"
@@ -75,14 +75,14 @@ class TestGameState:
 
     def test_starting_pieces(self):
         state = GameState()
-        # White Commander at d1 (row 0, col 3)
-        piece = state.get_piece_at(0, 3)
+        # White Commander at e1 (row 0, col 4)
+        piece = state.get_piece_at(0, 4)
         assert piece is not None
         assert piece.piece_type == PieceType.COMMANDER
         assert piece.player == Player.WHITE
 
-        # Black Commander at d8 (row 7, col 3)
-        piece = state.get_piece_at(7, 3)
+        # Black Commander at e8 (row 7, col 4)
+        piece = state.get_piece_at(7, 4)
         assert piece is not None
         assert piece.piece_type == PieceType.COMMANDER
         assert piece.player == Player.BLACK
@@ -239,24 +239,27 @@ class TestLegalMoves:
         assert (4, 3) not in destinations  # Blocked by friendly
         assert (5, 3) not in destinations  # Can't jump
 
-    def test_deploy_moves(self):
-        """Can deploy pieces on back 2 rows when affordable."""
+    def test_promotion_moves(self):
+        """Can promote pieces when affordable."""
         state = GameState()
         state.resources[0] = 10  # White has enough
         moves = generate_legal_moves(state)
-        deploy_moves = [m for m in moves if isinstance(m, Deploy)]
-        assert len(deploy_moves) > 0
-        # All deploys should be on rows 0-1 for white
-        for m in deploy_moves:
-            assert m.to_rc[0] in (0, 1)
+        promote_moves = [m for m in moves if isinstance(m, Promote)]
+        assert len(promote_moves) > 0
+        # All promotions should be on squares with friendly pieces
+        for m in promote_moves:
+            r, c = m.from_rc
+            piece = state.board[r][c]
+            assert piece is not None
+            assert piece.player == Player.WHITE
 
-    def test_no_deploy_without_resources(self):
-        """Cannot deploy without enough resources."""
+    def test_no_promotion_without_resources(self):
+        """Cannot promote without enough resources."""
         state = GameState()
         state.resources[0] = 0
         moves = generate_legal_moves(state)
-        deploy_moves = [m for m in moves if isinstance(m, Deploy)]
-        assert len(deploy_moves) == 0
+        promote_moves = [m for m in moves if isinstance(m, Promote)]
+        assert len(promote_moves) == 0
 
     def test_bombard_ranged_attack(self):
         """Bombard can attack at exactly 2 squares with clear path."""
@@ -347,21 +350,21 @@ class TestLegalMoves:
         assert (6, 6) not in destinations
         assert (7, 7) not in destinations
 
-    def test_lancer_deploy(self):
-        """Can deploy Lancer with enough resources."""
+    def test_promote_to_lancer(self):
+        """Can promote a piece to Lancer with enough resources."""
         state = GameState()
-        state.resources[0] = 5  # Lancer costs 5
+        state.resources[0] = 9  # Lancer costs 9
         moves = generate_legal_moves(state)
-        lancer_deploys = [m for m in moves if isinstance(m, Deploy) and m.piece_type == PieceType.LANCER]
-        assert len(lancer_deploys) > 0
+        lancer_promotes = [m for m in moves if isinstance(m, Promote) and m.to_type == PieceType.LANCER]
+        assert len(lancer_promotes) > 0
 
-    def test_lancer_no_deploy_insufficient_resources(self):
-        """Cannot deploy Lancer with fewer than 5 resources."""
+    def test_no_promote_to_lancer_insufficient_resources(self):
+        """Cannot promote to Lancer with fewer than 9 resources."""
         state = GameState()
-        state.resources[0] = 4
+        state.resources[0] = 8
         moves = generate_legal_moves(state)
-        lancer_deploys = [m for m in moves if isinstance(m, Deploy) and m.piece_type == PieceType.LANCER]
-        assert len(lancer_deploys) == 0
+        lancer_promotes = [m for m in moves if isinstance(m, Promote) and m.to_type == PieceType.LANCER]
+        assert len(lancer_promotes) == 0
 
     def test_bombard_blocked_path(self):
         """Bombard ranged attack blocked by piece in between."""
@@ -499,9 +502,9 @@ class TestWinConditions:
 class TestNotation:
     def test_move_notation(self):
         state = GameState()
-        move = MoveStep((0, 2), (1, 2))
+        move = MoveStep((1, 2), (2, 2))
         dcn = move_to_dcn(state, move)
-        assert dcn == "Wc1-c2"
+        assert dcn == "Wc2-c3"
 
     def test_capture_notation(self):
         state = GameState()
@@ -513,11 +516,12 @@ class TestNotation:
         dcn = move_to_dcn(state, move)
         assert dcn == "Rd4xe4"
 
-    def test_deploy_notation(self):
+    def test_promote_notation(self):
         state = GameState()
-        move = Deploy(PieceType.WARRIOR, (0, 0))
+        state.board[0][0] = Piece(PieceType.WARRIOR, Player.WHITE)
+        move = Promote((0, 0), PieceType.RIDER)
         dcn = move_to_dcn(state, move)
-        assert dcn == "+W@a1"
+        assert dcn == "Wa1>R"
 
     def test_bombard_notation(self):
         state = GameState()
@@ -539,11 +543,11 @@ class TestNotation:
         assert isinstance(move, MoveStep)
         assert move.is_capture
 
-    def test_parse_deploy(self):
-        move = dcn_to_move("+W@c2")
-        assert isinstance(move, Deploy)
-        assert move.piece_type == PieceType.WARRIOR
-        assert move.to_rc == (1, 2)
+    def test_parse_promote(self):
+        move = dcn_to_move("Wa1>R")
+        assert isinstance(move, Promote)
+        assert move.to_type == PieceType.RIDER
+        assert move.from_rc == (0, 0)
 
     def test_parse_bombard(self):
         move = dcn_to_move("Bd4~d6")
@@ -553,7 +557,7 @@ class TestNotation:
 
     def test_notation_roundtrip(self):
         """Parse then emit should produce identical string."""
-        cases = ["Wc1-c2", "Rd4xe4", "+W@c2", "Bd4~d6", "+R@a1", "+B@h2", "Ld4-g7", "+L@a1"]
+        cases = ["Wc1-c2", "Rd4xe4", "Wa1>R", "Bd4~d6", "Wb2>B", "Ld4-g7", "Rc1>L"]
         for dcn_str in cases:
             move = dcn_to_move(dcn_str)
             # Need a state with appropriate piece for emission
@@ -566,16 +570,20 @@ class TestNotation:
             elif isinstance(move, BombardAttack):
                 fr, fc = move.from_rc
                 state.board[fr][fc] = Piece(PieceType.BOMBARD, Player.WHITE)
+            elif isinstance(move, Promote):
+                fr, fc = move.from_rc
+                piece_char = dcn_str[0]
+                state.board[fr][fc] = Piece(PIECE_CHARS[piece_char], Player.WHITE)
             result = move_to_dcn(state, move)
             assert result == dcn_str, f"Expected {dcn_str}, got {result}"
 
     def test_game_to_dcn_roundtrip(self):
         """Full game serialization roundtrip."""
         state = GameState()
-        move1 = MoveStep((0, 2), (1, 2))  # Wc1-c2
+        move1 = MoveStep((1, 2), (2, 2))  # Wc2-c3
         pairs = [(state.clone(), move1)]
         apply_move(state, move1)
-        move2 = MoveStep((7, 5), (6, 5))  # Black Wf8-f7
+        move2 = MoveStep((6, 5), (5, 5))  # Black Wf7-f6
         pairs.append((state.clone(), move2))
 
         dcn_text = game_to_dcn(pairs, headers={"White": "Test", "Black": "Test"},
@@ -605,16 +613,15 @@ class TestResourceIncome:
         income = get_resource_income(state, Player.WHITE)
         assert income >= 1
 
-    def test_piece_adjacent_to_node(self):
-        """Piece orthogonally adjacent to resource node gives +1."""
+    def test_piece_adjacent_to_node_no_income(self):
+        """Piece orthogonally adjacent (but NOT on) a node gives no income."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
-        r, c = RESOURCE_NODES[0]
-        # Place adjacent
-        if r + 1 < 8:
-            state.board[r + 1][c] = Piece(PieceType.WARRIOR, Player.WHITE)
-            income = get_resource_income(state, Player.WHITE)
-            assert income >= 1
+        # Gold nodes are at (3,3),(3,4),(4,3),(4,4). Place at (2,3) — adjacent to (3,3)
+        # but not on any Gold node.
+        state.board[2][3] = Piece(PieceType.WARRIOR, Player.WHITE)
+        income = get_resource_income(state, Player.WHITE)
+        assert income == 0
 
 
 class TestDeterminism:
@@ -629,22 +636,26 @@ class TestDeterminism:
 
 
 class TestEdgeCases:
-    def test_deploy_on_occupied_square(self):
-        """Cannot deploy on occupied square."""
-        state = GameState()
-        state.resources[0] = 10
-        moves = generate_legal_moves(state)
-        deploy_moves = [m for m in moves if isinstance(m, Deploy)]
-        # All deploy targets should be empty
-        for m in deploy_moves:
-            r, c = m.to_rc
-            assert state.board[r][c] is None
-
-    def test_commander_not_deployable(self):
-        """Commander should never appear in deploy moves."""
+    def test_commander_not_promotable(self):
+        """Commander should never appear as the source of a promotion."""
         state = GameState()
         state.resources[0] = 100
         moves = generate_legal_moves(state)
-        deploy_moves = [m for m in moves if isinstance(m, Deploy)]
-        for m in deploy_moves:
-            assert m.piece_type != PieceType.COMMANDER
+        promote_moves = [m for m in moves if isinstance(m, Promote)]
+        for m in promote_moves:
+            r, c = m.from_rc
+            piece = state.board[r][c]
+            assert piece.piece_type != PieceType.COMMANDER
+
+    def test_cannot_promote_to_same_type(self):
+        """Cannot promote a piece to its current type."""
+        state = GameState()
+        state.board = [[None] * 8 for _ in range(8)]
+        state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
+        state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
+        state.board[3][3] = Piece(PieceType.RIDER, Player.WHITE)
+        state.resources[0] = 10
+        moves = generate_legal_moves(state)
+        promote_moves = [m for m in moves if isinstance(m, Promote) and m.from_rc == (3, 3)]
+        for m in promote_moves:
+            assert m.to_type != PieceType.RIDER

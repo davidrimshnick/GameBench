@@ -26,7 +26,7 @@ from multiprocessing import Pool, cpu_count
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from davechess.game.state import GameState, Player, PieceType, MoveStep, Deploy, BombardAttack
+from davechess.game.state import GameState, Player, PieceType, MoveStep, Promote, BombardAttack
 from davechess.game.rules import (
     generate_legal_moves, apply_move, check_winner,
     get_resource_income,
@@ -58,9 +58,9 @@ def play_mcts_game(args):
         mcts = mcts_white if state.current_player == Player.WHITE else mcts_black
         move = mcts.search(state)
 
-        # Track deployments
-        if isinstance(move, Deploy):
-            deployed_types.add((int(state.current_player), int(move.piece_type)))
+        # Track promotions
+        if isinstance(move, Promote):
+            deployed_types.add((int(state.current_player), int(move.to_type)))
 
         # Track state for deadlock detection
         board_hash = state.get_board_tuple()

@@ -84,7 +84,7 @@ class TestPrompt:
     def test_system_prompt_with_examples(self):
         # Create a minimal game
         from davechess.game.state import GameState, MoveStep
-        moves = [MoveStep((0, 2), (1, 2))]
+        moves = [MoveStep((1, 2), (2, 2))]
         games = [(moves, "1-0")]
         prompt = build_system_prompt(games, num_examples=1)
         assert "Example Games" in prompt
@@ -100,8 +100,8 @@ class TestMoveExtraction:
     def test_extract_move_in_backticks(self):
         assert _extract_move("My move: `Wc1-c2`") == "Wc1-c2"
 
-    def test_extract_deploy(self):
-        assert _extract_move("+W@c2") == "+W@c2"
+    def test_extract_promote(self):
+        assert _extract_move("Wa1>R") == "Wa1>R"
 
     def test_extract_bombard(self):
         assert _extract_move("Bc3~e3") == "Bc3~e3"

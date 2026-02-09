@@ -66,7 +66,7 @@ TOOL_DEFINITIONS = [
             "name": "play_move",
             "description": (
                 "Make a move in an active game. The move must be in DCN "
-                "notation (e.g., 'Wc1-c2', 'Rb1xd3', '+W@c2', 'Bc3~e3'). "
+                "notation (e.g., 'Wc1-c2', 'Rb1xd3', 'Wa1>R', 'Bc3~e3'). "
                 "After your move, the opponent responds immediately and the "
                 "updated board state is returned."
             ),

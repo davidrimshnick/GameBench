@@ -14,21 +14,25 @@ RULES_TEXT = """# DaveChess Rules
 8x8 grid with 4 Gold nodes (resource income) at {gold_positions}.
 
 ## Pieces
-| Piece | Symbol | Move | Capture | Deploy Cost |
-|-------|--------|------|---------|-------------|
-| Commander | C | 1 square, any direction | Same as move | Cannot be deployed |
-| Warrior | W | 1 square forward | 1 square diagonal-forward | 2 resources |
-| Rider | R | Up to 2 squares, any straight line (no jumping) | Same as move | 3 resources |
-| Bombard | B | 1 square, any direction | Melee: same as move. Ranged: exactly 2 squares, straight line, clear path (stays in place, cannot target Commanders) | 4 resources |
-| Lancer | L | Up to 4 squares diagonal, can jump one piece | Same as move | 5 resources |
+| Piece | Symbol | Move | Capture | Promotion Cost |
+|-------|--------|------|---------|----------------|
+| Commander | C | 1 square, any direction | Same as move | Cannot promote |
+| Warrior | W | 1 square forward | 1 square diagonal-forward | Base piece |
+| Rider | R | Up to 2 squares, any straight line (no jumping) | Same as move | 5 resources |
+| Bombard | B | 1 square, any direction | Melee: same as move. Ranged: exactly 2 squares, straight line, clear path (stays in place, cannot target Commanders) | 7 resources |
+| Lancer | L | Up to 4 squares diagonal, can jump one piece | Same as move | 9 resources |
 
 ## Starting Position
-White (rows 1-2): W at c1, C at d1, R at e1, W at f1, W at d2, W at e2
-Black (rows 7-8): W at c8, C at d8, R at e8, W at f8, W at d7, W at e7
+Each side starts with 12 pieces on their back two rows:
+White (rows 1-2): R at b1, W at c1, B at d1, C at e1, R at f1, W at g1; Warriors at b2-g2
+Black (rows 7-8): R at b8, W at c8, B at d8, C at e8, R at f8, W at g8; Warriors at b7-g7
 
 ## Turn Structure
-1. Gain resources: +1 per Gold node you have a piece on or orthogonally adjacent to
-2. One action: Move a piece OR Deploy a new piece on your back 2 rows (empty cell)
+1. Gain resources: +1 per Gold node you have a piece directly on
+2. One action: Move a piece OR Promote a piece (upgrade it in place by spending resources)
+
+## Promotion
+Spend resources to upgrade any non-Commander piece to a higher type, in place. The piece stays on its square and changes type. Cost = full price of the target type. Any piece can promote to Rider (5), Bombard (7), or Lancer (9). You cannot promote a Commander.
 
 ## Capture
 Attacker moves onto defender's square. The defender is removed, the attacker takes its place. Any piece can capture any piece (like chess).
@@ -43,7 +47,7 @@ The Lancer moves diagonally up to 4 squares. It can jump over exactly one piece 
 ## Notation (DCN)
 - Move: `Wa2-a3` (Warrior moves from a2 to a3)
 - Capture: `Rb1xd3` (Rider captures piece at d3)
-- Deploy: `+W@c2` (Deploy Warrior at c2)
+- Promote: `Wa1>R` (Warrior at a1 promotes to Rider)
 - Bombard ranged: `Bc3~e3` (Bombard at c3 attacks target at e3)
 
 Move numbering: `1. <White move> <Black move>  2. <White move> <Black move> ...`
@@ -58,7 +62,7 @@ You cannot make a move that leaves your own Commander in check.
 1. Checkmate opponent's Commander (they have no legal move to escape check) → you win
 2. Turn 100 with no checkmate → draw
 3. Threefold repetition of the same board position → draw
-4. 50-move rule: 50 moves per side with no capture or deploy → draw
+4. 50-move rule: 50 moves per side with no capture or promotion → draw
 
 ## Result
 - `1-0` = White wins, `0-1` = Black wins, `1/2-1/2` = Draw
@@ -115,7 +119,7 @@ def build_system_prompt(example_games: list[tuple[list[Move], str]],
 
     prompt += "\n\n# Instructions\n"
     prompt += "You are playing DaveChess. On each turn, respond with ONLY your move "
-    prompt += "in DCN notation (e.g., `Wa2-a3` or `+W@c2`). No explanation needed.\n"
+    prompt += "in DCN notation (e.g., `Wa2-a3` or `Wa1>R`). No explanation needed.\n"
 
     return prompt
 

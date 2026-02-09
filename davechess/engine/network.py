@@ -26,12 +26,12 @@ except ImportError:
     HAS_TORCH = False
 
 from davechess.game.board import BOARD_SIZE, GOLD_NODES
-from davechess.game.state import GameState, Player, PieceType, Move, MoveStep, Deploy, BombardAttack
+from davechess.game.state import GameState, Player, PieceType, Move, MoveStep, Promote, BombardAttack
 
 # Move encoding per source square:
 #   Slots 0-31:  direction moves (8 dirs x 4 max distances)
 #   Slots 32-39: bombard ranged attacks (8 dirs, always dist 2)
-#   Slots 40-43: deploy piece types (W=0, R=1, B=2, L=3)
+#   Slots 40-42: promotion target types (R=0, B=1, L=2)
 # Total: 44 slots per square, 64 squares = 2816 total
 MOVES_PER_SQUARE = 44
 POLICY_SIZE = BOARD_SIZE * BOARD_SIZE * MOVES_PER_SQUARE  # 2816
@@ -110,14 +110,14 @@ def move_to_policy_index(move: Move) -> int:
         sq_idx = fr * BOARD_SIZE + fc
         return sq_idx * MOVES_PER_SQUARE + slot
 
-    elif isinstance(move, Deploy):
-        tr, tc = move.to_rc
-        deploy_map = {
-            PieceType.WARRIOR: 0, PieceType.RIDER: 1,
-            PieceType.BOMBARD: 2, PieceType.LANCER: 3,
+    elif isinstance(move, Promote):
+        r, c = move.from_rc
+        promote_map = {
+            PieceType.RIDER: 0, PieceType.BOMBARD: 1,
+            PieceType.LANCER: 2,
         }
-        slot = 40 + deploy_map[move.piece_type]  # 40-43
-        sq_idx = tr * BOARD_SIZE + tc
+        slot = 40 + promote_map[move.to_type]  # 40-42
+        sq_idx = r * BOARD_SIZE + c
         return sq_idx * MOVES_PER_SQUARE + slot
 
     return 0
@@ -149,14 +149,14 @@ def policy_index_to_move(index: int, state: GameState) -> Move | None:
         if 0 <= tr < BOARD_SIZE and 0 <= tc < BOARD_SIZE:
             return BombardAttack((row, col), (tr, tc))
 
-    elif slot < 44:
-        # Deploy
-        deploy_map = {
-            0: PieceType.WARRIOR, 1: PieceType.RIDER,
-            2: PieceType.BOMBARD, 3: PieceType.LANCER,
+    elif slot < 43:
+        # Promotion
+        promote_map = {
+            0: PieceType.RIDER, 1: PieceType.BOMBARD,
+            2: PieceType.LANCER,
         }
-        piece_type = deploy_map[slot - 40]
-        return Deploy(piece_type, (row, col))
+        to_type = promote_map[slot - 40]
+        return Promote((row, col), to_type)
 
     return None
 

@@ -3,7 +3,7 @@
 Move formats:
   Wa2-a3     Move Warrior from a2 to a3
   Rb1xd3     Capture: Rider at b1 captures piece at d3
-  +W@c2      Deploy Warrior at c2
+  Wa1>R      Promote Warrior at a1 to Rider
   Bc3~e3     Bombard ranged attack from c3 targeting e3
 
 Game format (similar to PGN):
@@ -24,7 +24,7 @@ from typing import Optional
 
 from davechess.game.board import rc_to_notation, notation_to_rc
 from davechess.game.state import (
-    GameState, Move, MoveStep, Deploy, BombardAttack,
+    GameState, Move, MoveStep, Promote, BombardAttack,
     PieceType, Player, PIECE_CHARS, PIECE_NAMES,
 )
 
@@ -44,10 +44,12 @@ def move_to_dcn(state: GameState, move: Move) -> str:
         sep = "x" if move.is_capture else "-"
         return f"{piece_char}{from_sq}{sep}{to_sq}"
 
-    elif isinstance(move, Deploy):
-        piece_char = PIECE_NAMES[move.piece_type]
-        to_sq = rc_to_notation(*move.to_rc)
-        return f"+{piece_char}@{to_sq}"
+    elif isinstance(move, Promote):
+        piece = state.board[move.from_rc[0]][move.from_rc[1]]
+        piece_char = piece.char if piece else "?"
+        from_sq = rc_to_notation(*move.from_rc)
+        target_char = PIECE_NAMES[move.to_type]
+        return f"{piece_char}{from_sq}>{target_char}"
 
     elif isinstance(move, BombardAttack):
         from_sq = rc_to_notation(*move.from_rc)
@@ -59,7 +61,7 @@ def move_to_dcn(state: GameState, move: Move) -> str:
 
 # Regex patterns for parsing
 _MOVE_RE = re.compile(r"^([CWRBL])([a-h][1-8])([-x])([a-h][1-8])$")
-_DEPLOY_RE = re.compile(r"^\+([WRBL])@([a-h][1-8])$")
+_PROMOTE_RE = re.compile(r"^([CWRBL])([a-h][1-8])>([RBL])$")
 _BOMBARD_RE = re.compile(r"^B([a-h][1-8])~([a-h][1-8])$")
 
 
@@ -77,12 +79,12 @@ def dcn_to_move(dcn: str) -> Move:
     """
     dcn = dcn.strip()
 
-    # Try deploy
-    m = _DEPLOY_RE.match(dcn)
+    # Try promotion
+    m = _PROMOTE_RE.match(dcn)
     if m:
-        piece_type = PIECE_CHARS[m.group(1)]
-        to_rc = notation_to_rc(m.group(2))
-        return Deploy(piece_type, to_rc)
+        from_rc = notation_to_rc(m.group(2))
+        to_type = PIECE_CHARS[m.group(3)]
+        return Promote(from_rc, to_type)
 
     # Try bombard
     m = _BOMBARD_RE.match(dcn)

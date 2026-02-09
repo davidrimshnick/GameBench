@@ -13,7 +13,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from davechess.game.state import GameState, Player, MoveStep, Deploy, BombardAttack
+from davechess.game.state import GameState, Player, MoveStep, Promote, BombardAttack
 from davechess.game.rules import generate_legal_moves, apply_move, check_winner
 from davechess.game.board import render_board, rc_to_notation
 from davechess.game.notation import move_to_dcn, dcn_to_move

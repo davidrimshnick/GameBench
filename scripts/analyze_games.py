@@ -11,7 +11,7 @@ import time
 sys.path.append(str(Path(__file__).parent.parent))
 
 from davechess.data.generator import MCTSLiteAgent, play_game
-from davechess.game.state import GameState, Player, PieceType, MoveStep, Deploy
+from davechess.game.state import GameState, Player, PieceType, MoveStep, Promote
 from davechess.game.rules import generate_legal_moves, apply_move
 from davechess.game.board import ALL_NODES
 
@@ -79,8 +79,8 @@ def analyze_games(num_games: int = 100, simulations: int = 50):
                             stats['commander_captures']['white'] += 1
                         else:
                             stats['commander_captures']['black'] += 1
-            elif isinstance(move, Deploy):
-                # Deployment move - no capture possible
+            elif isinstance(move, Promote):
+                # Promotion move - no capture possible
                 pass
 
             # Count resources

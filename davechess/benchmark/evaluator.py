@@ -106,11 +106,11 @@ def _extract_move(text: str) -> Optional[str]:
 
     # Try exact match for common patterns
     patterns = [
-        r'`([CWRB][a-h][1-8][-x][a-h][1-8])`',  # Move/capture in backticks
-        r'`(\+[WRB]@[a-h][1-8])`',                 # Deploy in backticks
+        r'`([CWRBL][a-h][1-8][-x][a-h][1-8])`',  # Move/capture in backticks
+        r'`([CWRBL][a-h][1-8]>[RBL])`',            # Promotion in backticks
         r'`(B[a-h][1-8]~[a-h][1-8])`',             # Bombard in backticks
-        r'([CWRB][a-h][1-8][-x][a-h][1-8])',        # Move/capture bare
-        r'(\+[WRB]@[a-h][1-8])',                     # Deploy bare
+        r'([CWRBL][a-h][1-8][-x][a-h][1-8])',       # Move/capture bare
+        r'([CWRBL][a-h][1-8]>[RBL])',                # Promotion bare
         r'(B[a-h][1-8]~[a-h][1-8])',                 # Bombard bare
     ]
 

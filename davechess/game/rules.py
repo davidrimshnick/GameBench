@@ -1,7 +1,8 @@
 """Legal move generation, move execution, capture resolution, win conditions.
 
-DaveChess v2: Chess-style capture (attacker always takes defender).
-No strength stat. Warriors capture diagonally forward (like pawns).
+DaveChess v3: Chess-style capture (attacker always takes defender).
+No deployment. Promotion: spend Gold resources to upgrade pieces in place.
+Warriors capture diagonally forward (like pawns).
 Bombard has ranged attack at exactly 2 squares (stays in place).
 """
 
@@ -11,7 +12,7 @@ from typing import Optional
 
 from davechess.game.board import BOARD_SIZE, GOLD_NODES, ALL_NODES, RESOURCE_NODES
 from davechess.game.state import (
-    DEPLOY_COST, GameState, Move, MoveStep, Deploy,
+    PROMOTION_COST, GameState, Move, MoveStep, Promote,
     BombardAttack, Piece, PieceType, Player,
 )
 
@@ -34,17 +35,22 @@ def _in_bounds(r: int, c: int) -> bool:
 def get_resource_income(state: GameState, player: Player) -> int:
     """Calculate resource income for a player.
 
-    +1 per Gold node that the player has a piece on or orthogonally adjacent to.
+    +1 per Gold node that the player has a piece directly on.
     """
     income = 0
     for nr, nc in GOLD_NODES:
-        if _player_controls_node(state, player, nr, nc):
+        piece = state.board[nr][nc]
+        if piece is not None and piece.player == player:
             income += 1
     return income
 
 
 def _player_controls_node(state: GameState, player: Player, nr: int, nc: int) -> bool:
-    """Check if player has a piece on or orthogonally adjacent to node at (nr, nc)."""
+    """Check if player has a piece on or orthogonally adjacent to node at (nr, nc).
+
+    Note: resource income only requires being ON the node. This broader check
+    is used for node-control queries (e.g. UI, analysis).
+    """
     # On the node
     piece = state.board[nr][nc]
     if piece is not None and piece.player == player:
@@ -187,7 +193,7 @@ def _generate_pseudo_legal_moves(state: GameState) -> list[Move]:
             elif piece.piece_type == PieceType.LANCER:
                 _gen_lancer_moves(state, row, col, player, moves)
 
-    _gen_deploy_moves(state, player, moves)
+    _gen_promotion_moves(state, player, moves)
     return moves
 
 
@@ -207,9 +213,9 @@ def _apply_move_no_checks(state: GameState, move: Move) -> GameState:
         state.board[tr][tc] = attacker
         state.board[fr][fc] = None
 
-    elif isinstance(move, Deploy):
-        tr, tc = move.to_rc
-        state.board[tr][tc] = Piece(move.piece_type, player)
+    elif isinstance(move, Promote):
+        r, c = move.from_rc
+        state.board[r][c] = Piece(move.to_type, player)
 
     elif isinstance(move, BombardAttack):
         tr, tc = move.target_rc
@@ -273,11 +279,12 @@ def _is_move_legal(state: GameState, move: Move, player: Player) -> bool:
         board[tr][tc] = captured_piece
         return safe
 
-    elif isinstance(move, Deploy):
-        tr, tc = move.to_rc
-        board[tr][tc] = Piece(move.piece_type, player)
+    elif isinstance(move, Promote):
+        r, c = move.from_rc
+        old_piece = board[r][c]
+        board[r][c] = Piece(move.to_type, player)
         safe = not is_in_check(state, player)
-        board[tr][tc] = None  # unmake
+        board[r][c] = old_piece  # unmake
         return safe
 
     elif isinstance(move, BombardAttack):
@@ -410,21 +417,28 @@ def _gen_lancer_moves(state: GameState, row: int, col: int, player: Player,
                     break
 
 
-def _gen_deploy_moves(state: GameState, player: Player, moves: list[Move]):
-    """Generate deployment moves onto back 2 rows."""
-    if player == Player.WHITE:
-        deploy_rows = [0, 1]
-    else:
-        deploy_rows = [6, 7]
+def _gen_promotion_moves(state: GameState, player: Player, moves: list[Move]):
+    """Generate promotion moves: upgrade a friendly piece in place.
 
-    for piece_type in (PieceType.WARRIOR, PieceType.RIDER, PieceType.BOMBARD, PieceType.LANCER):
-        cost = DEPLOY_COST[piece_type]
-        if state.resources[player] < cost:
-            continue
-        for row in deploy_rows:
-            for col in range(BOARD_SIZE):
-                if state.board[row][col] is None:
-                    moves.append(Deploy(piece_type, (row, col)))
+    Any non-Commander piece can promote to a higher-cost type.
+    Cost = full price of target type.
+    """
+    resources = state.resources[player]
+    for row in range(BOARD_SIZE):
+        for col in range(BOARD_SIZE):
+            piece = state.board[row][col]
+            if piece is None or piece.player != player:
+                continue
+            if piece.piece_type == PieceType.COMMANDER:
+                continue  # Commander can't promote
+
+            for target_type, cost in PROMOTION_COST.items():
+                if resources < cost:
+                    continue
+                # Can only promote to a different type
+                if piece.piece_type == target_type:
+                    continue
+                moves.append(Promote((row, col), target_type))
 
 
 def apply_move(state: GameState, move: Move) -> GameState:
@@ -455,11 +469,11 @@ def apply_move(state: GameState, move: Move) -> GameState:
             state.board[tr][tc] = attacker
             state.board[fr][fc] = None
 
-    elif isinstance(move, Deploy):
-        tr, tc = move.to_rc
-        cost = DEPLOY_COST[move.piece_type]
+    elif isinstance(move, Promote):
+        r, c = move.from_rc
+        cost = PROMOTION_COST[move.to_type]
         state.resources[player] -= cost
-        state.board[tr][tc] = Piece(move.piece_type, player)
+        state.board[r][c] = Piece(move.to_type, player)
 
     elif isinstance(move, BombardAttack):
         # Ranged capture: target is simply removed, bombard stays
@@ -472,10 +486,10 @@ def apply_move(state: GameState, move: Move) -> GameState:
 
     state.move_history.append(move)
 
-    # Update halfmove clock (50-move rule): reset on capture/deploy/bombard, else increment
+    # Update halfmove clock (50-move rule): reset on capture/promote/bombard, else increment
     if isinstance(move, MoveStep) and move.is_capture:
         state.halfmove_clock = 0
-    elif isinstance(move, (Deploy, BombardAttack)):
+    elif isinstance(move, (Promote, BombardAttack)):
         state.halfmove_clock = 0
     else:
         state.halfmove_clock += 1
@@ -495,7 +509,7 @@ def apply_move(state: GameState, move: Move) -> GameState:
             state.done = True
             state.winner = None  # Draw
 
-        # Check 50-move rule — draw if 100 halfmoves with no capture or deploy
+        # Check 50-move rule — draw if 100 halfmoves with no capture or promotion
         if not state.done and state.halfmove_clock >= 100:
             state.done = True
             state.winner = None  # Draw by 50-move rule
@@ -544,11 +558,11 @@ def apply_move_fast(state: GameState, move: Move) -> GameState:
             state.board[tr][tc] = attacker
             state.board[fr][fc] = None
 
-    elif isinstance(move, Deploy):
-        tr, tc = move.to_rc
-        cost = DEPLOY_COST[move.piece_type]
+    elif isinstance(move, Promote):
+        r, c = move.from_rc
+        cost = PROMOTION_COST[move.to_type]
         state.resources[player] -= cost
-        state.board[tr][tc] = Piece(move.piece_type, player)
+        state.board[r][c] = Piece(move.to_type, player)
 
     elif isinstance(move, BombardAttack):
         tr, tc = move.target_rc
@@ -561,7 +575,7 @@ def apply_move_fast(state: GameState, move: Move) -> GameState:
     # Update halfmove clock (50-move rule)
     if isinstance(move, MoveStep) and move.is_capture:
         state.halfmove_clock = 0
-    elif isinstance(move, (Deploy, BombardAttack)):
+    elif isinstance(move, (Promote, BombardAttack)):
         state.halfmove_clock = 0
     else:
         state.halfmove_clock += 1
@@ -579,7 +593,7 @@ def apply_move_fast(state: GameState, move: Move) -> GameState:
             state.done = True
             state.winner = None  # Draw
 
-        # Check 50-move rule — draw if 100 halfmoves with no capture or deploy
+        # Check 50-move rule — draw if 100 halfmoves with no capture or promotion
         if not state.done and state.halfmove_clock >= 100:
             state.done = True
             state.winner = None  # Draw by 50-move rule
