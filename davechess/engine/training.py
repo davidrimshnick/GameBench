@@ -936,7 +936,23 @@ class Trainer:
             logger.info(f"Resumed from step {self.training_step}, iteration {self.iteration}")
         else:
             logger.info("Starting fresh training")
-            self.save_best()  # Save initial model as best
+            # If best.pt already exists (e.g. restored from W&B), warm-start
+            # both networks from it instead of overwriting with random weights
+            best_path = self.checkpoint_dir / "best.pt"
+            if best_path.exists():
+                try:
+                    best_ckpt = torch.load(str(best_path), map_location="cpu", weights_only=False)
+                    self.network.load_state_dict(best_ckpt["network_state"])
+                    self.best_network.load_state_dict(best_ckpt["network_state"])
+                    self.best_elo_estimate = best_ckpt.get("elo_estimate", 0)
+                    logger.info(f"Warm-starting from existing best.pt (ELO {self.best_elo_estimate})")
+                    del best_ckpt
+                    gc.collect()
+                except Exception as e:
+                    logger.warning(f"Could not load best.pt for warm start: {e}")
+                    self.save_best()
+            else:
+                self.save_best()  # Save initial model as best
             # Improved seeding strategy to bootstrap learning
             logger.info("Using improved seed game strategy")
             self.seed_buffer(num_games=100)
