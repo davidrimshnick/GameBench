@@ -42,16 +42,28 @@ python scripts/train.py --config configs/training.yaml  # Automatically resumes
 wandb login  # API key is in ~/.netrc
 ```
 
-### Agentic Benchmark
+### Benchmark CLI (for any coding agent)
 ```bash
-# Run agentic benchmark (single budget)
-python scripts/run_agentic_benchmark.py --model gpt-4 --provider openai --budget 100000
+# Install davechess as a package first: pip install -e . (from repo root)
+# All docs are in scripts/agent_cli.py — read the docstring for full reference.
 
-# Run at multiple budget levels (100K, 1M, 10M)
-python scripts/run_agentic_benchmark.py --model claude-3-5-sonnet-20241022 --provider anthropic --multi-budget
+# Create a session (baseline measures starting ELO for gain calculation)
+python scripts/agent_cli.py create --name "test" --budget 500000
 
-# Use config file
-python scripts/run_agentic_benchmark.py --config configs/agentic_benchmark.yaml
+# Study GM games, practice, play moves, evaluate
+python scripts/agent_cli.py study <session_file> 5
+python scripts/agent_cli.py practice <session_file> 800
+python scripts/agent_cli.py move <session_file> "Wd2-d3"
+python scripts/agent_cli.py evaluate <session_file>
+python scripts/agent_cli.py result <session_file>
+
+# Launch a coding agent in a sandbox — see "Running the Benchmark with a Coding Agent" below
+```
+
+### Legacy Harness (API-level token tracking)
+```bash
+# Run benchmark with direct API calls and token budget enforcement
+python scripts/run_benchmark.py --provider anthropic --model claude-sonnet-4-20250514 --budget 500000
 
 # Calibrate opponent pool (generates checkpoints/calibration.json)
 python scripts/calibrate_opponents.py --checkpoint checkpoints/best.pt
@@ -169,19 +181,61 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 - Memory usage logged at phase transitions (`_log_memory()`) for OOM diagnosis
 - MCTS trees explicitly freed after eval via `del` + `gc.collect()` (circular parent↔child refs)
 
-### Agentic Benchmark Architecture
+### Benchmark CLI (`scripts/agent_cli.py`)
 
-The agentic benchmark gives an LLM a token budget and tools, then measures ELO achieved through autonomous learning:
+**`scripts/agent_cli.py` is the single source of truth for the benchmark interface.** All documentation, commands, DCN notation, calibration tables, and agent tips are in its docstring. Any coding agent reads this one file to understand and run the full benchmark.
 
-1. **Learning Phase**: Agent autonomously studies GM games and plays practice games using 4 tools:
-   - `study_games(n)` — retrieve N grandmaster games in DCN notation
-   - `start_practice_game(opponent_elo)` — start a game against calibrated opponent
-   - `play_move(game_id, move_dcn)` — play a move, get opponent's response
-   - `get_game_state(game_id)` — view board, legal moves, history
+Session lifecycle: `BASELINE -> LEARNING -> EVALUATION -> COMPLETED`
 
-2. **Evaluation Phase**: Sequential Glicko-2 testing against calibrated opponents. Harness controls opponent selection (near estimated ELO for max info gain). Stops when rating deviation < 50 or max 200 games.
+Key commands: `create`, `rules`, `study`, `practice`, `move`, `state`, `evaluate`, `result`, `report-tokens`
 
-3. **Scoring**: Log-scale AUC across budget levels (100K/1M/10M tokens), normalized to 0-100.
+Opponents use MCTSLite (random rollouts, no neural network). The neural network checkpoint (`checkpoints/best.pt`) plays too defensively against out-of-distribution opponents (draws 50% vs random) because it was trained via self-play. MCTSLite produces decisive games with clear winners, which is better for ELO measurement.
+
+### Running the Benchmark with a Coding Agent
+
+To test the benchmark with a coding agent (Claude Code, Codex CLI, etc.), launch a separate instance in an isolated sandbox directory so it can't read the game engine source code.
+
+**Sandbox setup:**
+```bash
+# Create minimal sandbox with only the CLI script and game data
+SANDBOX="/tmp/benchmark-sandbox"  # or any temp directory
+mkdir -p "$SANDBOX/scripts" "$SANDBOX/data" "$SANDBOX/checkpoints/agent_sessions"
+cp scripts/agent_cli.py "$SANDBOX/scripts/"
+cp -r data/gm_games "$SANDBOX/data/"
+
+# davechess must be installed as a package: pip install -e . (from repo root)
+```
+
+**Launch the agent (with streaming output for monitoring):**
+```bash
+cd "$SANDBOX" && claude -p "You are in a sandbox directory. \
+  Read scripts/agent_cli.py — it has all the docs you need. \
+  Run the full DaveChess benchmark: create a session \
+  (--budget 500000 --eval-min-games 5 --eval-max-games 15), \
+  read the rules, study GM games, play practice games, then evaluate. \
+  Report tokens with --tokens on every command. \
+  Pick moves from legal_moves. Show the final result." \
+  --allowedTools "Bash(run benchmark commands)" \
+  --output-format stream-json \
+  2>&1 | tee benchmark-output.log
+```
+
+The `--output-format stream-json` flag streams JSON chunks in real time so you can monitor progress (without it, `claude -p` buffers all output until completion).
+
+**What the agent should do autonomously:**
+1. Read `scripts/agent_cli.py` docstring to learn the interface
+2. Create a session, read rules, study GM games
+3. Play practice games to develop strategy (Lancers are dominant — see GM games)
+4. Transition to evaluation and play rated games
+5. Report final ELO via `result` command
+
+Each practice/eval game involves ~30-100 individual `move` commands. A full run with practice + 5-15 eval games can take 10-30 minutes depending on the agent's speed.
+
+**Why a sandbox?** The agent should only see `agent_cli.py` (the interface) and game data. If it has access to the full repo, it could read the game engine, opponent logic, or rules implementation — defeating the purpose of measuring learning from examples.
+
+### Agentic Benchmark Architecture (Legacy Harness)
+
+The `run_benchmark.py` harness gives an LLM a token budget and tools, then measures ELO achieved through autonomous learning. It calls the LLM API directly and enforces token budgets.
 
 Key design decisions:
 - **Rolling context window** (20 messages): forces agents to use external memory at large budgets
@@ -190,13 +244,13 @@ Key design decisions:
 - **Move-by-move play**: agent plays each move individually via tool calls (not pre-committed strategies)
 
 Key files:
-- `davechess/benchmark/agent_harness.py` — Core agentic loop with rolling window
+- `scripts/agent_cli.py` — CLI interface (single file with all docs)
+- `scripts/run_benchmark.py` — External harness with token budget enforcement
+- `davechess/benchmark/api/session.py` — Core session lifecycle
 - `davechess/benchmark/sequential_eval.py` — Glicko-2 adaptive ELO measurement
-- `davechess/benchmark/agentic_protocol.py` — Orchestrator (learning → eval → scoring)
-- `davechess/benchmark/tools.py` — Tool definitions and executor
 - `davechess/benchmark/opponent_pool.py` — Calibrated opponent ELO interpolation
+- `davechess/benchmark/game_library.py` — GM game library (DCN format)
 - `davechess/benchmark/token_tracker.py` — Token budget tracking
-- `configs/agentic_benchmark.yaml` — Full configuration
 
 ## File Structure Notes
 

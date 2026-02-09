@@ -87,8 +87,8 @@ class OpponentPool:
     def _make_mcts_agent(self, sim_count: int) -> Agent:
         """Create an MCTS agent with the given simulation count."""
         if self.network is not None:
-            return MCTSAgent(self.network, self.device,
-                             num_simulations=sim_count, temperature=0.1)
+            return MCTSAgent(self.network, num_simulations=sim_count,
+                             device=self.device)
         else:
             return MCTSLiteAgent(num_simulations=sim_count)
 

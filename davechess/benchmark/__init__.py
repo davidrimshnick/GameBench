@@ -11,6 +11,8 @@ from davechess.benchmark.game_manager import GameManager
 from davechess.benchmark.tools import ToolExecutor, ToolCall, TOOL_DEFINITIONS
 from davechess.benchmark.sequential_eval import SequentialEvaluator, EvalConfig, EvalResult
 from davechess.benchmark.agentic_protocol import AgenticBenchmarkRunner, AgenticRunResult
+from davechess.benchmark.api.session import BenchmarkSession
+from davechess.benchmark.api.session_manager import SessionManager
 
 __all__ = [
     "TokenTracker",
@@ -27,4 +29,6 @@ __all__ = [
     "EvalResult",
     "AgenticBenchmarkRunner",
     "AgenticRunResult",
+    "BenchmarkSession",
+    "SessionManager",
 ]

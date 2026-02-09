@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 train = ["torch"]
 dev = ["pytest"]
+api = ["fastapi", "uvicorn[standard]", "pydantic>=2.0", "requests"]
 
 [tool.setuptools.packages.find]
 include = ["davechess*"]

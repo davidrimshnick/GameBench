@@ -19,6 +19,10 @@ training_log.jsonl
 # Generated data
 data/games/
 data/generated/
+data/gm_games/
+
+# Agent sessions
+checkpoints/agent_sessions/
 
 # IDE
 .vscode/
@@ -34,6 +38,14 @@ venv/
 # W&B
 wandb/
 
+# W&B artifact downloads (large binary files)
+artifacts/best-model-*/
+artifacts/game-log-*/
+
+# Calibration progress (intermediate state)
+checkpoints/calibration_progress.json
+
 # OS
 .DS_Store
 Thumbs.db
+*.stackdump
