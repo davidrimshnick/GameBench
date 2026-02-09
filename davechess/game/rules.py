@@ -93,8 +93,11 @@ def _is_square_attacked(state: GameState, tr: int, tc: int, by_player: Player) -
     """
     board = state.board
 
-    # Check all 8 directions for short-range pieces and Rider (up to 3 squares)
+    # Check all 8 directions for short-range pieces and Rider
     for dr, dc in ALL_DIRS:
+        is_orthogonal = (dr == 0 or dc == 0)
+        rider_max = 8 if is_orthogonal else 4  # ortho range 7, diag range 3
+
         # Distance 1: Commander (any dir), Bombard (any dir melee), Rider (any dir)
         r1, c1 = tr + dr, tc + dc
         if _in_bounds(r1, c1):
@@ -112,10 +115,10 @@ def _is_square_attacked(state: GameState, tr: int, tc: int, by_player: Player) -
                         if move_dr == forward:
                             return True
 
-        # Distance 2-3: Rider only (straight line, clear path, no jumping)
+        # Distance 2+: Rider only (straight line, clear path, no jumping)
+        # Orthogonal: up to 7 squares, Diagonal: up to 3 squares
         path_clear = True
-        for dist in range(2, 4):
-            # Check that the intermediate square (dist-1) is clear
+        for dist in range(2, rider_max):
             mid_r, mid_c = tr + dr * (dist - 1), tc + dc * (dist - 1)
             if not _in_bounds(mid_r, mid_c) or board[mid_r][mid_c] is not None:
                 path_clear = False
@@ -127,10 +130,10 @@ def _is_square_attacked(state: GameState, tr: int, tc: int, by_player: Player) -
                 if pd is not None and pd.player == by_player and pd.piece_type == PieceType.RIDER:
                     return True
 
-    # Lancer: diagonal directions, distance 1-4, can jump over one piece
-    for dr, dc in DIAGONAL_DIRS:
+    # Lancer: all 8 directions, distance 1-7, can jump over one piece
+    for dr, dc in STRAIGHT_DIRS:
         blocking = 0
-        for dist in range(1, 5):
+        for dist in range(1, 8):
             r, c = tr + dr * dist, tc + dc * dist
             if not _in_bounds(r, c):
                 break
@@ -336,9 +339,11 @@ def _gen_warrior_moves(state: GameState, row: int, col: int, player: Player,
 
 def _gen_rider_moves(state: GameState, row: int, col: int, player: Player,
                      moves: list[Move]):
-    """Rider: up to 3 squares, any straight line (orthogonal + diagonal), no jumping."""
+    """Rider: up to 7 squares orthogonal, up to 3 squares diagonal, no jumping."""
     for dr, dc in STRAIGHT_DIRS:
-        for dist in range(1, 4):
+        is_orthogonal = (dr == 0 or dc == 0)
+        max_dist = 8 if is_orthogonal else 4  # range(1,8)=7, range(1,4)=3
+        for dist in range(1, max_dist):
             r2, c2 = row + dr * dist, col + dc * dist
             if not _in_bounds(r2, c2):
                 break
@@ -391,10 +396,10 @@ def _gen_bombard_moves(state: GameState, row: int, col: int, player: Player,
 
 def _gen_lancer_moves(state: GameState, row: int, col: int, player: Player,
                        moves: list[Move]):
-    """Lancer: diagonal up to 4 squares, can jump over exactly one piece (any color)."""
-    for dr, dc in DIAGONAL_DIRS:
+    """Lancer: up to 7 squares any direction, can jump over exactly one piece (any color)."""
+    for dr, dc in STRAIGHT_DIRS:
         pieces_in_way = 0
-        for dist in range(1, 5):
+        for dist in range(1, 8):
             r2, c2 = row + dr * dist, col + dc * dist
             if not _in_bounds(r2, c2):
                 break

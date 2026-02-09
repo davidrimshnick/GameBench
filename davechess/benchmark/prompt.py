@@ -18,9 +18,9 @@ RULES_TEXT = """# DaveChess Rules
 |-------|--------|------|---------|----------------|
 | Commander | C | 1 square, any direction | Same as move | Cannot promote |
 | Warrior | W | 1 square forward | 1 square diagonal-forward | Base piece |
-| Rider | R | Up to 3 squares, any straight line (no jumping) | Same as move | 3 resources |
+| Rider | R | Up to 7 squares orthogonal, up to 3 squares diagonal (no jumping) | Same as move | 3 resources |
 | Bombard | B | 1 square, any direction | Melee: same as move. Ranged: exactly 2 squares, straight line, clear path (stays in place, cannot target Commanders) | 5 resources |
-| Lancer | L | Up to 4 squares diagonal, can jump one piece | Same as move | 7 resources |
+| Lancer | L | Up to 7 squares any direction, can jump one piece | Same as move | 7 resources |
 
 ## Starting Position
 Each side starts with 12 pieces on their back two rows:
@@ -42,7 +42,7 @@ Bombard ranged: attacks at exactly 2 squares distance, straight line, clear path
 Warriors move 1 square forward (toward row 8 for White, toward row 1 for Black). They capture 1 square diagonally forward — like chess pawns. Warriors cannot move backward or sideways.
 
 ## Lancer
-The Lancer moves diagonally up to 4 squares. It can jump over exactly one piece (friendly or enemy) in its path. It captures by landing on an enemy piece. It cannot move orthogonally.
+The Lancer moves up to 7 squares in any straight line (orthogonal or diagonal). It can jump over exactly one piece (friendly or enemy) in its path. It captures by landing on an enemy piece.
 
 ## Notation (DCN)
 - Move: `Wa2-a3` (Warrior moves from a2 to a3)

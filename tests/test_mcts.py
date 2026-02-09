@@ -121,7 +121,7 @@ class TestBatchedMCTS:
     def test_batched_evaluator_basic(self):
         """BatchedEvaluator should return correct number of results."""
         from davechess.engine.mcts import BatchedEvaluator, MCTSNode
-        from davechess.engine.network import DaveChessNetwork, state_to_planes
+        from davechess.engine.network import DaveChessNetwork, state_to_planes, POLICY_SIZE
 
         net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
         evaluator = BatchedEvaluator(net)
@@ -134,7 +134,7 @@ class TestBatchedMCTS:
         results = evaluator.evaluate_batch()
         assert len(results) == 5
         for policy, value in results:
-            assert policy.shape == (2816,)
+            assert policy.shape == (POLICY_SIZE,)
             assert -1.0 <= value <= 1.0
 
     def test_batched_evaluator_no_network(self):

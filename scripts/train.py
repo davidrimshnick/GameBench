@@ -160,7 +160,10 @@ def main():
     finally:
         if use_wandb:
             import wandb
-            wandb.finish()
+            try:
+                wandb.finish()
+            except Exception:
+                pass  # W&B service may already be dead
         if tb_proc is not None:
             tb_proc.terminate()
 

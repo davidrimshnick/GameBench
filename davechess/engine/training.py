@@ -49,6 +49,22 @@ from davechess.game.notation import game_to_dcn
 logger = logging.getLogger("davechess.training")
 
 
+def _safe_wandb_log(*args, **kwargs):
+    """Log to wandb, catching connection errors so training doesn't crash."""
+    try:
+        wandb.log(*args, **kwargs)
+    except Exception as e:
+        logger.warning(f"W&B log failed (training continues): {e}")
+
+
+def _safe_wandb_log_artifact(artifact):
+    """Upload wandb artifact, catching errors."""
+    try:
+        wandb.run.log_artifact(artifact)
+    except Exception as e:
+        logger.warning(f"W&B artifact upload failed: {e}")
+
+
 def _get_rss_mb() -> float:
     """Return current RSS in MB."""
     try:
@@ -200,7 +216,7 @@ class Trainer:
                     },
                 )
                 artifact.add_file(str(buf_path))
-                wandb.log_artifact(artifact)
+                _safe_wandb_log_artifact(artifact)
 
         return path
 
@@ -333,7 +349,7 @@ class Trainer:
                 "train/learning_rate": lr,
             }
             if self.use_wandb:
-                wandb.log(step_metrics, step=self.training_step)
+                _safe_wandb_log(step_metrics, step=self.training_step)
             if self.tb_writer:
                 for k, v in step_metrics.items():
                     self.tb_writer.add_scalar(k, v, self.training_step)
@@ -486,7 +502,7 @@ class Trainer:
                     continue
                 if isinstance(v, (int, float)):
                     wb_metrics[f"{phase}/{k}" if phase else k] = v
-            wandb.log(wb_metrics, step=self.training_step)
+            _safe_wandb_log(wb_metrics, step=self.training_step)
 
         if self.tb_writer:
             for k, v in metrics.items():
@@ -652,13 +668,13 @@ class Trainer:
             "selfplay/num_simulations": num_sims,
         }
         if self.use_wandb:
-            wandb.log(sp_metrics, step=self.training_step)
+            _safe_wandb_log(sp_metrics, step=self.training_step)
             # Log per-game details as a table
             if "game_details" in sp_stats:
                 table = wandb.Table(columns=["game", "length", "winner"])
                 for g in sp_stats["game_details"]:
                     table.add_data(g["game"], g["length"], g["winner"])
-                wandb.log({"selfplay/games": table}, step=self.training_step)
+                _safe_wandb_log({"selfplay/games": table}, step=self.training_step)
         if self.tb_writer:
             for k, v in sp_metrics.items():
                 self.tb_writer.add_scalar(k, v, self.training_step)
@@ -696,7 +712,7 @@ class Trainer:
                             },
                         )
                         artifact.add_file(dcn_path)
-                        wandb.log_artifact(artifact)
+                        _safe_wandb_log_artifact(artifact)
                     except Exception as e:
                         logger.warning(f"Failed to upload game log to W&B: {e}")
             except Exception as e:
@@ -801,7 +817,7 @@ class Trainer:
                     },
                 )
                 artifact.add_file(str(self.checkpoint_dir / "best.pt"))
-                wandb.log_artifact(artifact)
+                _safe_wandb_log_artifact(artifact)
                 logger.info("Uploaded best model to W&B artifacts")
         else:
             self.consecutive_rejections += 1
@@ -829,13 +845,16 @@ class Trainer:
             "eval/wins": eval_results["wins"],
             "eval/losses": eval_results["losses"],
             "eval/draws": eval_results["draws"],
+            "eval/random_wins": eval_results["random_wins"],
+            "eval/random_losses": eval_results["random_losses"],
+            "eval/random_draws": eval_results["random_draws"],
             "eval/avg_game_length": eval_results["avg_game_length"],
             "eval/accepted": int(accepted),
             "eval/elapsed_sec": eval_elapsed,
             "elo": self.best_elo_estimate,
         }
         if self.use_wandb:
-            wandb.log(eval_metrics, step=self.training_step)
+            _safe_wandb_log(eval_metrics, step=self.training_step)
             # Update summary with best values
             wandb.run.summary["best_elo"] = self.best_elo_estimate
             wandb.run.summary["best_eval_win_rate"] = max(
@@ -843,14 +862,21 @@ class Trainer:
             wandb.run.summary["total_iterations"] = self.iteration
             # Email summary after every iteration
             status = f"ACCEPTED ELO {self.best_elo_estimate:.0f} (+{elo_diff:.0f})" if accepted else "rejected"
+            total_sp = sp_stats['white_wins'] + sp_stats['black_wins'] + sp_stats['draws']
+            sp_draw_pct = sp_stats['draws'] / total_sp * 100 if total_sp > 0 else 0
+            rw, rl, rd = eval_results["random_wins"], eval_results["random_losses"], eval_results["random_draws"]
+            iter_elapsed = time.time() - iteration_start
             wandb.alert(
                 title=f"Iter {self.iteration}: {status}",
                 text=(
-                    f"SP: {sp_stats['white_wins']}W/{sp_stats['black_wins']}B/{sp_stats['draws']}D "
-                    f"avg={sp_stats['avg_game_length']:.0f} moves\n"
-                    f"Loss: p={avg_losses['avg_policy_loss']:.4f} v={avg_losses['avg_value_loss']:.4f}\n"
-                    f"Eval: {win_rate:.3f} (W:{eval_results['wins']} L:{eval_results['losses']} D:{eval_results['draws']})\n"
-                    f"ELO: {self.best_elo_estimate:.0f} | Mem: RSS={_get_rss_mb():.0f}MB"
+                    f"ELO: {self.best_elo_estimate:.0f} | Sims: {num_sims}\n"
+                    f"Self-play: {sp_stats['white_wins']}W/{sp_stats['black_wins']}B/{sp_stats['draws']}D "
+                    f"({sp_draw_pct:.0f}% draws) avg={sp_stats['avg_game_length']:.0f} moves "
+                    f"[{sp_stats['min_game_length']}-{sp_stats['max_game_length']}]\n"
+                    f"Loss: policy={avg_losses['avg_policy_loss']:.3f} value={avg_losses['avg_value_loss']:.3f}\n"
+                    f"Eval vs best: {win_rate:.3f} (W:{eval_results['wins']} L:{eval_results['losses']} D:{eval_results['draws']})\n"
+                    f"Eval vs random: W:{rw} L:{rl} D:{rd}\n"
+                    f"Buffer: {len(self.replay_buffer)} | Mem: {_get_rss_mb():.0f}MB | Time: {iter_elapsed/60:.1f}min"
                 ),
                 wait_duration=0,
             )
@@ -879,7 +905,7 @@ class Trainer:
                 "system/gpu_reserved_mb": torch.cuda.memory_reserved() / 1e6,
             }
             if self.use_wandb:
-                wandb.log(gpu_metrics, step=self.training_step)
+                _safe_wandb_log(gpu_metrics, step=self.training_step)
             if self.tb_writer:
                 for k, v in gpu_metrics.items():
                     self.tb_writer.add_scalar(k, v, self.training_step)

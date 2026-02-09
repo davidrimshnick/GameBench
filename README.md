@@ -24,9 +24,9 @@ Each turn, you earn **+1 resource for each Gold node you have a piece directly o
 |-------|--------|----------------|------|---------|
 | Commander | C | cannot promote | 1 square, any direction | Same as move |
 | Warrior | W | base piece | 1 square forward | 1 square diagonal-forward |
-| Rider | R | 3 | Up to 3 squares, any straight line (no jumping) | Same as move |
+| Rider | R | 3 | Up to 7 squares orthogonal, up to 3 squares diagonal (no jumping) | Same as move |
 | Bombard | B | 5 | 1 square, any direction | Melee: same as move. Ranged: exactly 2 squares, straight line, clear path (stays in place, cannot target Commanders) |
-| Lancer | L | 7 | Up to 4 squares, diagonal only, can jump one piece | Same as move |
+| Lancer | L | 7 | Up to 7 squares any direction, can jump one piece | Same as move |
 
 ### Promotion
 
@@ -40,7 +40,7 @@ Spend resources to upgrade any non-Commander piece to a higher type, in place. T
 
 **Bombard ranged attack:** attacks at exactly 2 squares distance (straight line, clear path). Target is removed; Bombard stays put. Cannot target Commanders with ranged attacks.
 
-**Lancer:** Diagonal-only piece that can jump over exactly one piece (friend or foe) in its path, similar to a limited bishop with jumping. At promotion cost 7, the Lancer is a powerful mid-game attacker.
+**Lancer:** Full-range piece that moves up to 7 squares in any direction and can jump over exactly one piece (friend or foe) in its path. At promotion cost 7, the Lancer is the most powerful piece on the board.
 
 ### Check & Checkmate
 

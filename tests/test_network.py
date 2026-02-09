@@ -90,6 +90,34 @@ class TestMoveEncoding:
         assert recovered.from_rc == (0, 0)
         assert recovered.to_rc == (4, 4)
 
+    def test_rider_long_range_roundtrip(self):
+        """Rider orthogonal distance-7 move survives encode/decode."""
+        state = GameState()
+        state.board = [[None] * 8 for _ in range(8)]
+        state.board[0][3] = Piece(PieceType.RIDER, Player.WHITE)
+
+        move = MoveStep((0, 3), (7, 3))  # distance 7 orthogonal
+        idx = move_to_policy_index(move)
+        assert 0 <= idx < POLICY_SIZE
+        recovered = policy_index_to_move(idx, state)
+        assert isinstance(recovered, MoveStep)
+        assert recovered.from_rc == (0, 3)
+        assert recovered.to_rc == (7, 3)
+
+    def test_lancer_orthogonal_roundtrip(self):
+        """Lancer orthogonal distance-7 move survives encode/decode."""
+        state = GameState()
+        state.board = [[None] * 8 for _ in range(8)]
+        state.board[0][0] = Piece(PieceType.LANCER, Player.WHITE)
+
+        move = MoveStep((0, 0), (0, 7))  # distance 7 orthogonal
+        idx = move_to_policy_index(move)
+        assert 0 <= idx < POLICY_SIZE
+        recovered = policy_index_to_move(idx, state)
+        assert isinstance(recovered, MoveStep)
+        assert recovered.from_rc == (0, 0)
+        assert recovered.to_rc == (0, 7)
+
     def test_different_moves_different_indices(self):
         """Different moves should map to different indices."""
         m1 = MoveStep((3, 3), (4, 3))

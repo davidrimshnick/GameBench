@@ -15,7 +15,7 @@ mcts:
 
 selfplay:
   num_games_per_iteration: 20  # More games = more diverse training data
-  replay_buffer_size: 50000
+  replay_buffer_size: 30000
   num_workers: 4               # CPU worker processes for MCTS tree traversal
   min_buffer_size: 1000        # Train immediately on seed games
   random_opponent_fraction: 0.5   # 50% of games vs random MCTS (no NN) to prevent overfitting

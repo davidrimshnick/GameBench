@@ -97,7 +97,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 - **Board**: 8x8 grid stored as `state.board[row][col]` containing `Piece` objects
 - **Nodes**: 4 Gold nodes (give resource income for promotion) at (3,3), (3,4), (4,3), (4,4)
 - **Neural Network Input**: 14 planes (5 piece types × 2 players + gold nodes + player + 2 resources) via `state_to_planes()`
-- **Move Encoding**: Policy size of 2816 (64×44 move slots per square) via `move_to_policy_index()`. Slots 40-42 = promotion targets (R, B, L).
+- **Move Encoding**: Policy size of 4288 (64×67 move slots per square) via `move_to_policy_index()`. Slots 0-55 = direction moves (8 dirs × 7 dist), 56-63 = bombard ranged, 64-66 = promotion targets (R, B, L).
 
 ### Critical Game Rules
 
@@ -106,12 +106,12 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 1. **Capture (Chess-style)**: Any piece can capture any piece by moving onto it. Attacker always takes the defender's square — no strength comparison. Enables sacrifices, forks, pins, and tactical depth.
 2. **Commander Safety**: Must resolve check immediately (move/block/capture). Cannot make a move that leaves own Commander in check.
 3. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player, excluding resources) = draw. 50-move rule: 50 moves per side (100 halfmoves) with no capture or promotion = draw.
-4. **Piece Types**: Commander (C), Warrior (W, pawn-like), Rider (R, up to 3 squares any direction), Bombard (B, 1 sq move + ranged attack), Lancer (L, diagonal up to 4 squares with jump)
+4. **Piece Types**: Commander (C), Warrior (W, pawn-like), Rider (R, up to 7 squares orthogonal / 3 diagonal), Bombard (B, 1 sq move + ranged attack), Lancer (L, up to 7 squares any direction with jump)
 5. **Promotion Costs**: R=3, B=5, L=7. No deployment — pieces promote in place by spending Gold resources.
 6. **Starting Army**: 12 pieces per side — 1 Commander, 3 Riders, 2 Bombards, 6 Warriors. No new pieces are ever added.
 7. **Warrior Movement**: Forward only (like chess pawns). Captures diagonal-forward only. White Warriors move toward row 8, Black toward row 1. No retreat, no sideways movement.
 8. **Bombard**: 1 square movement any direction. Ranged attack at exactly 2 squares (straight line, clear path). Stays in place when attacking. Can't use ranged attack against Commander.
-9. **Lancer**: Moves diagonally up to 4 squares, can jump over exactly one piece (any color)
+9. **Lancer**: Moves up to 7 squares in any direction, can jump over exactly one piece (any color)
 
 ### Known Issues & Solutions
 
@@ -136,7 +136,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 7. **Seed Re-injection Distribution Mismatch**: At higher ELO, periodic re-injection of heuristic seed data (every 5 iterations) creates a distribution mismatch that hurts eval performance.
    - Solution: Disabled periodic seed re-injection. Seeds are only used for initial buffer seeding at iteration 0.
 
-8. **Replay Buffer OOM on Checkpoint Load/Save**: The buffer at 50K+ positions contains ~960MB of planes and ~563MB of policies. Stacking the full buffer into a contiguous array for save/load caused OOM on the 8GB Jetson.
+8. **Replay Buffer OOM on Checkpoint Load/Save**: The buffer at 30K+ positions contains ~605MB of planes and ~515MB of policies (4288-wide). Stacking the full buffer into a contiguous array for save/load caused OOM on the 8GB Jetson.
    - Solution: Chunked save using memory-mapped files (5K positions per chunk, ~85MB peak). Chunked load processes arrays in slices. All buffer data enforced as float32 on push to prevent accidental float64 doubling.
 
 9. **CUDA Fragmentation After Self-play**: Higher adaptive sims fragment GPU memory, causing `NVML_SUCCESS` assert failures when transitioning to training.
@@ -163,7 +163,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 - Multiprocess MCTS: 4 CPU workers + GPU inference server in main process
 - Network: 20 ResBlocks, 256 filters (~24M params, ~1GB GPU with training)
 - Training uses mixed precision (FP16) when available
-- Replay buffer capped at 50K positions (~940MB). Save/load uses chunked I/O (5K chunks) to avoid temp array spikes
+- Replay buffer capped at 30K positions (~700MB with 4288-wide policy vectors). Save/load uses chunked I/O (5K chunks) to avoid temp array spikes
 - All buffer data enforced as float32 on push — prevents accidental float64 doubling
 - Always call `torch.cuda.empty_cache()` before switching between self-play, training, and eval phases
 - Memory usage logged at phase transitions (`_log_memory()`) for OOM diagnosis
@@ -210,7 +210,7 @@ Key files:
 
 ## Training Monitoring
 
-**CRITICAL: NEVER start a training run without W&B connected! Verify W&B shows "logging enabled" in the logs before proceeding. If W&B fails with "Broken pipe", kill any stale wandb processes first (`pkill -9 wandb`).**
+**CRITICAL: NEVER start a training run without W&B connected! Verify W&B shows "logging enabled" in the logs before proceeding. If W&B fails with "Broken pipe", kill any stale wandb processes first (`pkill -9 wandb`).** All `wandb.log()` calls are wrapped in `_safe_wandb_log()` to prevent W&B service crashes from killing training.
 
 Training logs to multiple destinations:
 - **W&B Dashboard** - Primary monitoring at https://wandb.ai (MUST be connected)

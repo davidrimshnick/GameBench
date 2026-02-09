@@ -29,10 +29,10 @@ class HeuristicPlayer:
     # Piece values based on game understanding
     PIECE_VALUES = {
         PieceType.COMMANDER: 10.0,  # Losing it loses the game
-        PieceType.WARRIOR: 3.0,     # Strong attacker
-        PieceType.RIDER: 2.5,       # Mobile
+        PieceType.WARRIOR: 3.0,     # Promotable forward attacker
+        PieceType.RIDER: 4.0,       # Long-range orthogonal + short diagonal
         PieceType.BOMBARD: 2.0,     # Ranged but vulnerable
-        PieceType.LANCER: 4.0,      # Strong diagonal attacker with jump
+        PieceType.LANCER: 6.0,      # Full-range all directions with jump
     }
 
     def __init__(self, exploration: float = 0.2, aggression: float = 0.5):

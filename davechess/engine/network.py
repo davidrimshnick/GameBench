@@ -9,7 +9,7 @@ Input: 14 planes of 8x8
   Plane 13: Opponent resources (scalar broadcast, normalized)
 
 Output:
-  Policy: flat logit vector over all possible moves (2816 logits)
+  Policy: flat logit vector over all possible moves (4288 logits)
   Value: single tanh scalar (-1 to +1)
 """
 
@@ -29,12 +29,12 @@ from davechess.game.board import BOARD_SIZE, GOLD_NODES
 from davechess.game.state import GameState, Player, PieceType, Move, MoveStep, Promote, BombardAttack
 
 # Move encoding per source square:
-#   Slots 0-31:  direction moves (8 dirs x 4 max distances)
-#   Slots 32-39: bombard ranged attacks (8 dirs, always dist 2)
-#   Slots 40-42: promotion target types (R=0, B=1, L=2)
-# Total: 44 slots per square, 64 squares = 2816 total
-MOVES_PER_SQUARE = 44
-POLICY_SIZE = BOARD_SIZE * BOARD_SIZE * MOVES_PER_SQUARE  # 2816
+#   Slots 0-55:  direction moves (8 dirs x 7 max distances)
+#   Slots 56-63: bombard ranged attacks (8 dirs, always dist 2)
+#   Slots 64-66: promotion target types (R=0, B=1, L=2)
+# Total: 67 slots per square, 64 squares = 4288 total
+MOVES_PER_SQUARE = 67
+POLICY_SIZE = BOARD_SIZE * BOARD_SIZE * MOVES_PER_SQUARE  # 4288
 
 # Direction encoding
 ALL_DIRS = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
@@ -94,7 +94,7 @@ def move_to_policy_index(move: Move) -> int:
         if d not in DIR_TO_IDX:
             return 0
         dir_idx = DIR_TO_IDX[d]
-        slot = dir_idx * 4 + (dist - 1)  # 0-31
+        slot = dir_idx * 7 + (dist - 1)  # 0-55
         sq_idx = fr * BOARD_SIZE + fc
         return sq_idx * MOVES_PER_SQUARE + slot
 
@@ -106,7 +106,7 @@ def move_to_policy_index(move: Move) -> int:
         dist = max(abs(dr), abs(dc))
         d = (dr // dist, dc // dist)
         dir_idx = DIR_TO_IDX.get(d, 0)
-        slot = 32 + dir_idx  # 32-39
+        slot = 56 + dir_idx  # 56-63
         sq_idx = fr * BOARD_SIZE + fc
         return sq_idx * MOVES_PER_SQUARE + slot
 
@@ -116,7 +116,7 @@ def move_to_policy_index(move: Move) -> int:
             PieceType.RIDER: 0, PieceType.BOMBARD: 1,
             PieceType.LANCER: 2,
         }
-        slot = 40 + promote_map[move.to_type]  # 40-42
+        slot = 64 + promote_map[move.to_type]  # 64-66
         sq_idx = r * BOARD_SIZE + c
         return sq_idx * MOVES_PER_SQUARE + slot
 
@@ -130,10 +130,10 @@ def policy_index_to_move(index: int, state: GameState) -> Move | None:
     row = sq_idx // BOARD_SIZE
     col = sq_idx % BOARD_SIZE
 
-    if slot < 32:
+    if slot < 56:
         # Direction move
-        dir_idx = slot // 4
-        dist = (slot % 4) + 1
+        dir_idx = slot // 7
+        dist = (slot % 7) + 1
         dr, dc = ALL_DIRS[dir_idx]
         tr, tc = row + dr * dist, col + dc * dist
         if 0 <= tr < BOARD_SIZE and 0 <= tc < BOARD_SIZE:
@@ -141,21 +141,21 @@ def policy_index_to_move(index: int, state: GameState) -> Move | None:
             is_capture = target is not None and target.player != state.current_player
             return MoveStep((row, col), (tr, tc), is_capture=is_capture)
 
-    elif slot < 40:
+    elif slot < 64:
         # Bombard ranged attack
-        dir_idx = slot - 32
+        dir_idx = slot - 56
         dr, dc = ALL_DIRS[dir_idx]
         tr, tc = row + dr * 2, col + dc * 2
         if 0 <= tr < BOARD_SIZE and 0 <= tc < BOARD_SIZE:
             return BombardAttack((row, col), (tr, tc))
 
-    elif slot < 43:
+    elif slot < 67:
         # Promotion
         promote_map = {
             0: PieceType.RIDER, 1: PieceType.BOMBARD,
             2: PieceType.LANCER,
         }
-        to_type = promote_map[slot - 40]
+        to_type = promote_map[slot - 64]
         return Promote((row, col), to_type)
 
     return None

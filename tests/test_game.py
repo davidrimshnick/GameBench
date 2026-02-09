@@ -205,7 +205,7 @@ class TestLegalMoves:
         assert len(destinations) == 8  # 8 adjacent squares
 
     def test_rider_moves(self):
-        """Rider moves up to 3 squares in straight line."""
+        """Rider moves up to 7 orthogonal, up to 3 diagonal."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
         state.board[3][3] = Piece(PieceType.RIDER, Player.WHITE)
@@ -215,16 +215,17 @@ class TestLegalMoves:
         moves = generate_legal_moves(state)
         rider_moves = [m for m in moves if isinstance(m, MoveStep) and m.from_rc == (3, 3)]
         destinations = {m.to_rc for m in rider_moves}
-        # Can reach up to 3 squares away
-        assert (5, 3) in destinations  # 2 up
+        # Orthogonal: can reach up to 7 squares
         assert (6, 3) in destinations  # 3 up
-        assert (1, 3) in destinations  # 2 down
+        assert (7, 3) in destinations  # 4 up (NEW: orthogonal long range)
         assert (0, 3) in destinations  # 3 down
-        assert (3, 6) in destinations  # 3 right
+        assert (3, 7) in destinations  # 4 right (NEW: orthogonal long range)
+        assert (3, 0) in destinations  # 3 left
+        # Diagonal: can reach up to 3 squares
         assert (6, 6) in destinations  # 3 diagonal
-        # Cannot reach 4 squares away
-        assert (7, 3) not in destinations
-        assert (3, 7) not in destinations
+        assert (0, 6) in destinations  # 3 diagonal
+        # Cannot reach 4 squares diagonally
+        assert (7, 7) not in destinations  # 4 diagonal — out of range
 
     def test_rider_blocked(self):
         """Rider cannot jump over pieces."""
@@ -277,8 +278,8 @@ class TestLegalMoves:
         targets = {m.target_rc for m in bombard_attacks}
         assert (5, 3) in targets
 
-    def test_lancer_diagonal_moves(self):
-        """Lancers move diagonally up to 4 squares."""
+    def test_lancer_moves(self):
+        """Lancer moves up to 7 squares in any direction with jump."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
         state.board[3][3] = Piece(PieceType.LANCER, Player.WHITE)
@@ -295,45 +296,35 @@ class TestLegalMoves:
         assert (2, 4) in destinations
         # Distance 4 diagonal
         assert (7, 7) in destinations  # capture black commander
-        # Should NOT include orthogonal
-        assert (4, 3) not in destinations
-        assert (3, 4) not in destinations
-
-    def test_lancer_not_orthogonal(self):
-        """Lancer cannot move orthogonally."""
-        state = GameState()
-        state.board = [[None] * 8 for _ in range(8)]
-        state.board[3][3] = Piece(PieceType.LANCER, Player.WHITE)
-        state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
-        state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
-
-        moves = generate_legal_moves(state)
-        lancer_moves = [m for m in moves if isinstance(m, MoveStep) and m.from_rc == (3, 3)]
-        destinations = {m.to_rc for m in lancer_moves}
-        # No orthogonal moves
-        for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-            for dist in range(1, 5):
-                r, c = 3 + dr * dist, 3 + dc * dist
-                if 0 <= r < 8 and 0 <= c < 8:
-                    assert (r, c) not in destinations, f"Lancer should not reach ({r},{c})"
+        # Orthogonal moves (NEW: Lancer now moves in all directions)
+        assert (4, 3) in destinations  # 1 up
+        assert (3, 4) in destinations  # 1 right
+        assert (7, 3) in destinations  # 4 up
+        assert (3, 7) in destinations  # 4 right
+        assert (3, 0) in destinations  # 3 left
 
     def test_lancer_jumping(self):
-        """Lancer can jump over exactly one piece."""
+        """Lancer can jump over exactly one piece (diagonal and orthogonal)."""
         state = GameState()
         state.board = [[None] * 8 for _ in range(8)]
         state.board[3][3] = Piece(PieceType.LANCER, Player.WHITE)
-        state.board[4][4] = Piece(PieceType.WARRIOR, Player.WHITE)  # One piece to jump
+        state.board[4][4] = Piece(PieceType.WARRIOR, Player.WHITE)  # Diagonal blocker
+        state.board[4][3] = Piece(PieceType.WARRIOR, Player.WHITE)  # Orthogonal blocker
         state.board[0][0] = Piece(PieceType.COMMANDER, Player.WHITE)
         state.board[7][7] = Piece(PieceType.COMMANDER, Player.BLACK)
 
         moves = generate_legal_moves(state)
         lancer_moves = [m for m in moves if isinstance(m, MoveStep) and m.from_rc == (3, 3)]
         destinations = {m.to_rc for m in lancer_moves}
-        # Cannot land on friendly at (4,4)
+        # Cannot land on friendly
         assert (4, 4) not in destinations
-        # Can jump over to reach (5,5), (6,6)
+        assert (4, 3) not in destinations
+        # Can jump over diagonally to reach (5,5), (6,6)
         assert (5, 5) in destinations
         assert (6, 6) in destinations
+        # Can jump over orthogonally to reach (5,3), (6,3), (7,3)
+        assert (5, 3) in destinations
+        assert (7, 3) in destinations
 
     def test_lancer_blocked_by_two(self):
         """Lancer blocked by two pieces in path."""
