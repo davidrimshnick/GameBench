@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GameBench — Measuring How LLMs Learn Strategy</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #161922;
+    --surface2: #1c1f2e;
+    --border: #2a2d3e;
+    --text: #e1e4ed;
+    --text-dim: #8b8fa3;
+    --accent: #6c8cff;
+    --accent2: #a78bfa;
+    --green: #4ade80;
+    --red: #f87171;
+    --gold: #fbbf24;
+    --orange: #fb923c;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+  /* Hero */
+  .hero {
+    padding: 80px 0 60px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+  .hero h1 {
+    font-size: 3rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin-bottom: 8px;
+  }
+  .hero h1 span { color: var(--accent); }
+  .hero .tagline {
+    font-size: 1.25rem;
+    color: var(--text-dim);
+    max-width: 640px;
+    margin: 0 auto 32px;
+  }
+  .hero .headline-metric {
+    display: inline-block;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 24px;
+    font-size: 0.95rem;
+    color: var(--text-dim);
+  }
+  .hero .headline-metric strong { color: var(--gold); }
+
+  /* Sections */
+  section { padding: 60px 0; border-bottom: 1px solid var(--border); }
+  section:last-child { border-bottom: none; }
+  section h2 {
+    font-size: 1.75rem;
+    font-weight: 600;
+    margin-bottom: 24px;
+    letter-spacing: -0.02em;
+  }
+  section h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 24px 0 12px;
+    color: var(--accent2);
+  }
+  section p { color: var(--text-dim); margin-bottom: 16px; max-width: 720px; }
+
+  /* Key Concepts grid */
+  .concepts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+  }
+  .concept-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+  }
+  .concept-card .label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .concept-card .title {
+    font-weight: 600;
+    font-size: 1rem;
+    margin-bottom: 6px;
+  }
+  .concept-card .desc {
+    font-size: 0.875rem;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+
+  /* Board diagram */
+  .board-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    margin: 24px 0;
+    overflow-x: auto;
+  }
+  .board-wrap pre {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--text);
+  }
+
+  /* Piece table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.9rem;
+  }
+  th {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-dim);
+    font-weight: 500;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  tr:last-child td { border-bottom: none; }
+
+  /* Results */
+  .results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+  }
+  .result-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    position: relative;
+  }
+  .result-card .agent-name {
+    font-weight: 600;
+    font-size: 1.1rem;
+    margin-bottom: 4px;
+  }
+  .result-card .agent-model {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+  }
+  .result-card .elo-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+  }
+  .result-card .elo-label {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+  }
+  .result-card .elo-value {
+    font-size: 1.1rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .result-card .gain {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-top: 12px;
+  }
+  .gain.positive { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+  .gain.negative { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+  .gain.neutral { background: rgba(139, 143, 163, 0.15); color: var(--text-dim); }
+
+  .placeholder-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 3px 8px;
+    border-radius: 3px;
+    background: rgba(251, 191, 36, 0.15);
+    color: var(--gold);
+    margin-bottom: 16px;
+  }
+
+  /* Stats row */
+  .stats-row {
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+    margin: 24px 0;
+  }
+  .stat {
+    text-align: center;
+  }
+  .stat .num {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat .label {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  /* Lifecycle */
+  .lifecycle {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 24px 0;
+    flex-wrap: wrap;
+  }
+  .phase-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 18px;
+    text-align: center;
+    min-width: 120px;
+  }
+  .phase-box .name {
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .phase-box .detail {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+  .phase-arrow {
+    color: var(--text-dim);
+    font-size: 1.2rem;
+    padding: 0 8px;
+  }
+
+  /* Code block */
+  .code-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    overflow-x: auto;
+    margin: 16px 0;
+  }
+  .code-block pre {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--text);
+  }
+  .code-block .comment { color: var(--text-dim); }
+  .code-block .cmd { color: var(--green); }
+
+  /* Footer */
+  footer {
+    padding: 40px 0;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 2rem; }
+    .hero .tagline { font-size: 1rem; }
+    .lifecycle { flex-direction: column; align-items: stretch; }
+    .phase-arrow { transform: rotate(90deg); text-align: center; }
+    .stats-row { gap: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Hero -->
+<header class="hero">
+  <div class="container">
+    <h1>Game<span>Bench</span></h1>
+    <p class="tagline">
+      Measuring how efficiently LLMs learn novel strategic reasoning from examples &mdash; not memorization.
+    </p>
+    <div class="headline-metric">
+      Headline metric: <strong>ELO gain per token</strong> &mdash; how much chess skill does a model acquire per unit of learning?
+    </div>
+  </div>
+</header>
+
+<!-- Why -->
+<section>
+  <div class="container">
+    <h2>Why GameBench?</h2>
+    <p>
+      LLMs trained on internet-scale data have seen chess, Go, and every popular board game.
+      To test whether a model can actually <em>learn</em> strategy rather than recall it, we need
+      a game that doesn't exist in any training corpus.
+    </p>
+    <p>
+      GameBench uses <strong>DaveChess</strong>, a custom board game designed from scratch, paired
+      with an AlphaZero-trained engine that generates expert-level games as study material.
+      Each coding agent gets a token budget, the CLI interface, and GM game examples &mdash;
+      then autonomously learns to play.
+    </p>
+
+    <div class="concepts">
+      <div class="concept-card">
+        <div class="label">Novel Game</div>
+        <div class="title">Zero training contamination</div>
+        <div class="desc">DaveChess was invented for this benchmark. No LLM has seen it in pre-training data.</div>
+      </div>
+      <div class="concept-card">
+        <div class="label">Agentic</div>
+        <div class="title">Autonomous learning loop</div>
+        <div class="desc">Agents study GM games, practice against opponents, develop strategy, and evaluate themselves &mdash; all autonomously.</div>
+      </div>
+      <div class="concept-card">
+        <div class="label">Measured</div>
+        <div class="title">ELO via Glicko-2</div>
+        <div class="desc">Baseline ELO (before learning) vs final ELO (after learning). Gain = skill acquired from the token budget.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DaveChess -->
+<section>
+  <div class="container">
+    <h2>DaveChess</h2>
+    <p>
+      An original strategic board game on an 8&times;8 grid combining positional resource control
+      with tactical combat. Chess-style capture, pawn-like Warriors, and a promotion economy
+      create deep strategic play.
+    </p>
+
+    <div class="board-wrap">
+<pre>    a   b   c   d   e   f   g   h
+  +---+---+---+---+---+---+---+---+
+8 |   | r | b | r | c | r | b |   |  Black (lowercase)
+  +---+---+---+---+---+---+---+---+
+7 |   | w | w | w | w | w | w |   |  6 Warriors, 3 Riders, 2 Bombards, 1 Commander
+  +---+---+---+---+---+---+---+---+
+6 |   |   |   |   |   |   |   |   |
+  +---+---+---+---+---+---+---+---+
+5 |   |   |   | $ | $ |   |   |   |  $ = Gold nodes (resource income)
+  +---+---+---+---+---+---+---+---+
+4 |   |   |   | $ | $ |   |   |   |  Control Gold &rarr; earn resources &rarr; promote pieces
+  +---+---+---+---+---+---+---+---+
+3 |   |   |   |   |   |   |   |   |
+  +---+---+---+---+---+---+---+---+
+2 |   | W | W | W | W | W | W |   |  White (uppercase)
+  +---+---+---+---+---+---+---+---+
+1 |   | R | B | R | C | R | B |   |  12 pieces per side, no reinforcements
+  +---+---+---+---+---+---+---+---+
+    a   b   c   d   e   f   g   h</pre>
+    </div>
+
+    <h3>Pieces</h3>
+    <table>
+      <thead>
+        <tr><th>Piece</th><th>Symbol</th><th>Move</th><th>Promotion Cost</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Commander</td><td>C</td><td>1 square, any direction (king-like)</td><td>&mdash;</td></tr>
+        <tr><td>Warrior</td><td>W</td><td>1 forward; captures diagonal-forward (pawn-like)</td><td>base piece</td></tr>
+        <tr><td>Rider</td><td>R</td><td>Up to 7 orthogonal / 3 diagonal (no jumping)</td><td>3 Gold</td></tr>
+        <tr><td>Bombard</td><td>B</td><td>1 square any direction + ranged attack at 2 squares</td><td>5 Gold</td></tr>
+        <tr><td>Lancer</td><td>L</td><td>Up to 7 squares any direction, can jump 1 piece</td><td>7 Gold</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Key Rules</h3>
+    <p>
+      <strong>Chess-style capture:</strong> attacker always takes the defender's square.
+      <strong>Checkmate wins.</strong> Turn 100 with no checkmate = draw.
+      Threefold repetition = draw. 50-move rule (no capture/promotion) = draw.
+    </p>
+  </div>
+</section>
+
+<!-- How it works -->
+<section>
+  <div class="container">
+    <h2>How It Works</h2>
+    <p>
+      Each coding agent (Claude Code, Codex CLI, Gemini CLI, etc.) is launched in an isolated
+      sandbox with only the benchmark CLI script and GM game data. The agent reads the docs,
+      creates a session, and drives the entire benchmark autonomously via bash commands.
+    </p>
+
+    <h3>Session Lifecycle</h3>
+    <div class="lifecycle">
+      <div class="phase-box">
+        <div class="name">Baseline</div>
+        <div class="detail">Play rated games<br>with zero knowledge</div>
+      </div>
+      <span class="phase-arrow">&rarr;</span>
+      <div class="phase-box">
+        <div class="name">Learning</div>
+        <div class="detail">Study GM games<br>Practice matches</div>
+      </div>
+      <span class="phase-arrow">&rarr;</span>
+      <div class="phase-box">
+        <div class="name">Evaluation</div>
+        <div class="detail">Play rated games<br>to measure final ELO</div>
+      </div>
+      <span class="phase-arrow">&rarr;</span>
+      <div class="phase-box">
+        <div class="name">Complete</div>
+        <div class="detail">ELO gain =<br>final &minus; baseline</div>
+      </div>
+    </div>
+
+    <h3>What Agents Get</h3>
+    <div class="concepts">
+      <div class="concept-card">
+        <div class="label">CLI Interface</div>
+        <div class="title">agent_cli.py</div>
+        <div class="desc">Single Python script with all docs in the docstring. Commands: create, rules, study, practice, move, evaluate, result.</div>
+      </div>
+      <div class="concept-card">
+        <div class="label">Study Material</div>
+        <div class="title">GM Games (DCN notation)</div>
+        <div class="desc">Expert-level games generated by AlphaZero self-play. Agents study these to learn strategy.</div>
+      </div>
+      <div class="concept-card">
+        <div class="label">Budget</div>
+        <div class="title">Token budget</div>
+        <div class="desc">Fixed token budget (e.g. 500K). Every CLI call costs tokens. Agents must balance learning vs evaluation.</div>
+      </div>
+    </div>
+
+    <h3>Running a Benchmark</h3>
+    <div class="code-block">
+<pre><span class="comment"># Launch Claude Code in sandbox</span>
+<span class="cmd">cd "$SANDBOX" && claude -p "Read scripts/agent_cli.py. \
+  Run the full DaveChess benchmark..." \
+  --allowedTools "Bash(run benchmark commands)" \
+  --output-format stream-json --verbose</span>
+
+<span class="comment"># Launch Codex CLI in sandbox</span>
+<span class="cmd">cd "$SANDBOX" && codex exec --full-auto --json "Read scripts/agent_cli.py. \
+  Run the full DaveChess benchmark..."</span>
+
+<span class="comment"># Launch Gemini CLI in sandbox</span>
+<span class="cmd">cd "$SANDBOX" && gemini -p "Read scripts/agent_cli.py. \
+  Run the full DaveChess benchmark..." --yolo</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- Results -->
+<section id="results">
+  <div class="container">
+    <h2>Results</h2>
+    <div class="placeholder-badge">Placeholder &mdash; harness validation run (MCTSLite opponents, no trained NN)</div>
+
+    <div class="stats-row">
+      <div class="stat">
+        <div class="num">3</div>
+        <div class="label">Agents Tested</div>
+      </div>
+      <div class="stat">
+        <div class="num">500K</div>
+        <div class="label">Token Budget</div>
+      </div>
+      <div class="stat">
+        <div class="num">2,609</div>
+        <div class="label">Total CLI Calls</div>
+      </div>
+      <div class="stat">
+        <div class="num">17</div>
+        <div class="label">Games Played</div>
+      </div>
+    </div>
+
+    <div class="results-grid">
+      <!-- Claude Code -->
+      <div class="result-card">
+        <div class="agent-name">Claude Code</div>
+        <div class="agent-model">Claude Opus 4.6 &bull; v2.1.37</div>
+        <div class="elo-row">
+          <span class="elo-label">Baseline ELO</span>
+          <span class="elo-value">969</span>
+        </div>
+        <div class="elo-row">
+          <span class="elo-label">Final ELO</span>
+          <span class="elo-value">944</span>
+        </div>
+        <div class="elo-row">
+          <span class="elo-label">Games (base / eval)</span>
+          <span class="elo-value">5 / 1</span>
+        </div>
+        <div class="elo-row">
+          <span class="elo-label">CLI Calls</span>
+          <span class="elo-value">357</span>
+        </div>
+        <div class="elo-row">
+          <span class="elo-label">Approach</span>
+          <span class="elo-value" style="font-size:0.85rem">Heuristic scorer</span>
+        </div>
+        <div class="gain negative">&minus;25 ELO</div>
+      </div>
+
+      <!-- Codex CLI -->
+      <div class="result-card">
+        <div class="agent-name">Codex CLI</div>
+        <div class="agent-model">GPT &bull; v0.87.0</div>
+        <div class="elo-row">
+          <span class="elo-label">Baseline ELO</span>
+          <span class="elo-value">692</span>
+        </div>
+        <div class="elo-row">
+          <span class="elo-label">Final ELO</span>
+          <span class="elo-value">1,106</span>
+        </div>
+        <div class="elo-row">
+          <span class="elo-label">Games (base / eval)</span>
+          <span class="elo-value">10 / 1</span>
+        </div>
+        <div class="elo-row">
+          <span class="elo-label">CLI Calls</span>
+          <span class="elo-value">2,246</span>
+        </div>
+        <div class="elo-row">
+          <span class="elo-label">Approach</span>
+          <span class="elo-value" style="font-size:0.85rem">Always first legal move</span>
+        </div>
+        <div class="gain positive">+414 ELO</div>
+      </div>
+
+      <!-- OpenCode -->
+      <div class="result-card">
+        <div class="agent-name">OpenCode</div>
+        <div class="agent-model">gpt-5-nano (free) &bull; v1.1.53</div>
+        <div class="elo-row">
+          <span class="elo-label">Baseline ELO</span>
+          <span class="elo-value">&mdash;</span>
+        </div>
+        <div class="elo-row">
+          <span class="elo-label">Final ELO</span>
+          <span class="elo-value">&mdash;</span>
+        </div>
+        <div class="elo-row">
+          <span class="elo-label">Games (base / eval)</span>
+          <span class="elo-value">0 / 0</span>
+        </div>
+        <div class="elo-row">
+          <span class="elo-label">CLI Calls</span>
+          <span class="elo-value">6</span>
+        </div>
+        <div class="elo-row">
+          <span class="elo-label">Approach</span>
+          <span class="elo-value" style="font-size:0.85rem">Single-turn (stopped)</span>
+        </div>
+        <div class="gain neutral">DNF</div>
+      </div>
+    </div>
+
+    <h3>Notes on Placeholder Results</h3>
+    <p>
+      These results are from a harness validation run using MCTSLite opponents (random rollouts,
+      no trained neural network). Most games end in draws at the 100-turn limit. ELO numbers
+      are not meaningful &mdash; real results require NN-trained opponents that produce decisive games.
+    </p>
+    <p>
+      Codex CLI's +414 ELO gain is a measurement artifact: its baseline ELO was pulled low by
+      two losses (692), then a single eval draw against ELO 1204 jumped it to 1106. With only
+      1 eval game, the rating deviation is 267 (very uncertain).
+    </p>
+    <p>
+      OpenCode's <code>run</code> mode is single-turn &mdash; it exits after one model response
+      instead of looping autonomously. This requires a wrapper script or the <code>--continue</code>
+      flag for benchmark use.
+    </p>
+  </div>
+</section>
+
+<!-- Tested Agents -->
+<section>
+  <div class="container">
+    <h2>Supported Agents</h2>
+    <p>
+      GameBench works with any coding agent that has a non-interactive mode and can run bash commands.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Agent</th><th>Non-interactive Command</th><th>Auto-approve</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Claude Code</td>
+          <td><code>claude -p "prompt"</code></td>
+          <td><code>--allowedTools "Bash(...)"</code></td>
+          <td style="color:var(--green)">Tested</td>
+        </tr>
+        <tr>
+          <td>Codex CLI</td>
+          <td><code>codex exec "prompt"</code></td>
+          <td><code>--full-auto</code></td>
+          <td style="color:var(--green)">Tested</td>
+        </tr>
+        <tr>
+          <td>Gemini CLI</td>
+          <td><code>gemini -p "prompt"</code></td>
+          <td><code>--yolo</code></td>
+          <td style="color:var(--gold)">Untested</td>
+        </tr>
+        <tr>
+          <td>OpenCode</td>
+          <td><code>opencode run "prompt"</code></td>
+          <td>default (auto)</td>
+          <td style="color:var(--orange)">Single-turn only</td>
+        </tr>
+        <tr>
+          <td>Goose</td>
+          <td><code>goose run -t "prompt"</code></td>
+          <td>&mdash;</td>
+          <td style="color:var(--text-dim)">Planned</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Technical -->
+<section>
+  <div class="container">
+    <h2>Technical Details</h2>
+
+    <h3>AlphaZero Engine</h3>
+    <p>
+      DaveChess strategy is learned via AlphaZero self-play training on a Jetson Orin Nano.
+      The engine uses a 20-block, 256-filter ResNet (~24M parameters) with PUCT MCTS
+      (4 CPU workers + GPU inference). Self-play games serve as the "GM games" that
+      benchmark agents study to learn strategy.
+    </p>
+
+    <h3>Opponent Calibration</h3>
+    <p>
+      Opponents are MCTS agents at varying simulation counts, calibrated via round-robin
+      Glicko-2 tournament. The opponent pool maps ELO to simulation count using log-space
+      interpolation, providing opponents at any difficulty level.
+    </p>
+
+    <h3>Rating System</h3>
+    <p>
+      Glicko-2 sequential testing with adaptive opponent selection (opponents chosen near
+      the agent's current estimated ELO for maximum information gain). Convergence when
+      rating deviation drops below threshold.
+    </p>
+
+    <h3>Sandbox Isolation</h3>
+    <p>
+      Agents run in an isolated directory containing only <code>agent_cli.py</code> and
+      GM game files. They cannot access the game engine source code, opponent logic, or
+      rules implementation &mdash; they must learn entirely from the CLI docs and game examples.
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>
+      GameBench &mdash; <a href="https://github.com/davidrimshnick/GameBench">GitHub</a>
+      &bull; MIT License
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>
