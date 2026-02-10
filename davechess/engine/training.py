@@ -761,30 +761,27 @@ class Trainer:
             if self.device != "cpu":
                 torch.cuda.empty_cache()
 
-        # W&B iteration summary alert
+        # W&B summary update (every iteration) + alert (only on ELO probe iterations)
         if self.use_wandb:
             wandb.run.summary["total_iterations"] = self.iteration
-            total_sp = sp_stats['white_wins'] + sp_stats['black_wins'] + sp_stats['draws']
-            sp_draw_pct = sp_stats['draws'] / total_sp * 100 if total_sp > 0 else 0
-            iter_elapsed = time.time() - iteration_start
-            elo_str = f"ELO: {self.elo_estimate:.0f}" if elo_results else "ELO: (no probe this iter)"
-            wandb.alert(
-                title=f"Iter {self.iteration}: {elo_str}",
-                text=(
-                    f"{elo_str} | Sims: {num_sims}\n"
-                    f"Self-play: {sp_stats['white_wins']}W/{sp_stats['black_wins']}B/{sp_stats['draws']}D "
-                    f"({sp_draw_pct:.0f}% draws) avg={sp_stats['avg_game_length']:.0f} moves "
-                    f"[{sp_stats['min_game_length']}-{sp_stats['max_game_length']}]\n"
-                    f"Loss: policy={avg_losses['avg_policy_loss']:.3f} value={avg_losses['avg_value_loss']:.3f}\n"
-                    f"Buffer: {len(self.replay_buffer)} | Mem: {_get_rss_mb():.0f}MB | Time: {iter_elapsed/60:.1f}min"
-                ),
-                wait_duration=0,
-            )
-            # Alert on ELO milestones
             if elo_results:
+                total_sp = sp_stats['white_wins'] + sp_stats['black_wins'] + sp_stats['draws']
+                sp_draw_pct = sp_stats['draws'] / total_sp * 100 if total_sp > 0 else 0
+                iter_elapsed = time.time() - iteration_start
+                wandb.alert(
+                    title=f"Iter {self.iteration}: ELO {self.elo_estimate:.0f}",
+                    text=(
+                        f"ELO: {self.elo_estimate:.0f} (W:{elo_results['wins']} L:{elo_results['losses']} D:{elo_results['draws']}) | Sims: {num_sims}\n"
+                        f"Self-play: {sp_stats['white_wins']}W/{sp_stats['black_wins']}B/{sp_stats['draws']}D "
+                        f"({sp_draw_pct:.0f}% draws) avg={sp_stats['avg_game_length']:.0f} moves "
+                        f"[{sp_stats['min_game_length']}-{sp_stats['max_game_length']}]\n"
+                        f"Loss: policy={avg_losses['avg_policy_loss']:.3f} value={avg_losses['avg_value_loss']:.3f}\n"
+                        f"Buffer: {len(self.replay_buffer)} | Mem: {_get_rss_mb():.0f}MB | Time: {iter_elapsed/60:.1f}min"
+                    ),
+                    wait_duration=0,
+                )
                 for threshold in [500, 1000, 1500, 2000]:
                     if self.elo_estimate >= threshold:
-                        # Only alert once per milestone (check if this is the first time)
                         milestone_key = f"elo_milestone_{threshold}"
                         if not wandb.run.summary.get(milestone_key):
                             wandb.run.summary[milestone_key] = True
