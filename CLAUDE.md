@@ -71,6 +71,27 @@ from davechess.benchmark.sdk import BenchmarkClient
 client = BenchmarkClient("http://localhost:8000")
 ```
 
+### Benchmark Preparation (run on Jetson or any GPU/CPU machine)
+```bash
+# Full pipeline: download best model from W&B, extract GM games, calibrate
+python scripts/prepare_benchmark.py --all
+
+# Full pipeline on CPU (slower calibration, no CUDA needed)
+python scripts/prepare_benchmark.py --all --device cpu
+
+# Individual steps
+python scripts/prepare_benchmark.py --download-model          # best.pt from W&B
+python scripts/prepare_benchmark.py --download-games           # GM games from W&B
+python scripts/prepare_benchmark.py --calibrate                # NN-MCTS ELO calibration
+python scripts/prepare_benchmark.py --check                    # Readiness check
+
+# Use specific W&B run instead of auto-detecting highest ELO
+python scripts/prepare_benchmark.py --download-model --run-id xrjpggwn
+
+# Force re-download/re-calibrate
+python scripts/prepare_benchmark.py --all --force
+```
+
 ### Legacy Harness (API-level token tracking)
 ```bash
 # Run benchmark with direct API calls and token budget enforcement
@@ -270,10 +291,11 @@ The trained neural network is the foundation of the entire benchmark. It serves 
 
 **Pipeline order:**
 1. **Train the model** on Jetson (W&B tracks progress). Wait for sufficient ELO.
-2. **Download best.pt** from W&B artifacts to `checkpoints/best.pt`.
-3. **Generate GM games** — Run the model's self-play to produce DCN game files in `data/gm_games/`.
-4. **Calibrate opponents** — Run `calibrate_opponents.py --checkpoint checkpoints/best.pt` to generate `checkpoints/calibration.json` with ELO ratings for each MCTS sim count against this specific model.
-5. **Run benchmark** — Launch agents in sandboxes with the CLI, GM games, and calibration data.
+2. **Run `prepare_benchmark.py --all`** — This single script handles steps 2-4:
+   - Downloads `best.pt` from the highest-ELO W&B run to `checkpoints/`
+   - Downloads game logs from high-ELO training runs, splits multi-game DCN files into individual files in `data/gm_games/`
+   - Runs round-robin ELO calibration (NN-MCTS at varying sim counts) and saves `checkpoints/calibration.json`
+3. **Run benchmark** — Launch agents in sandboxes with the CLI, GM games, and calibration data.
 
 Calibration is model-specific: if the model is retrained, the calibration must be re-run. The hardcoded defaults in `agent_cli.py` and `api_server.yaml` are rough placeholders; real runs must use the calibration JSON.
 
@@ -288,6 +310,7 @@ Key design decisions:
 - **Move-by-move play**: agent plays each move individually via tool calls (not pre-committed strategies)
 
 Key files:
+- `scripts/prepare_benchmark.py` — Full pipeline: download model + games from W&B, calibrate
 - `scripts/agent_cli.py` — CLI interface (single file with all docs)
 - `scripts/run_benchmark.py` — External harness with token budget enforcement
 - `davechess/benchmark/api/session.py` — Core session lifecycle
