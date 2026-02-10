@@ -28,11 +28,8 @@ training:
   weight_decay: 0.0001
   steps_per_iteration: 800     # ~2 passes through 50K buffer per iteration
   checkpoint_interval: 100
-  eval_games: 20               # Need enough games to reliably detect improvement
-  eval_simulations: 100        # Match self-play sim count
-  eval_threshold: 0.51
+  elo_probe_interval: 5        # MCTSLite ELO estimation every N iterations (non-gating)
   max_iterations: 200
-  max_consecutive_rejections: 7   # Auto-reset to escape local minima
 
 paths:
   checkpoint_dir: "checkpoints"

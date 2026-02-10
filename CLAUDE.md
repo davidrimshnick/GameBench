@@ -8,14 +8,16 @@ GameBench is a benchmark measuring how efficiently LLMs learn novel strategic re
 
 ## Current Status (Feb 2026)
 
-**Training pipeline has been fixed. Need to retrain from scratch, then calibrate and benchmark.**
+**Training restarted from scratch with pure AlphaZero architecture (no best-network gatekeeper). Monitoring on W&B.**
 
 Previous `best.pt` (claimed ELO 1982) was broken — see Known Issues #15-17. The model was only pre-trained on seeds (354 steps, iteration 0) with fictional ELO inherited across 28 crashed restarts. It could not beat random MCTS.
 
 What's done:
 - Training pipeline bugs fixed (see Known Issues #15-17)
+- **Switched to pure AlphaZero** — single continuously-updated network, no best/training split, no eval gatekeeper (see Known Issue #19)
+- **MCTSLite ELO probes** — lightweight, non-gating ELO estimation every 5 iterations against MCTSLite at 50 sims
 - Sandbox setup and `agent_cli.py` working
-- GitHub Pages leaderboard at `docs/index.html` (currently has placeholder heuristic-player data)
+- GitHub Pages leaderboard at `docs/index.html` (currently has mockup data)
 - Benchmark automation scripts: `run_overnight_benchmark.sh` (runs all 3 agents sequentially), per-agent launchers (`_launch_codex_benchmark.py`, `_launch_gemini_benchmark.py`), and a heuristic baseline player (`_play_benchmark.py`)
 - Placeholder results in `benchmark_results/` from heuristic baseline player (not real LLM runs — `tokens.total_used = 0` in all results). These serve as format examples for the leaderboard.
 - Benchmark integrity rules added to `agent_cli.py` and `davechess/benchmark/prompt.py` — agents must reason about moves themselves, no writing game engines or search algorithms
@@ -247,6 +249,9 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 18. **Random Opponent Check Was Non-Gating**: `evaluate_network()` checked random opponent results but only logged warnings. A model losing to random MCTS (W:0 L:2 D:2) could still be "accepted" based on vs-best win rate.
    - Solution: If random losses > random wins, force win_rate=0 to veto promotion.
+
+19. **Best/Training Network Split Was AlphaGo Zero, Not AlphaZero**: The codebase used an AlphaGo Zero-style architecture with separate best and training networks, an eval gatekeeper, and promotion logic. Real AlphaZero uses a single continuously-updated network — DeepMind dropped the best/training split because it wastes ~50% of compute on eval games that produce zero training data. The eval gatekeeper also created perverse dynamics: ELO was measured relative to best (not absolute), and combined with draw-counting bugs (#15) and crash inheritance (#16), ELO ratcheted up without real improvement.
+   - Solution: Removed `best_network` entirely. Single network self-plays and continuously trains. No eval gatekeeper, no consecutive rejection logic, no promotion. ELO is estimated via periodic MCTSLite probes (every 5 iterations, non-gating). `best.pt` is saved every iteration for benchmark use.
 
 ### Hardware Constraints (Jetson Orin Nano)
 

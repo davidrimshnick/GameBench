@@ -133,13 +133,6 @@ class Trainer:
             input_planes=net_cfg.get("input_planes", 12),
         )  # CPU initially, moved to GPU in train()
 
-        self.best_network = DaveChessNetwork(
-            num_res_blocks=net_cfg.get("num_res_blocks", 5),
-            num_filters=net_cfg.get("num_filters", 64),
-            input_planes=net_cfg.get("input_planes", 12),
-        )  # CPU always
-        self.best_network.load_state_dict(self.network.state_dict())
-
         train_cfg = config.get("training", {})
         self.optimizer = optim.SGD(
             self.network.parameters(),
@@ -155,9 +148,7 @@ class Trainer:
         self.scaler = GradScaler("cuda") if HAS_TORCH and device != "cpu" else None
         self.training_step = 0
         self.iteration = 0
-        self.best_elo_estimate = 0
-        self.elo_estimate = 0  # Current network's estimated ELO (baseline=0)
-        self.consecutive_rejections = 0
+        self.elo_estimate = 0  # Running ELO estimate from MCTSLite probes
 
         # Paths
         paths = config.get("paths", {})
@@ -190,8 +181,7 @@ class Trainer:
             "optimizer_state": self.optimizer.state_dict(),
             "training_step": self.training_step,
             "iteration": self.iteration,
-            "best_elo_estimate": self.best_elo_estimate,
-            "consecutive_rejections": self.consecutive_rejections,
+            "elo_estimate": self.elo_estimate,
         }
         if self.scaler is not None:
             checkpoint["scaler_state"] = self.scaler.state_dict()
@@ -221,13 +211,13 @@ class Trainer:
         return path
 
     def save_best(self):
-        """Save the best network."""
+        """Save the current network as best.pt (for benchmark use)."""
         path = self.checkpoint_dir / "best.pt"
         torch.save({
-            "network_state": self.best_network.state_dict(),
+            "network_state": self.network.state_dict(),
             "training_step": self.training_step,
             "iteration": self.iteration,
-            "elo_estimate": self.best_elo_estimate,
+            "elo_estimate": self.elo_estimate,
         }, path)
         logger.info(f"Saved best model: {path}")
 
@@ -251,8 +241,7 @@ class Trainer:
         self.optimizer.load_state_dict(checkpoint["optimizer_state"])
         self.training_step = checkpoint["training_step"]
         self.iteration = checkpoint["iteration"]
-        self.best_elo_estimate = checkpoint.get("best_elo_estimate", 0)
-        self.consecutive_rejections = checkpoint.get("consecutive_rejections", 0)
+        self.elo_estimate = checkpoint.get("elo_estimate", checkpoint.get("best_elo_estimate", 0))
 
         if self.scaler is not None and "scaler_state" in checkpoint:
             self.scaler.load_state_dict(checkpoint["scaler_state"])
@@ -280,14 +269,6 @@ class Trainer:
                         break
             except Exception as e:
                 logger.warning(f"Could not load replay buffer from W&B: {e}")
-
-        # Load best network on CPU (moved to GPU only when needed)
-        best_path = self.checkpoint_dir / "best.pt"
-        if best_path.exists():
-            best_ckpt = torch.load(str(best_path), map_location="cpu", weights_only=False)
-            self.best_network.load_state_dict(best_ckpt["network_state"])
-            del best_ckpt
-            gc.collect()
 
         logger.info(f"Resumed from step {self.training_step}, iteration {self.iteration}")
         return True
@@ -356,21 +337,23 @@ class Trainer:
 
         return losses
 
-    def evaluate_network(self, num_games: int = 40,
-                         num_simulations: int = 100,
-                         num_random_games: int = 4) -> dict:
-        """Evaluate current network against best network + random opponent.
+    def estimate_elo_mctslite(self, num_games: int = 4,
+                              mctslite_sims: int = 50) -> dict:
+        """Estimate ELO by playing the NN against MCTSLite (no neural network).
 
-        Plays num_games against best network, then num_random_games against
-        a random MCTS (no NN). Must win all random games to pass eval —
-        losing to random play indicates overfitting.
+        This is a lightweight, non-gating probe. MCTSLite uses random rollouts
+        only, so it's cheap and provides an absolute strength reference.
+        The NN plays with MCTS (using its own policy/value), MCTSLite uses
+        random rollouts. We estimate ELO from the win rate against MCTSLite.
 
-        Returns dict with win_rate and detailed results.
+        MCTSLite at 50 sims ≈ ELO 200-400 (a weak but non-trivial baseline).
         """
-        current_mcts = MCTS(self.network, num_simulations=num_simulations,
-                            temperature=0.1, device=self.device)
-        best_mcts = MCTS(self.best_network, num_simulations=num_simulations,
-                         temperature=0.1, device=self.device)
+        from davechess.engine.mcts_lite import MCTSLite
+
+        # Use modest NN-MCTS sims for speed (this is just a probe)
+        nn_sims = max(25, mctslite_sims)
+        nn_mcts = MCTS(self.network, num_simulations=nn_sims,
+                       temperature=0.1, device=self.device)
 
         wins = 0
         losses = 0
@@ -379,7 +362,8 @@ class Trainer:
 
         for game_idx in range(num_games):
             state = GameState()
-            current_is_white = (game_idx % 2 == 0)
+            nn_is_white = (game_idx % 2 == 0)
+            mctslite = MCTSLite(num_simulations=mctslite_sims)
             move_count = 0
 
             while not state.done:
@@ -387,15 +371,15 @@ class Trainer:
                 if not moves:
                     break
 
-                is_current_turn = (
-                    (state.current_player == Player.WHITE and current_is_white) or
-                    (state.current_player == Player.BLACK and not current_is_white)
+                is_nn_turn = (
+                    (state.current_player == Player.WHITE and nn_is_white) or
+                    (state.current_player == Player.BLACK and not nn_is_white)
                 )
 
-                if is_current_turn:
-                    move, _ = current_mcts.get_move(state, add_noise=False)
+                if is_nn_turn:
+                    move, _ = nn_mcts.get_move(state, add_noise=False)
                 else:
-                    move, _ = best_mcts.get_move(state, add_noise=False)
+                    move = mctslite.search(state)
 
                 apply_move(state, move)
                 move_count += 1
@@ -403,92 +387,43 @@ class Trainer:
             game_lengths.append(move_count)
 
             if state.winner is not None:
-                current_won = (
-                    (state.winner == Player.WHITE and current_is_white) or
-                    (state.winner == Player.BLACK and not current_is_white)
+                nn_won = (
+                    (state.winner == Player.WHITE and nn_is_white) or
+                    (state.winner == Player.BLACK and not nn_is_white)
                 )
-                if current_won:
+                if nn_won:
                     wins += 1
+                    result = "W"
                 else:
                     losses += 1
+                    result = "L"
             else:
                 draws += 1
+                result = "D"
 
-        # Win rate includes draws as half a point (standard in chess/AlphaZero).
-        # Excluding draws inflates win_rate when most games are drawn —
-        # e.g. W:2 L:1 D:7 would give 0.667 instead of the correct 0.55.
-        total_games = wins + losses + draws
-        win_rate = (wins + 0.5 * draws) / total_games if total_games > 0 else 0.5
+            logger.info(f"  MCTSLite probe {game_idx+1}/{num_games}: {result} "
+                        f"({move_count} moves, NN as {'W' if nn_is_white else 'B'}) "
+                        f"[running: {wins}W {draws}D {losses}L]")
 
-        # Random opponent sanity check: must win all games vs random MCTS
-        random_wins = 0
-        random_losses = 0
-        random_draws = 0
-        if num_random_games > 0:
-            random_mcts = MCTS(None, num_simulations=num_simulations,
-                               device=self.device)
-            for game_idx in range(num_random_games):
-                state = GameState()
-                current_is_white = (game_idx % 2 == 0)
-                move_count = 0
-
-                while not state.done:
-                    moves = generate_legal_moves(state)
-                    if not moves:
-                        break
-
-                    is_current_turn = (
-                        (state.current_player == Player.WHITE and current_is_white) or
-                        (state.current_player == Player.BLACK and not current_is_white)
-                    )
-
-                    if is_current_turn:
-                        move, _ = current_mcts.get_move(state, add_noise=False)
-                    else:
-                        move, _ = random_mcts.get_move(state, add_noise=False)
-
-                    apply_move(state, move)
-                    move_count += 1
-
-                game_lengths.append(move_count)
-
-                if state.winner is not None:
-                    current_won = (
-                        (state.winner == Player.WHITE and current_is_white) or
-                        (state.winner == Player.BLACK and not current_is_white)
-                    )
-                    if current_won:
-                        random_wins += 1
-                    else:
-                        random_losses += 1
-                else:
-                    random_draws += 1
-
-            del random_mcts
-            logger.info(f"Random eval: W:{random_wins} L:{random_losses} D:{random_draws}")
-
-            # Gate promotion on random opponent performance: losing to random
-            # means the model is fundamentally broken, regardless of vs-best results.
-            if random_losses > random_wins:
-                logger.warning(f"Random opponent VETO — more losses than wins "
-                               f"({random_losses}L > {random_wins}W). Forcing win_rate=0.")
-                win_rate = 0.0
-            elif random_wins < num_random_games // 2 + 1:
-                logger.info(f"Random opponent note — only won {random_wins}/{num_random_games}")
-
-        # Explicitly free MCTS trees (circular parent↔child refs)
-        del current_mcts, best_mcts
+        del nn_mcts
         gc.collect()
 
+        total = wins + losses + draws
+        win_rate = (wins + 0.5 * draws) / total if total > 0 else 0.5
+
+        # Estimate ELO: MCTSLite at 50 sims ≈ 300 ELO baseline
+        mctslite_elo = 300
+        elo_diff = win_rate_to_elo_diff(win_rate)
+        estimated_elo = mctslite_elo + elo_diff
+
         return {
-            "win_rate": win_rate,
             "wins": wins,
             "losses": losses,
             "draws": draws,
-            "random_wins": random_wins,
-            "random_losses": random_losses,
-            "random_draws": random_draws,
+            "win_rate": win_rate,
             "avg_game_length": sum(game_lengths) / len(game_lengths) if game_lengths else 0,
+            "estimated_elo": estimated_elo,
+            "mctslite_sims": mctslite_sims,
         }
 
     def log_metrics(self, metrics: dict):
@@ -617,8 +552,8 @@ class Trainer:
         # This ensures self-play data always matches the network being trained,
         # avoiding distribution mismatch that causes eval regression.
         base_sims = mcts_cfg.get("num_simulations", 200)
-        num_sims = adaptive_simulations(self.best_elo_estimate, min_sims=25, max_sims=base_sims)
-        logger.info(f"Self-play phase... (adaptive sims: {num_sims}, ELO={self.best_elo_estimate:.0f})")
+        num_sims = adaptive_simulations(self.elo_estimate, min_sims=25, max_sims=base_sims)
+        logger.info(f"Self-play phase... (adaptive sims: {num_sims}, ELO={self.elo_estimate:.0f})")
         selfplay_start = time.time()
         num_workers = sp_cfg.get("num_workers", 1)
         parallel_games = sp_cfg.get("parallel_games", 0)
@@ -697,7 +632,7 @@ class Trainer:
                         "Iteration": str(self.iteration),
                         "Game": str(i + 1),
                         "Moves": str(rec["length"]),
-                        "ELO": f"{self.best_elo_estimate:.0f}",
+                        "ELO": f"{self.elo_estimate:.0f}",
                     }
                     result_map = {"white": "1-0", "black": "0-1", "draw": "1/2-1/2"}
                     result = result_map.get(rec["winner"], "1/2-1/2")
@@ -714,7 +649,7 @@ class Trainer:
                             metadata={
                                 "iteration": self.iteration,
                                 "num_games": len(dcn_games),
-                                "elo": self.best_elo_estimate,
+                                "elo": self.elo_estimate,
                             },
                         )
                         artifact.add_file(dcn_path)
@@ -769,49 +704,46 @@ class Trainer:
         }
         logger.info(f"Training: {avg_losses}")
 
-        # Detect loss spikes (divergence)
+        # Detect loss spikes (divergence) — halve LR and continue
         if avg_losses["avg_total_loss"] > 10.0:
-            logger.warning("Loss spike detected! Rolling back to best model.")
-            self.network.load_state_dict(self.best_network.state_dict())
-            # Reduce learning rate
+            logger.warning("Loss spike detected! Halving learning rate.")
             for param_group in self.optimizer.param_groups:
                 param_group["lr"] *= 0.5
                 logger.info(f"Reduced LR to {param_group['lr']}")
 
-        # Evaluation phase — temporarily move best_network to GPU
-        # Networks are ~3MB each, so dual-GPU is fine. Clear cache first
-        # to defragment after training phase.
-        eval_start = time.time()
-        eval_games = train_cfg.get("eval_games", 40)
-        base_eval_sims = train_cfg.get("eval_simulations", 50)
-        eval_sims = adaptive_simulations(self.best_elo_estimate, min_sims=30, max_sims=base_eval_sims)
-        _log_memory("before_eval")
-        logger.info(f"Evaluation phase... (adaptive sims: {eval_sims})")
-        eval_threshold = train_cfg.get("eval_threshold", 0.55)
-        gc.collect()
-        if self.device != "cpu":
-            torch.cuda.empty_cache()
-        self.best_network.to(self.device)
-        eval_results = self.evaluate_network(num_games=eval_games,
-                                              num_simulations=eval_sims)
-        self.best_network.to("cpu")
-        eval_elapsed = time.time() - eval_start
-        win_rate = eval_results["win_rate"]
-        logger.info(f"Evaluation: win_rate={win_rate:.3f} "
-                    f"(W:{eval_results['wins']} L:{eval_results['losses']} D:{eval_results['draws']}) "
-                    f"avg_length={eval_results['avg_game_length']:.0f}")
+        # Pure AlphaZero: no eval gatekeeper. Save best.pt every iteration.
+        self.save_best()
 
-        # Update ELO estimate: current network vs best network
-        elo_diff = win_rate_to_elo_diff(win_rate)
-        if accepted := (win_rate >= (0.5 if self.iteration <= 10 else eval_threshold)):
-            # ELO gain relative to previous best
-            self.elo_estimate = self.best_elo_estimate + elo_diff
-            self.best_elo_estimate = self.elo_estimate
-            logger.info(f"New best network accepted! ELO: {self.elo_estimate:.0f} (+{elo_diff:.0f})")
-            self.best_network.load_state_dict(self.network.state_dict())
-            self.consecutive_rejections = 0
-            self.save_best()
-            # Backup best model to W&B
+        # Periodic MCTSLite ELO probe (every 5 iterations, non-gating)
+        elo_interval = train_cfg.get("elo_probe_interval", 5)
+        elo_results = None
+        if self.iteration % elo_interval == 0:
+            _log_memory("before_elo_probe")
+            logger.info("MCTSLite ELO probe...")
+            gc.collect()
+            if self.device != "cpu":
+                torch.cuda.empty_cache()
+            elo_results = self.estimate_elo_mctslite(
+                num_games=4, mctslite_sims=50)
+            self.elo_estimate = elo_results["estimated_elo"]
+            logger.info(f"MCTSLite ELO estimate: {self.elo_estimate:.0f} "
+                        f"(W:{elo_results['wins']} L:{elo_results['losses']} D:{elo_results['draws']} "
+                        f"win_rate={elo_results['win_rate']:.2f} avg_len={elo_results['avg_game_length']:.0f})")
+
+            if self.use_wandb:
+                elo_metrics = {
+                    "elo/estimate": self.elo_estimate,
+                    "elo/vs_mctslite_win_rate": elo_results["win_rate"],
+                    "elo/vs_mctslite_wins": elo_results["wins"],
+                    "elo/vs_mctslite_losses": elo_results["losses"],
+                    "elo/vs_mctslite_draws": elo_results["draws"],
+                    "elo/vs_mctslite_avg_length": elo_results["avg_game_length"],
+                }
+                _safe_wandb_log(elo_metrics, step=self.training_step)
+                wandb.run.summary["elo_estimate"] = self.elo_estimate
+                wandb.run.summary["total_iterations"] = self.iteration
+
+            # Upload best model to W&B on ELO probe iterations
             if self.use_wandb:
                 artifact = wandb.Artifact(
                     f"best-model-iter{self.iteration}",
@@ -819,90 +751,48 @@ class Trainer:
                     metadata={
                         "iteration": self.iteration,
                         "training_step": self.training_step,
-                        "eval_win_rate": win_rate,
+                        "elo_estimate": self.elo_estimate,
                     },
                 )
                 artifact.add_file(str(self.checkpoint_dir / "best.pt"))
                 _safe_wandb_log_artifact(artifact)
-                logger.info("Uploaded best model to W&B artifacts")
-        else:
-            self.consecutive_rejections += 1
-            logger.info(f"New network rejected, keeping previous best. "
-                        f"({self.consecutive_rejections} consecutive rejections)")
-            # Auto-reset: after 7 consecutive rejections, reset training network
-            # to best model to escape local minima
-            max_rejections = train_cfg.get("max_consecutive_rejections", 7)
-            if self.consecutive_rejections >= max_rejections:
-                logger.warning(f"Resetting training network to best model after "
-                               f"{self.consecutive_rejections} consecutive rejections")
-                self.network.load_state_dict(self.best_network.state_dict())
-                self.consecutive_rejections = 0
-                if self.use_wandb:
-                    wandb.alert(
-                        title=f"Auto-reset at iter {self.iteration}",
-                        text=f"Training network reset to best model (ELO {self.best_elo_estimate:.0f}) "
-                             f"after {max_rejections} consecutive rejections",
-                        wait_duration=0,
-                    )
 
-        eval_metrics = {
-            "iteration": self.iteration,
-            "eval/win_rate": win_rate,
-            "eval/wins": eval_results["wins"],
-            "eval/losses": eval_results["losses"],
-            "eval/draws": eval_results["draws"],
-            "eval/random_wins": eval_results["random_wins"],
-            "eval/random_losses": eval_results["random_losses"],
-            "eval/random_draws": eval_results["random_draws"],
-            "eval/avg_game_length": eval_results["avg_game_length"],
-            "eval/accepted": int(accepted),
-            "eval/elapsed_sec": eval_elapsed,
-            "elo": self.best_elo_estimate,
-        }
+            gc.collect()
+            if self.device != "cpu":
+                torch.cuda.empty_cache()
+
+        # W&B iteration summary alert
         if self.use_wandb:
-            _safe_wandb_log(eval_metrics, step=self.training_step)
-            # Update summary with best values
-            wandb.run.summary["best_elo"] = self.best_elo_estimate
-            wandb.run.summary["best_eval_win_rate"] = max(
-                wandb.run.summary.get("best_eval_win_rate", 0), win_rate)
             wandb.run.summary["total_iterations"] = self.iteration
-            # Email summary after every iteration
-            status = f"ACCEPTED ELO {self.best_elo_estimate:.0f} (+{elo_diff:.0f})" if accepted else "rejected"
             total_sp = sp_stats['white_wins'] + sp_stats['black_wins'] + sp_stats['draws']
             sp_draw_pct = sp_stats['draws'] / total_sp * 100 if total_sp > 0 else 0
-            rw, rl, rd = eval_results["random_wins"], eval_results["random_losses"], eval_results["random_draws"]
             iter_elapsed = time.time() - iteration_start
+            elo_str = f"ELO: {self.elo_estimate:.0f}" if elo_results else "ELO: (no probe this iter)"
             wandb.alert(
-                title=f"Iter {self.iteration}: {status}",
+                title=f"Iter {self.iteration}: {elo_str}",
                 text=(
-                    f"ELO: {self.best_elo_estimate:.0f} | Sims: {num_sims}\n"
+                    f"{elo_str} | Sims: {num_sims}\n"
                     f"Self-play: {sp_stats['white_wins']}W/{sp_stats['black_wins']}B/{sp_stats['draws']}D "
                     f"({sp_draw_pct:.0f}% draws) avg={sp_stats['avg_game_length']:.0f} moves "
                     f"[{sp_stats['min_game_length']}-{sp_stats['max_game_length']}]\n"
                     f"Loss: policy={avg_losses['avg_policy_loss']:.3f} value={avg_losses['avg_value_loss']:.3f}\n"
-                    f"Eval vs best: {win_rate:.3f} (W:{eval_results['wins']} L:{eval_results['losses']} D:{eval_results['draws']})\n"
-                    f"Eval vs random: W:{rw} L:{rl} D:{rd}\n"
                     f"Buffer: {len(self.replay_buffer)} | Mem: {_get_rss_mb():.0f}MB | Time: {iter_elapsed/60:.1f}min"
                 ),
                 wait_duration=0,
             )
             # Alert on ELO milestones
-            if accepted:
+            if elo_results:
                 for threshold in [500, 1000, 1500, 2000]:
-                    prev_elo = self.best_elo_estimate - elo_diff
-                    if prev_elo < threshold <= self.best_elo_estimate:
-                        wandb.alert(
-                            title=f"ELO milestone: {threshold}",
-                            text=f"Model reached ELO {self.best_elo_estimate:.0f} "
-                                 f"at iteration {self.iteration}",
-                        )
-        if self.tb_writer:
-            for k, v in eval_metrics.items():
-                self.tb_writer.add_scalar(k, v, self.training_step)
-
-        gc.collect()
-        if self.device != "cpu":
-            torch.cuda.empty_cache()
+                    if self.elo_estimate >= threshold:
+                        # Only alert once per milestone (check if this is the first time)
+                        milestone_key = f"elo_milestone_{threshold}"
+                        if not wandb.run.summary.get(milestone_key):
+                            wandb.run.summary[milestone_key] = True
+                            wandb.alert(
+                                title=f"ELO milestone: {threshold}",
+                                text=f"Model reached ELO {self.elo_estimate:.0f} "
+                                     f"at iteration {self.iteration}",
+                            )
 
         # Log GPU memory stats
         if self.device != "cpu":
@@ -922,8 +812,7 @@ class Trainer:
             "phase": "iteration",
             "num_examples": num_new_examples,
             "buffer_size": len(self.replay_buffer),
-            "eval_win_rate": win_rate,
-            "accepted": int(accepted),
+            "elo_estimate": self.elo_estimate,
             "elapsed_sec": iteration_elapsed,
             **avg_losses,
         })
@@ -944,17 +833,14 @@ class Trainer:
         else:
             logger.info("Starting fresh training")
             # If best.pt already exists (e.g. restored from W&B), warm-start
-            # both networks from it instead of overwriting with random weights
+            # the network from it instead of starting from random weights
             best_path = self.checkpoint_dir / "best.pt"
             if best_path.exists():
                 try:
                     best_ckpt = torch.load(str(best_path), map_location="cpu", weights_only=False)
                     self.network.load_state_dict(best_ckpt["network_state"])
-                    self.best_network.load_state_dict(best_ckpt["network_state"])
-                    # Reset ELO to 0 on fresh start — inherited ELO is meaningless
-                    # since the model is only ever evaluated against itself.
                     old_elo = best_ckpt.get("elo_estimate", 0)
-                    self.best_elo_estimate = 0
+                    self.elo_estimate = 0
                     logger.info(f"Warm-starting from existing best.pt (old ELO {old_elo:.0f}, reset to 0)")
                     warm_started = True
                     del best_ckpt
@@ -1009,10 +895,6 @@ class Trainer:
                     logger.info(f"  Pre-training step {step+1}/{steps}: avg_loss={total_loss/(step+1):.4f}")
             avg_loss = total_loss / steps
             logger.info(f"Pre-training complete: avg_loss={avg_loss:.4f} over {steps} steps")
-            # Copy pre-trained weights to best_network so eval compares against
-            # the pre-trained model (not random init). Don't call save_best()
-            # here — let the first eval gate whether the model improves.
-            self.best_network.load_state_dict(self.network.state_dict())
             self.save_best()
 
         while self.iteration < max_iter:
