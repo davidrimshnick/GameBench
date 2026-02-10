@@ -197,13 +197,9 @@ def main():
     network = None
     if args.checkpoint and not args.no_network:
         try:
-            import torch
             from davechess.engine.network import DaveChessNetwork
-            ckpt = torch.load(args.checkpoint, map_location=args.device,
-                              weights_only=False)
-            network = DaveChessNetwork()
-            network.load_state_dict(ckpt["network_state"])
-            network.eval()
+            network, ckpt = DaveChessNetwork.from_checkpoint(
+                args.checkpoint, device=args.device)
             elo = ckpt.get("elo_estimate", "?")
             logger.info(f"Loaded network from {args.checkpoint} (ELO {elo})")
         except Exception as e:

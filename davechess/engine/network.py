@@ -252,3 +252,27 @@ if HAS_TORCH:
 
             policy = F.softmax(logits[0], dim=0).cpu().numpy()
             return policy, value.item()
+
+        @classmethod
+        def from_checkpoint(cls, path: str, device: str = "cpu"):
+            """Load network from checkpoint, inferring architecture from weights.
+
+            Returns:
+                (network, checkpoint_dict)
+            """
+            ckpt = torch.load(path, map_location=device, weights_only=False)
+            state_dict = ckpt["network_state"]
+
+            # Infer architecture from state dict
+            num_filters = state_dict["conv_input.weight"].shape[0]
+            max_block = max(
+                int(k.split(".")[1]) for k in state_dict if k.startswith("res_blocks.")
+            )
+            num_res_blocks = max_block + 1
+
+            net = cls(num_res_blocks=num_res_blocks, num_filters=num_filters)
+            net.load_state_dict(state_dict)
+            net.eval()
+            if device != "cpu":
+                net = net.to(device)
+            return net, ckpt

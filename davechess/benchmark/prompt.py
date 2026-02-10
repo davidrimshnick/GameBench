@@ -66,6 +66,13 @@ You cannot make a move that leaves your own Commander in check.
 
 ## Result
 - `1-0` = White wins, `0-1` = Black wins, `1/2-1/2` = Draw
+
+## Benchmark Rules
+You must reason about each move yourself. Do NOT write scripts, game engines,
+search algorithms (e.g. minimax, MCTS), or any automated move-selection code.
+The benchmark measures YOUR strategic reasoning ability, not your ability to
+write a chess engine. Pick your moves by studying the games, learning the
+patterns, and thinking through the position.
 """
 
 

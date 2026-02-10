@@ -157,6 +157,14 @@ Example: Full Benchmark Run
     # 8. Get results
     python scripts/agent_cli.py result <session_file>
 
+IMPORTANT: Benchmark Integrity Rules
+--------------------------------------
+    You MUST reason about each move yourself. Do NOT write scripts, game
+    engines, search algorithms (minimax, MCTS, alpha-beta, etc.), or any
+    automated move-selection code. The benchmark measures YOUR strategic
+    reasoning, not your ability to build a chess engine. Violations
+    invalidate your score.
+
 Tips for AI Agents
 ------------------
     - Your token budget is your learning opportunity — use it all!
@@ -205,11 +213,8 @@ DEFAULT_CALIBRATION = [
 
 def _load_network(checkpoint_path: str, device: str = "cpu"):
     """Load neural network from checkpoint, or return None if unavailable."""
-    import torch
     from davechess.engine.network import DaveChessNetwork
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    net = DaveChessNetwork()
-    net.load_state_dict(ckpt["network_state"])
+    net, ckpt = DaveChessNetwork.from_checkpoint(checkpoint_path, device=device)
     net.eval()
     elo = ckpt.get("elo_estimate", "?")
     iteration = ckpt.get("iteration", "?")

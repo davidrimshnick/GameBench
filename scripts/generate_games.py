@@ -44,16 +44,9 @@ def main():
     network = None
     if args.checkpoint:
         try:
-            import torch
             from davechess.engine.network import DaveChessNetwork
-            network = DaveChessNetwork()
-            ckpt = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
-            if "network_state" in ckpt:
-                network.load_state_dict(ckpt["network_state"])
-            else:
-                network.load_state_dict(ckpt)
-            network.to(args.device)
-            network.eval()
+            network, ckpt = DaveChessNetwork.from_checkpoint(
+                args.checkpoint, device=args.device)
             logger.info(f"Loaded network from {args.checkpoint}")
         except Exception as e:
             logger.warning(f"Could not load network: {e}. Using MCTS-lite agents.")
