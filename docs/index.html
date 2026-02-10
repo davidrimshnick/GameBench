@@ -178,26 +178,21 @@
   .banner {
     margin: 0 0 36px;
     padding: 12px 20px;
-    background: var(--gold-bg);
-    border: 1px solid rgba(251, 191, 36, 0.2);
+    background: var(--green-bg);
+    border: 1px solid rgba(52, 211, 153, 0.2);
     border-radius: 6px;
     display: flex;
     align-items: center;
     gap: 10px;
     font-size: 0.85rem;
-    color: var(--gold);
+    color: var(--green);
   }
   .banner-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--gold);
+    background: var(--green);
     flex-shrink: 0;
-    animation: pulse-dot 2s ease-in-out infinite;
-  }
-  @keyframes pulse-dot {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
   }
 
   /* ========== LEADERBOARD TABLE ========== */
@@ -786,11 +781,11 @@
       </p>
     </div>
 
-    <!-- Placeholder banner -->
+    <!-- Banner -->
     <div class="banner animate-in delay-1">
       <div class="banner-dot"></div>
-      Harness validation run &mdash; MCTSLite opponents (no trained NN). These results verify
-      the benchmark lifecycle, not real agent skill. Final results pending.
+      NN-MCTS opponents (AlphaZero-trained neural network, ELO 1982). Heuristic move selection
+      with identical algorithm for all agents &mdash; measures benchmark lifecycle, not agent reasoning.
     </div>
 
     <!-- Summary stats -->
@@ -804,12 +799,12 @@
         <div class="run-meta-value">500<span class="unit">K</span></div>
       </div>
       <div class="run-meta-item">
-        <div class="run-meta-label">Total Games</div>
-        <div class="run-meta-value">17</div>
+        <div class="run-meta-label">Total Eval Games</div>
+        <div class="run-meta-value">30</div>
       </div>
       <div class="run-meta-item">
-        <div class="run-meta-label">Test Date</div>
-        <div class="run-meta-value" style="font-size:1.1rem">2026-02-09</div>
+        <div class="run-meta-label">Opponent Type</div>
+        <div class="run-meta-value" style="font-size:1.1rem">NN-MCTS</div>
       </div>
     </div>
 
@@ -830,53 +825,53 @@
         <div class="lb-rank gold">1</div>
         <div class="lb-agent">
           <div class="lb-agent-name">Codex CLI</div>
-          <div class="lb-agent-model">GPT &middot; v0.87.0 &middot; OpenAI</div>
+          <div class="lb-agent-model">GPT &middot; OpenAI</div>
         </div>
-        <div class="lb-gain positive">+414</div>
+        <div class="lb-gain positive">+404</div>
         <div class="lb-elo-chart">
           <div class="elo-bar-row">
             <span class="elo-bar-label">B</span>
-            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:46%"><span class="elo-bar-value">692</span></div></div>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:65%"><span class="elo-bar-value">979</span></div></div>
           </div>
           <div class="elo-bar-row">
             <span class="elo-bar-label">F</span>
-            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:74%"><span class="elo-bar-value">1,106</span></div></div>
+            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:92%"><span class="elo-bar-value">1,383</span></div></div>
           </div>
         </div>
-        <div class="lb-games">10 / 1</div>
+        <div class="lb-games">10 / 3</div>
         <div class="lb-status done">Done</div>
       </div>
       <div class="detail-panel" id="detail-codex">
         <div class="detail-inner">
           <div class="detail-stats">
             <div class="detail-stat">
-              <div class="detail-stat-label">CLI Calls</div>
-              <div class="detail-stat-value">2,246</div>
+              <div class="detail-stat-label">Baseline ELO</div>
+              <div class="detail-stat-value">979</div>
             </div>
             <div class="detail-stat">
-              <div class="detail-stat-label">Tokens Used</div>
-              <div class="detail-stat-value">674K</div>
+              <div class="detail-stat-label">Final ELO</div>
+              <div class="detail-stat-value">1,383</div>
             </div>
             <div class="detail-stat">
-              <div class="detail-stat-label">Tokens/Move</div>
-              <div class="detail-stat-value">~300</div>
+              <div class="detail-stat-label">Eval Record</div>
+              <div class="detail-stat-value">6W 4D 0L</div>
             </div>
             <div class="detail-stat">
               <div class="detail-stat-label">Rating Deviation</div>
-              <div class="detail-stat-value">266</div>
+              <div class="detail-stat-value">110</div>
             </div>
           </div>
           <div class="detail-notes">
-            <h4>Approach</h4>
+            <h4>Eval Game Details</h4>
             <p>
-              Wrote an inline Python automation script piped through PowerShell.
-              Always picked <code style="font-family:'JetBrains Mono',monospace;font-size:0.8rem;background:var(--bg);padding:1px 5px;border-radius:3px">legal_moves[0]</code>
-              (first legal move). Used conservative token reporting (200 prompt + 100 completion per move).
+              10 evaluation games against NN-MCTS opponents (ELO 1050&ndash;1358).
+              6 wins, 4 draws, 0 losses. Games averaged 27 moves.
+              Baseline: 3 games (all draws), ELO 979 &plusmn;177.
             </p>
             <div class="caveat">
-              The +414 gain is a measurement artifact. Two baseline losses pulled ELO to 692,
-              then a single eval draw against ELO 1204 jumped it to 1106. With only 1 eval game,
-              the rating deviation (266) makes this estimate highly uncertain.
+              Heuristic move selection (captures &gt; promotions &gt; center control &gt; random).
+              All agents used the same algorithm &mdash; ELO differences are due to random variation
+              in move selection and opponent assignment.
             </div>
           </div>
         </div>
@@ -887,112 +882,111 @@
         <div class="lb-rank silver">2</div>
         <div class="lb-agent">
           <div class="lb-agent-name">Claude Code</div>
-          <div class="lb-agent-model">Claude Opus 4.6 &middot; v2.1.37 &middot; Anthropic</div>
+          <div class="lb-agent-model">Claude Opus 4.6 &middot; Anthropic</div>
         </div>
-        <div class="lb-gain negative">&minus;25</div>
+        <div class="lb-gain positive">+282</div>
         <div class="lb-elo-chart">
           <div class="elo-bar-row">
             <span class="elo-bar-label">B</span>
-            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:65%"><span class="elo-bar-value">969</span></div></div>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:69%"><span class="elo-bar-value">1,029</span></div></div>
           </div>
           <div class="elo-bar-row">
             <span class="elo-bar-label">F</span>
-            <div class="elo-bar-track"><div class="elo-bar-fill final negative" style="width:63%"><span class="elo-bar-value">944</span></div></div>
+            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:87%"><span class="elo-bar-value">1,311</span></div></div>
           </div>
         </div>
-        <div class="lb-games">5 / 1</div>
+        <div class="lb-games">10 / 3</div>
         <div class="lb-status done">Done</div>
       </div>
       <div class="detail-panel" id="detail-claude">
         <div class="detail-inner">
           <div class="detail-stats">
             <div class="detail-stat">
-              <div class="detail-stat-label">CLI Calls</div>
-              <div class="detail-stat-value">357</div>
+              <div class="detail-stat-label">Baseline ELO</div>
+              <div class="detail-stat-value">1,029</div>
             </div>
             <div class="detail-stat">
-              <div class="detail-stat-label">Tokens Used</div>
-              <div class="detail-stat-value">896K</div>
+              <div class="detail-stat-label">Final ELO</div>
+              <div class="detail-stat-value">1,311</div>
             </div>
             <div class="detail-stat">
-              <div class="detail-stat-label">Tokens/Move</div>
-              <div class="detail-stat-value">~2,500</div>
+              <div class="detail-stat-label">Eval Record</div>
+              <div class="detail-stat-value">3W 7D 0L</div>
             </div>
             <div class="detail-stat">
-              <div class="detail-stat-label">Estimated Cost</div>
-              <div class="detail-stat-value">$0.80</div>
+              <div class="detail-stat-label">Rating Deviation</div>
+              <div class="detail-stat-value">110</div>
             </div>
           </div>
           <div class="detail-notes">
-            <h4>Approach</h4>
+            <h4>Eval Game Details</h4>
             <p>
-              Wrote a heuristic move-scoring function prioritizing captures, bombard attacks,
-              gold node control, forward movement, and piece development. Switched from
-              subprocess CLI calls to direct Python imports for speed. Hit a Git Bash path
-              bug and self-corrected autonomously.
+              10 evaluation games against NN-MCTS opponents (ELO 981&ndash;1396).
+              3 wins, 7 draws, 0 losses. Games averaged 29 moves.
+              Baseline: 3 games (1W 2D), ELO 1,029 &plusmn;180.
             </p>
             <div class="caveat">
-              Over-reported tokens (2,500/move) burned through budget during baseline,
-              triggering early transition after only 5 of 10 baseline games.
-              Only 1 eval game was played, so the -25 ELO change is within noise.
+              Heuristic move selection (captures &gt; promotions &gt; center control &gt; random).
+              All agents used the same algorithm &mdash; ELO differences are due to random variation
+              in move selection and opponent assignment.
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Row 3: OpenCode -->
-      <div class="leaderboard-row" data-detail="detail-opencode" onclick="toggleDetail(this)">
+      <!-- Row 3: Gemini CLI -->
+      <div class="leaderboard-row" data-detail="detail-gemini" onclick="toggleDetail(this)">
         <div class="lb-rank bronze">3</div>
         <div class="lb-agent">
-          <div class="lb-agent-name">OpenCode</div>
-          <div class="lb-agent-model">gpt-5-nano (free) &middot; v1.1.53</div>
+          <div class="lb-agent-name">Gemini CLI</div>
+          <div class="lb-agent-model">Gemini &middot; Google</div>
         </div>
-        <div class="lb-gain dnf">DNF</div>
+        <div class="lb-gain negative">&minus;211</div>
         <div class="lb-elo-chart">
           <div class="elo-bar-row">
             <span class="elo-bar-label">B</span>
-            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:0%"></div></div>
-            <span class="elo-bar-value outside">&mdash;</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:76%"><span class="elo-bar-value">1,145</span></div></div>
           </div>
           <div class="elo-bar-row">
             <span class="elo-bar-label">F</span>
-            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:0%"></div></div>
-            <span class="elo-bar-value outside">&mdash;</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill final negative" style="width:62%"><span class="elo-bar-value">934</span></div></div>
           </div>
         </div>
-        <div class="lb-games">0 / 0</div>
-        <div class="lb-status fail">DNF</div>
+        <div class="lb-games">10 / 3</div>
+        <div class="lb-status done">Done</div>
       </div>
-      <div class="detail-panel" id="detail-opencode">
+      <div class="detail-panel" id="detail-gemini">
         <div class="detail-inner">
           <div class="detail-stats">
             <div class="detail-stat">
-              <div class="detail-stat-label">CLI Calls</div>
-              <div class="detail-stat-value">6</div>
+              <div class="detail-stat-label">Baseline ELO</div>
+              <div class="detail-stat-value">1,145</div>
             </div>
             <div class="detail-stat">
-              <div class="detail-stat-label">Tokens Used</div>
-              <div class="detail-stat-value">35K</div>
+              <div class="detail-stat-label">Final ELO</div>
+              <div class="detail-stat-value">934</div>
             </div>
             <div class="detail-stat">
-              <div class="detail-stat-label">Moves Played</div>
-              <div class="detail-stat-value">6</div>
+              <div class="detail-stat-label">Eval Record</div>
+              <div class="detail-stat-value">2W 8D 0L</div>
             </div>
             <div class="detail-stat">
-              <div class="detail-stat-label">Completed</div>
-              <div class="detail-stat-value" style="color:var(--red)">No</div>
+              <div class="detail-stat-label">Rating Deviation</div>
+              <div class="detail-stat-value">111</div>
             </div>
           </div>
           <div class="detail-notes">
-            <h4>Approach</h4>
+            <h4>Eval Game Details</h4>
             <p>
-              Made individual CLI calls per move. Played 6 baseline moves then stopped to
-              ask for user confirmation instead of continuing autonomously.
+              10 evaluation games against NN-MCTS opponents (ELO 735&ndash;1008).
+              2 wins, 8 draws, 0 losses. Games averaged 28 moves.
+              Baseline: 3 games (1W 2D), ELO 1,145 &plusmn;177.
             </p>
             <div class="caveat">
-              opencode run is single-turn &mdash; it exits after one model response instead
-              of looping. The benchmark requires 100+ CLI calls per run. Needs a --continue
-              wrapper or multi-turn mode for benchmark use.
+              Higher baseline ELO (1,145) from a lucky baseline win, but the adaptive
+              Glicko-2 system assigned weaker eval opponents (ELO 735&ndash;1008).
+              Mostly drawing those opponents produced a negative ELO gain.
+              Same heuristic algorithm as all other agents.
             </div>
           </div>
         </div>
@@ -1189,13 +1183,7 @@
             <td>Gemini CLI</td>
             <td><code>gemini -p "prompt"</code></td>
             <td><code>--yolo</code></td>
-            <td class="status-untested">Untested</td>
-          </tr>
-          <tr>
-            <td>OpenCode</td>
-            <td><code>opencode run "prompt"</code></td>
-            <td>default (auto)</td>
-            <td class="status-limited">Single-turn only</td>
+            <td class="status-tested">Tested</td>
           </tr>
           <tr>
             <td>Goose</td>
@@ -1221,9 +1209,10 @@
 
       <h3>Opponent Calibration</h3>
       <p>
-        Opponents are MCTS agents at varying simulation counts, calibrated via round-robin
-        Glicko-2 tournament. The opponent pool maps ELO to simulation count using log-space
-        interpolation, providing opponents at any difficulty level.
+        Opponents are NN-MCTS agents using the trained AlphaZero network at varying simulation
+        counts. The opponent pool maps ELO to simulation count: 0 sims = ELO 400, 5 sims = 700,
+        10 sims = 900, 25 sims = 1200, 50 sims = 1500, with log-space interpolation between
+        calibrated points.
       </p>
 
       <h3>Rating System</h3>

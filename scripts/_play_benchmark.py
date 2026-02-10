@@ -13,7 +13,10 @@ import time
 
 SANDBOX = "C:/Users/david/AppData/Local/Temp/benchmark-sandbox"
 CLI = os.path.join(SANDBOX, "scripts", "agent_cli.py")
-SESSION = os.path.join(SANDBOX, "checkpoints", "agent_sessions", "claude-code.pkl")
+
+# Agent name from command line, default to claude-code
+AGENT_NAME = sys.argv[1] if len(sys.argv) > 1 else "claude-code"
+SESSION = os.path.join(SANDBOX, "checkpoints", "agent_sessions", f"{AGENT_NAME}.pkl")
 
 # Track token-equivalent effort
 total_prompt = 0
@@ -218,7 +221,7 @@ def play_game(session_file, strategic=False, label=""):
 
 def main():
     print("=" * 60, flush=True)
-    print("DaveChess Benchmark - Claude Code", flush=True)
+    print(f"DaveChess Benchmark - {AGENT_NAME}", flush=True)
     print("=" * 60, flush=True)
     print(f"Started: {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
 
@@ -326,7 +329,7 @@ def main():
         # Save results
         results_file = os.path.join(
             "C:/Users/david/source/repos/GameBench/benchmark_results",
-            "claude_code_results.json"
+            f"{AGENT_NAME.replace('-', '_')}_results.json"
         )
         with open(results_file, "w") as f:
             json.dump(data, f, indent=2, default=str)
