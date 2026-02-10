@@ -210,7 +210,7 @@
   }
   .leaderboard-header {
     display: grid;
-    grid-template-columns: 48px 1fr 160px 120px 120px 100px 80px;
+    grid-template-columns: 48px 1fr 120px 260px 80px 80px;
     padding: 14px 20px;
     background: var(--surface2);
     border-bottom: 1px solid var(--border);
@@ -223,7 +223,7 @@
   }
   .leaderboard-row {
     display: grid;
-    grid-template-columns: 48px 1fr 160px 120px 120px 100px 80px;
+    grid-template-columns: 48px 1fr 120px 260px 80px 80px;
     padding: 18px 20px;
     align-items: center;
     border-bottom: 1px solid var(--border);
@@ -301,6 +301,75 @@
   .lb-status.fail {
     color: var(--red);
     background: var(--red-bg);
+  }
+
+  /* ========== ELO BAR CHART ========== */
+  .lb-elo-chart {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .elo-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 18px;
+  }
+  .elo-bar-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    width: 18px;
+    text-align: right;
+    flex-shrink: 0;
+    letter-spacing: 0.02em;
+  }
+  .elo-bar-track {
+    flex: 1;
+    height: 14px;
+    background: var(--bg2);
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+  }
+  .elo-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    position: absolute;
+    left: 0;
+    top: 0;
+    transition: width 0.6s ease-out;
+  }
+  .elo-bar-fill.baseline {
+    background: var(--surface3);
+    border: 1px solid var(--border-bright);
+  }
+  .elo-bar-fill.final {
+    background: linear-gradient(90deg, rgba(34, 211, 238, 0.25), rgba(34, 211, 238, 0.45));
+    border: 1px solid rgba(34, 211, 238, 0.4);
+  }
+  .elo-bar-fill.final.negative {
+    background: linear-gradient(90deg, rgba(248, 113, 113, 0.2), rgba(248, 113, 113, 0.35));
+    border: 1px solid rgba(248, 113, 113, 0.35);
+  }
+  .elo-bar-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 600;
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text);
+    text-shadow: 0 0 4px var(--bg);
+  }
+  .elo-bar-value.outside {
+    position: static;
+    transform: none;
+    margin-left: 6px;
+    flex-shrink: 0;
+    color: var(--text-dim);
   }
 
   /* ========== DETAIL PANEL ========== */
@@ -639,10 +708,8 @@
     }
     .leaderboard-header > :nth-child(4),
     .leaderboard-header > :nth-child(5),
-    .leaderboard-header > :nth-child(6),
     .leaderboard-row > :nth-child(4),
-    .leaderboard-row > :nth-child(5),
-    .leaderboard-row > :nth-child(6) {
+    .leaderboard-row > :nth-child(5) {
       display: none;
     }
     .detail-inner {
@@ -668,11 +735,9 @@
     .leaderboard-header > :nth-child(4),
     .leaderboard-header > :nth-child(5),
     .leaderboard-header > :nth-child(6),
-    .leaderboard-header > :nth-child(7),
     .leaderboard-row > :nth-child(4),
     .leaderboard-row > :nth-child(5),
-    .leaderboard-row > :nth-child(6),
-    .leaderboard-row > :nth-child(7) {
+    .leaderboard-row > :nth-child(6) {
       display: none;
     }
     .lb-gain { font-size: 1rem; }
@@ -755,8 +820,7 @@
         <div>#</div>
         <div>Agent</div>
         <div>ELO Gain</div>
-        <div>Baseline</div>
-        <div>Final</div>
+        <div>ELO Range</div>
         <div>Games</div>
         <div>Status</div>
       </div>
@@ -769,8 +833,16 @@
           <div class="lb-agent-model">GPT &middot; v0.87.0 &middot; OpenAI</div>
         </div>
         <div class="lb-gain positive">+414</div>
-        <div class="lb-elo">692</div>
-        <div class="lb-elo">1,106</div>
+        <div class="lb-elo-chart">
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">B</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:46%"><span class="elo-bar-value">692</span></div></div>
+          </div>
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">F</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:74%"><span class="elo-bar-value">1,106</span></div></div>
+          </div>
+        </div>
         <div class="lb-games">10 / 1</div>
         <div class="lb-status done">Done</div>
       </div>
@@ -818,8 +890,16 @@
           <div class="lb-agent-model">Claude Opus 4.6 &middot; v2.1.37 &middot; Anthropic</div>
         </div>
         <div class="lb-gain negative">&minus;25</div>
-        <div class="lb-elo">969</div>
-        <div class="lb-elo">944</div>
+        <div class="lb-elo-chart">
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">B</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:65%"><span class="elo-bar-value">969</span></div></div>
+          </div>
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">F</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill final negative" style="width:63%"><span class="elo-bar-value">944</span></div></div>
+          </div>
+        </div>
         <div class="lb-games">5 / 1</div>
         <div class="lb-status done">Done</div>
       </div>
@@ -868,8 +948,18 @@
           <div class="lb-agent-model">gpt-5-nano (free) &middot; v1.1.53</div>
         </div>
         <div class="lb-gain dnf">DNF</div>
-        <div class="lb-elo muted">&mdash;</div>
-        <div class="lb-elo muted">&mdash;</div>
+        <div class="lb-elo-chart">
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">B</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:0%"></div></div>
+            <span class="elo-bar-value outside">&mdash;</span>
+          </div>
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">F</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:0%"></div></div>
+            <span class="elo-bar-value outside">&mdash;</span>
+          </div>
+        </div>
         <div class="lb-games">0 / 0</div>
         <div class="lb-status fail">DNF</div>
       </div>
