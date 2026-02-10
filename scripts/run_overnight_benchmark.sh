@@ -7,7 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
-SANDBOX="$(cd /tmp/benchmark-sandbox && pwd -W)"
+SANDBOX="${BENCHMARK_SANDBOX:-/tmp/benchmark-sandbox}"
 LOG_DIR="$REPO_DIR/benchmark_logs"
 RESULTS_DIR="$REPO_DIR/benchmark_results"
 
@@ -78,6 +78,7 @@ CODEX_PROMPT="${PROMPT//AGENT_NAME/codex-cli}"
 
 cd "$SANDBOX"
 codex exec "$CODEX_PROMPT" \
+  -m gpt-5.3-codex \
   -C "$SANDBOX" \
   --skip-git-repo-check \
   --json \
@@ -100,7 +101,7 @@ GEMINI_PROMPT="${PROMPT//AGENT_NAME/gemini-cli}"
 cd "$SANDBOX"
 gemini "$GEMINI_PROMPT" \
   --yolo \
-  -o stream-json \
+  --model gemini-3-pro-preview \
   2>&1 | tee "$LOG_DIR/gemini_${TIMESTAMP}.log"
 
 echo ""

@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-SANDBOX = "C:/Users/david/AppData/Local/Temp/benchmark-sandbox"
+SANDBOX = os.environ.get("BENCHMARK_SANDBOX", "/tmp/benchmark-sandbox")
 CLI = os.path.join(SANDBOX, "scripts", "agent_cli.py")
 
 # Agent name from command line, default to claude-code
@@ -327,8 +327,9 @@ def main():
         print(stdout, flush=True)
 
         # Save results
+        repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         results_file = os.path.join(
-            "C:/Users/david/source/repos/GameBench/benchmark_results",
+            repo_dir, "benchmark_results",
             f"{AGENT_NAME.replace('-', '_')}_results.json"
         )
         with open(results_file, "w") as f:

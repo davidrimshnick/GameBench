@@ -15,11 +15,15 @@ What's done:
 - GM games downloaded from W&B to `data/gm_games/`
 - Sandbox setup and `agent_cli.py` working
 - GitHub Pages leaderboard at `docs/index.html` (currently has placeholder heuristic-player data)
+- Benchmark automation scripts: `run_overnight_benchmark.sh` (runs all 3 agents sequentially), per-agent launchers (`_launch_codex_benchmark.py`, `_launch_gemini_benchmark.py`), and a heuristic baseline player (`_play_benchmark.py`)
+- Placeholder results in `benchmark_results/` from heuristic baseline player (not real LLM runs — `tokens.total_used = 0` in all results). These serve as format examples for the leaderboard.
+- Benchmark integrity rules added to `agent_cli.py` and `davechess/benchmark/prompt.py` — agents must reason about moves themselves, no writing game engines or search algorithms
+- `DaveChessNetwork.from_checkpoint()` classmethod auto-infers architecture from weights (no more hardcoded num_res_blocks/num_filters)
 
 What's needed:
 1. **Run NN-MCTS calibration on Jetson** (GPU makes it fast). The existing manual calibration (`checkpoints/calibration.json`: 0=400, 5=700, 10=900, 25=1200, 50=1500) was hand-estimated — run `python scripts/calibrate_opponents.py --checkpoint checkpoints/best.pt` on Jetson for proper round-robin Glicko-2 calibration. MCTSLite calibration (`--no-network`) is too slow even at moderate sim counts because each simulation is a full random rollout.
-2. **Copy calibration.json to sandbox** and run real agent benchmarks (Claude Code, Codex CLI, Gemini CLI) with NN-MCTS opponents on Jetson GPU
-3. **Update leaderboard** with real agent results
+2. **Copy calibration.json to sandbox** and run real agent benchmarks (Claude Code, Codex CLI, Gemini CLI) with NN-MCTS opponents on Jetson GPU using `run_overnight_benchmark.sh`
+3. **Update leaderboard** with real agent results (replace placeholder heuristic-player data)
 
 ## Key Commands
 
@@ -297,6 +301,27 @@ Each practice/eval game involves ~30-100 individual `move` commands. A full run 
 
 **Why a sandbox?** The agent should only see `agent_cli.py` (the interface) and game data. If it has access to the full repo, it could read the game engine, opponent logic, or rules implementation — defeating the purpose of measuring learning from examples.
 
+**Automated benchmark (all 3 agents sequentially):**
+```bash
+# Ensure sandbox exists, then run all agents overnight
+bash scripts/run_overnight_benchmark.sh
+```
+This runs Claude Code (`claude -p`), Codex CLI (`codex exec`), and Gemini CLI (`gemini`) sequentially in the sandbox. Results go to `benchmark_results/`, logs to `benchmark_logs/`. Expected runtime: 4-12 hours total.
+
+**Individual agent launchers:**
+```bash
+python scripts/_launch_codex_benchmark.py   # Just Codex CLI
+python scripts/_launch_gemini_benchmark.py  # Just Gemini CLI
+```
+
+**Heuristic baseline (no LLM):**
+```bash
+python scripts/_play_benchmark.py [agent-name]
+```
+Plays through the full benchmark using simple Python heuristics (capture priority, center control, promotions). Useful for generating baseline results and testing the pipeline without burning API tokens. Not a real benchmark run — the agent doesn't reason about moves.
+
+**Benchmark integrity:** Agents must reason about each move themselves. The rules (in both `agent_cli.py` and `prompt.py`) explicitly prohibit writing game engines, search algorithms (minimax, MCTS, alpha-beta), or any automated move-selection code. Violations invalidate the score.
+
 ### Benchmark Pipeline Prerequisites
 
 The trained neural network is the foundation of the entire benchmark. It serves two roles:
@@ -382,6 +407,10 @@ Key files:
 - `scripts/run_agentic_benchmark.py` - Multi-budget agentic benchmark (100K/1M/10M)
 - `scripts/generate_and_save_seeds.py` - Smart seed generator (heuristic + endgame, `--append` mode)
 - `scripts/calibrate_opponents.py` - Round-robin Glicko-2 calibration against NN-backed MCTS, saves calibration.json
+- `scripts/run_overnight_benchmark.sh` - Sequential runner for all 3 agents (Claude Code, Codex CLI, Gemini CLI)
+- `scripts/_play_benchmark.py` - Heuristic baseline player (no LLM, uses simple Python heuristics)
+- `scripts/_launch_codex_benchmark.py` - Standalone Codex CLI benchmark launcher
+- `scripts/_launch_gemini_benchmark.py` - Standalone Gemini CLI benchmark launcher
 - `scripts/validate_game.py` - Game health validation (win rate, draw rate, game length)
 - `scripts/analyze_games.py` - Opening frequencies, move diversity, strategy patterns
 - `scripts/endgame_analysis.py` - All static checkmate positions, minimax evaluation
@@ -395,6 +424,8 @@ Key files:
 - `configs/agentic_benchmark.yaml` - API provider, token budgets, rolling window, opponent pool
 - `checkpoints/` - Model checkpoints, seed games, calibration (gitignored, use W&B artifacts)
 - `data/gm_games/` - GM game library in DCN format (loaded at runtime for benchmark)
+- `benchmark_results/` - Agent benchmark results JSON (currently placeholder data from heuristic player)
+- `benchmark_logs/` - Agent output logs from benchmark runs (gitignored)
 - `docs/index.html` - GitHub Pages leaderboard dashboard
 - `wandb/` - Weights & Biases tracking (auto-generated, gitignored)
 

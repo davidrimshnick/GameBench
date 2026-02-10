@@ -5,8 +5,9 @@ import subprocess
 import sys
 import time
 
-SANDBOX = "C:/Users/david/AppData/Local/Temp/benchmark-sandbox"
-LOG_DIR = "C:/Users/david/source/repos/GameBench/benchmark_logs"
+SANDBOX = os.environ.get("BENCHMARK_SANDBOX", "/tmp/benchmark-sandbox")
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOG_DIR = os.path.join(REPO_DIR, "benchmark_logs")
 
 PROMPT = """You are in a sandbox directory with a DaveChess benchmark CLI.
 
@@ -44,7 +45,7 @@ print(f"Log: {log_file}")
 
 with open(log_file, "w") as log:
     proc = subprocess.Popen(
-        ["gemini", PROMPT, "--yolo", "-o", "stream-json"],
+        ["gemini", PROMPT, "--yolo", "--model", "gemini-3-pro-preview"],
         stdout=log, stderr=subprocess.STDOUT,
         cwd=SANDBOX
     )
