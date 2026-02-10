@@ -1,0 +1,150 @@
+{
+  "session_id": "claude-code",
+  "agent_name": "claude-code",
+  "baseline_elo": 1028.7983090279076,
+  "baseline_rd": 179.99979197769872,
+  "final_elo": 1310.937160263427,
+  "final_rd": 110.2042353255214,
+  "elo_gain": 282.13885123551927,
+  "baseline_games": 3,
+  "eval_games": 10,
+  "tokens": {
+    "budget": 500000,
+    "total_used": 0,
+    "remaining": 500000,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "num_calls": 0
+  },
+  "baseline_details": [
+    {
+      "game": 1,
+      "game_id": "base_001",
+      "opponent_elo": 919,
+      "score": 0.5,
+      "agent_color": "white",
+      "estimated_elo": 959.3496543002365,
+      "rd": 251.39403777449317
+    },
+    {
+      "game": 2,
+      "game_id": "base_002",
+      "opponent_elo": 841,
+      "score": 1.0,
+      "agent_color": "black",
+      "estimated_elo": 1042.766630691508,
+      "rd": 208.3928017440003
+    },
+    {
+      "game": 3,
+      "game_id": "base_003",
+      "opponent_elo": 989,
+      "score": 0.5,
+      "agent_color": "white",
+      "estimated_elo": 1028.7983090279076,
+      "rd": 179.99979197769872
+    }
+  ],
+  "eval_details": [
+    {
+      "game": 1,
+      "game_id": "eval_001",
+      "opponent_elo": 981,
+      "score": 1.0,
+      "agent_color": "white",
+      "estimated_elo": 1165.8692812814897,
+      "rd": 248.35053526176546
+    },
+    {
+      "game": 2,
+      "game_id": "eval_002",
+      "opponent_elo": 1312,
+      "score": 0.5,
+      "agent_color": "black",
+      "estimated_elo": 1214.4116469520739,
+      "rd": 208.4369487174011
+    },
+    {
+      "game": 3,
+      "game_id": "eval_003",
+      "opponent_elo": 1156,
+      "score": 1.0,
+      "agent_color": "white",
+      "estimated_elo": 1291.4660385249622,
+      "rd": 180.1241469489638
+    },
+    {
+      "game": 4,
+      "game_id": "eval_004",
+      "opponent_elo": 1277,
+      "score": 0.5,
+      "agent_color": "black",
+      "estimated_elo": 1288.453852968032,
+      "rd": 160.56947743068923
+    },
+    {
+      "game": 5,
+      "game_id": "eval_005",
+      "opponent_elo": 1204,
+      "score": 0.5,
+      "agent_color": "white",
+      "estimated_elo": 1273.9770259921206,
+      "rd": 147.03412153124327
+    },
+    {
+      "game": 6,
+      "game_id": "eval_006",
+      "opponent_elo": 1396,
+      "score": 0.5,
+      "agent_color": "black",
+      "estimated_elo": 1291.8003451023271,
+      "rd": 137.09465786055154
+    },
+    {
+      "game": 7,
+      "game_id": "eval_007",
+      "opponent_elo": 1287,
+      "score": 0.5,
+      "agent_color": "white",
+      "estimated_elo": 1291.164262865732,
+      "rd": 128.05851773634978
+    },
+    {
+      "game": 8,
+      "game_id": "eval_008",
+      "opponent_elo": 1302,
+      "score": 0.5,
+      "agent_color": "black",
+      "estimated_elo": 1292.4392998751387,
+      "rd": 120.69114699823903
+    },
+    {
+      "game": 9,
+      "game_id": "eval_009",
+      "opponent_elo": 1149,
+      "score": 1.0,
+      "agent_color": "white",
+      "estimated_elo": 1315.6848322384333,
+      "rd": 115.45721638766769
+    },
+    {
+      "game": 10,
+      "game_id": "eval_010",
+      "opponent_elo": 1267,
+      "score": 0.5,
+      "agent_color": "black",
+      "estimated_elo": 1310.937160263427,
+      "rd": 110.2042353255214
+    }
+  ],
+  "session_file": "C:/Users/david/AppData/Local/Temp/benchmark-sandbox\\checkpoints\\agent_sessions\\claude-code.pkl",
+  "budget": {
+    "budget": 500000,
+    "total_used": 0,
+    "remaining": 500000,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "num_calls": 0,
+    "message": "You have 500,000 tokens available. Report your usage with --tokens on any command to track your budget."
+  }
+}
