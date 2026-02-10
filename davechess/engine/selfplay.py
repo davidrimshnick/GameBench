@@ -282,18 +282,19 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
 
     game_records = []
 
-    # Create random opponents at mixed difficulty levels
+    # Create random opponents at mixed difficulty levels (scaled to NN sims)
     num_random_games = int(num_games * random_opponent_fraction)
+    sim_levels = _random_sim_levels(num_simulations)
     random_mcts_by_sims: dict[int, MCTS] = {}
     if num_random_games > 0:
-        for s in RANDOM_SIM_LEVELS:
+        for s in sim_levels:
             random_mcts_by_sims[s] = MCTS(None, num_simulations=s, device=device)
 
     for game_idx in range(num_games):
         if game_idx < num_random_games:
             # Play against random MCTS — alternate sides and difficulty
             nn_plays_white = (game_idx % 2 == 0)
-            sims = RANDOM_SIM_LEVELS[game_idx % len(RANDOM_SIM_LEVELS)]
+            sims = sim_levels[game_idx % len(sim_levels)]
             examples, game_record = play_selfplay_game(
                 mcts, temperature_threshold,
                 opponent_mcts=random_mcts_by_sims[sims],
@@ -525,9 +526,10 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                    dirichlet_epsilon=dirichlet_epsilon,
                    device=device)
     num_random_games = int(num_games * random_opponent_fraction)
+    sim_levels = _random_sim_levels(num_simulations)
     random_mcts_by_sims: dict[int, MCTS] = {}
     if num_random_games > 0:
-        for s in RANDOM_SIM_LEVELS:
+        for s in sim_levels:
             random_mcts_by_sims[s] = MCTS(None, num_simulations=s, device=device)
     random_mcts = next(iter(random_mcts_by_sims.values()), None)
 
@@ -541,7 +543,7 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
             is_random_game = game_global_idx < num_random_games
             nn_plays_white = (game_global_idx % 2 == 0)
             if is_random_game:
-                sims = RANDOM_SIM_LEVELS[game_global_idx % len(RANDOM_SIM_LEVELS)]
+                sims = sim_levels[game_global_idx % len(sim_levels)]
                 opp = random_mcts_by_sims[sims]
             else:
                 opp = None
@@ -626,7 +628,8 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
     num_random_games = int(num_games * random_opponent_fraction)
 
     # Distribute games across workers
-    game_assignments = _distribute_games(num_games, num_workers, num_random_games)
+    game_assignments = _distribute_games(num_games, num_workers, num_random_games,
+                                         nn_sims=num_simulations)
 
     mcts_config = {
         "num_simulations": num_simulations,
@@ -681,23 +684,36 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
                                             num_random_games)
 
 
+def _random_sim_levels(nn_sims: int) -> list[int]:
+    """Generate random opponent sim levels scaled to the NN's sim count.
+
+    Returns 5 levels spanning 25%-100% of the NN's simulations.
+    At nn_sims=100: [25, 44, 63, 81, 100]. At nn_sims=25: [7, 12, 16, 21, 25].
+    """
+    levels = [max(5, int(nn_sims * f)) for f in [0.25, 0.44, 0.63, 0.81, 1.0]]
+    return levels
+
+
+# Legacy constant kept for backward compat (unused in active code paths)
 RANDOM_SIM_LEVELS = [5, 10, 15, 25, 40]
 
 
 def _distribute_games(num_games: int, num_workers: int,
-                      num_random_games: int) -> list[list[dict]]:
+                      num_random_games: int,
+                      nn_sims: int = 100) -> list[list[dict]]:
     """Distribute games evenly across workers.
 
     Returns list of game assignments per worker, each a list of dicts with
     game_idx, is_random, nn_plays_white, random_sims.
     """
+    sim_levels = _random_sim_levels(nn_sims)
     assignments: list[list[dict]] = [[] for _ in range(num_workers)]
 
     for i in range(num_games):
         worker_id = i % num_workers
         is_random = i < num_random_games
         nn_plays_white = (i % 2 == 0)
-        random_sims = RANDOM_SIM_LEVELS[i % len(RANDOM_SIM_LEVELS)] if is_random else 0
+        random_sims = sim_levels[i % len(sim_levels)] if is_random else 0
         assignments[worker_id].append({
             "game_idx": i,
             "is_random": is_random,
