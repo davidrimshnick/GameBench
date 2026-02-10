@@ -414,8 +414,11 @@ class Trainer:
             else:
                 draws += 1
 
-        total_decisive = wins + losses
-        win_rate = wins / total_decisive if total_decisive > 0 else 0.5
+        # Win rate includes draws as half a point (standard in chess/AlphaZero).
+        # Excluding draws inflates win_rate when most games are drawn —
+        # e.g. W:2 L:1 D:7 would give 0.667 instead of the correct 0.55.
+        total_games = wins + losses + draws
+        win_rate = (wins + 0.5 * draws) / total_games if total_games > 0 else 0.5
 
         # Random opponent sanity check: must win all games vs random MCTS
         random_wins = 0
@@ -464,9 +467,12 @@ class Trainer:
             del random_mcts
             logger.info(f"Random eval: W:{random_wins} L:{random_losses} D:{random_draws}")
 
-            # Log random results for monitoring only — don't gate promotion on it
+            # Gate promotion on random opponent performance: losing to random
+            # means the model is fundamentally broken, regardless of vs-best results.
             if random_losses > random_wins:
-                logger.warning(f"Random opponent warning — more losses than wins ({random_losses}L > {random_wins}W)")
+                logger.warning(f"Random opponent VETO — more losses than wins "
+                               f"({random_losses}L > {random_wins}W). Forcing win_rate=0.")
+                win_rate = 0.0
             elif random_wins < num_random_games // 2 + 1:
                 logger.info(f"Random opponent note — only won {random_wins}/{num_random_games}")
 
@@ -932,6 +938,7 @@ class Trainer:
         max_iter = max_iterations or self.config.get("training", {}).get("max_iterations", 200)
 
         # Try to resume (everything on CPU at this point)
+        warm_started = False
         if self.load_checkpoint():
             logger.info(f"Resumed from step {self.training_step}, iteration {self.iteration}")
         else:
@@ -944,8 +951,12 @@ class Trainer:
                     best_ckpt = torch.load(str(best_path), map_location="cpu", weights_only=False)
                     self.network.load_state_dict(best_ckpt["network_state"])
                     self.best_network.load_state_dict(best_ckpt["network_state"])
-                    self.best_elo_estimate = best_ckpt.get("elo_estimate", 0)
-                    logger.info(f"Warm-starting from existing best.pt (ELO {self.best_elo_estimate})")
+                    # Reset ELO to 0 on fresh start — inherited ELO is meaningless
+                    # since the model is only ever evaluated against itself.
+                    old_elo = best_ckpt.get("elo_estimate", 0)
+                    self.best_elo_estimate = 0
+                    logger.info(f"Warm-starting from existing best.pt (old ELO {old_elo:.0f}, reset to 0)")
+                    warm_started = True
                     del best_ckpt
                     gc.collect()
                 except Exception as e:
@@ -953,10 +964,12 @@ class Trainer:
                     self.save_best()
             else:
                 self.save_best()  # Save initial model as best
-            # Improved seeding strategy to bootstrap learning
-            logger.info("Using improved seed game strategy")
+            # Seed the replay buffer with heuristic games
+            logger.info("Seeding replay buffer with heuristic games")
             self.seed_buffer(num_games=100)
             logger.info(f"Initial seeding complete. Buffer size: {len(self.replay_buffer)}")
+            # Save initial checkpoint so resume works if we crash mid-iteration
+            self.save_checkpoint(save_buffer=True)
 
         # Now move training network to GPU
         gc.collect()
@@ -981,8 +994,9 @@ class Trainer:
 
         # Pre-train on seed data before self-play so the model
         # has learned something before generating its own games.
-        # Multiple passes through the seed data to fully absorb patterns.
-        if self.iteration == 0 and len(self.replay_buffer) > 0:
+        # Skip if warm-starting from a trained model — re-pre-training on
+        # seeds would overwrite learned features and degrade the model.
+        if self.iteration == 0 and len(self.replay_buffer) > 0 and not warm_started:
             batch_size = train_cfg.get("batch_size", 128)
             # ~4 passes through the full seed buffer
             steps = (len(self.replay_buffer) * 4) // batch_size
@@ -995,6 +1009,10 @@ class Trainer:
                     logger.info(f"  Pre-training step {step+1}/{steps}: avg_loss={total_loss/(step+1):.4f}")
             avg_loss = total_loss / steps
             logger.info(f"Pre-training complete: avg_loss={avg_loss:.4f} over {steps} steps")
+            # Copy pre-trained weights to best_network so eval compares against
+            # the pre-trained model (not random init). Don't call save_best()
+            # here — let the first eval gate whether the model improves.
+            self.best_network.load_state_dict(self.network.state_dict())
             self.save_best()
 
         while self.iteration < max_iter:

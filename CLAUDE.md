@@ -8,11 +8,12 @@ GameBench is a benchmark measuring how efficiently LLMs learn novel strategic re
 
 ## Current Status (Feb 2026)
 
-**Benchmark is ready but needs NN-MCTS calibration on GPU (Jetson).**
+**Training pipeline has been fixed. Need to retrain from scratch, then calibrate and benchmark.**
+
+Previous `best.pt` (claimed ELO 1982) was broken — see Known Issues #15-17. The model was only pre-trained on seeds (354 steps, iteration 0) with fictional ELO inherited across 28 crashed restarts. It could not beat random MCTS.
 
 What's done:
-- AlphaZero model trained (dark-sky-65, ELO 1982), `checkpoints/best.pt`
-- GM games downloaded from W&B to `data/gm_games/`
+- Training pipeline bugs fixed (see Known Issues #15-17)
 - Sandbox setup and `agent_cli.py` working
 - GitHub Pages leaderboard at `docs/index.html` (currently has placeholder heuristic-player data)
 - Benchmark automation scripts: `run_overnight_benchmark.sh` (runs all 3 agents sequentially), per-agent launchers (`_launch_codex_benchmark.py`, `_launch_gemini_benchmark.py`), and a heuristic baseline player (`_play_benchmark.py`)
@@ -21,9 +22,10 @@ What's done:
 - `DaveChessNetwork.from_checkpoint()` classmethod auto-infers architecture from weights (no more hardcoded num_res_blocks/num_filters)
 
 What's needed:
-1. **Run NN-MCTS calibration on Jetson** (GPU makes it fast). The existing manual calibration (`checkpoints/calibration.json`: 0=400, 5=700, 10=900, 25=1200, 50=1500) was hand-estimated — run `python scripts/calibrate_opponents.py --checkpoint checkpoints/best.pt` on Jetson for proper round-robin Glicko-2 calibration. MCTSLite calibration (`--no-network`) is too slow even at moderate sim counts because each simulation is a full random rollout.
-2. **Copy calibration.json to sandbox** and run real agent benchmarks (Claude Code, Codex CLI, Gemini CLI) with NN-MCTS opponents on Jetson GPU using `run_overnight_benchmark.sh`
-3. **Update leaderboard** with real agent results (replace placeholder heuristic-player data)
+1. **Delete old checkpoints and train from scratch on Jetson** — remove old `best.pt`, `step_*.pt`, and run `python scripts/train.py --config configs/training.yaml`. Monitor on W&B for real ELO progression with the fixed pipeline.
+2. **Run NN-MCTS calibration on Jetson** once training produces a model that consistently beats random MCTS. Run `python scripts/calibrate_opponents.py --checkpoint checkpoints/best.pt`.
+3. **Copy calibration.json to sandbox** and run real agent benchmarks (Claude Code, Codex CLI, Gemini CLI) with NN-MCTS opponents on Jetson GPU using `run_overnight_benchmark.sh`
+4. **Update leaderboard** with real agent results (replace placeholder heuristic-player data)
 
 ## Key Commands
 
@@ -233,6 +235,18 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 14. **Self-Play Overfitting**: At ELO 4000+, the network learned to exploit its own play patterns but lost to random MCTS rollouts. The policy became too narrow — all 20 games per iteration were homogeneous self-play with modest Dirichlet noise (alpha=0.3, epsilon=0.25).
    - Solution: Three changes to increase diversity: (1) Lowered `dirichlet_alpha` from 0.3→0.15 for spikier noise (DaveChess has ~30-80 legal moves, not Go's ~400). (2) Raised `dirichlet_epsilon` from 0.25→0.4 so 40% of the root policy comes from noise. (3) Added `random_opponent_fraction` (default 0.25): 25% of self-play games are played against a no-NN MCTS opponent (uniform policy + zero value), forcing the network to handle non-standard play. Training examples are only collected from the NN side in these games. The NN alternates White/Black across random-opponent games.
+
+15. **Eval Win Rate Excluded Draws (CRITICAL)**: `evaluate_network()` computed `win_rate = wins / (wins + losses)`, completely ignoring draws. With 10 eval games where most are draws, even 2W/1L/7D gave win_rate=0.667 (+120 ELO). This inflated ELO by hundreds of points each iteration despite the model being unable to reliably checkmate.
+   - Solution: Changed to standard chess/AlphaZero scoring: `win_rate = (wins + 0.5 * draws) / total_games`. Now 2W/1L/7D gives 0.55, not 0.667.
+
+16. **ELO Inheritance Across Restarts**: When training crashed (28 times in 9 days) and restarted, `train()` warm-started from `best.pt` and inherited the old ELO value. Combined with the draw-excluding win rate bug, ELO ratcheted up through multiple restarts without the model actually improving. The "ELO 1982" was accumulated across 3 warm-start chains starting from ELO 800.
+   - Solution: ELO is now reset to 0 on every fresh start. Inherited ELO is logged but not used. Only the running self-play ELO within a single training session is meaningful.
+
+17. **save_best() After Pre-training Destroyed Warm-Started Weights**: On fresh start with existing `best.pt`, the code: (1) warm-started both networks from `best.pt`, (2) pre-trained on seeds modifying `self.network`, (3) called `save_best()` which saved the seed-pretrained weights as `best.pt`. On the next crash+restart, the warm-start loaded this seed-pretrained model instead of the self-play-trained one. Combined with ELO inheritance, this meant every restart effectively reset the model to "seed-pretrained only" while keeping the old ELO label.
+   - Solution: Skip pre-training when warm-starting (the model already learned from seeds in a prior run). Only pre-train on truly fresh starts. Also save an initial step checkpoint so `load_checkpoint()` can resume properly after crashes instead of falling through to "Starting fresh training".
+
+18. **Random Opponent Check Was Non-Gating**: `evaluate_network()` checked random opponent results but only logged warnings. A model losing to random MCTS (W:0 L:2 D:2) could still be "accepted" based on vs-best win rate.
+   - Solution: If random losses > random wins, force win_rate=0 to veto promotion.
 
 ### Hardware Constraints (Jetson Orin Nano)
 

@@ -177,22 +177,31 @@
   /* ========== BANNER ========== */
   .banner {
     margin: 0 0 36px;
-    padding: 12px 20px;
-    background: var(--green-bg);
-    border: 1px solid rgba(52, 211, 153, 0.2);
+    padding: 14px 20px;
     border-radius: 6px;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 10px;
     font-size: 0.85rem;
-    color: var(--green);
+    line-height: 1.5;
+  }
+  .banner.mockup {
+    background: var(--gold-bg);
+    border: 1px solid rgba(251, 191, 36, 0.25);
+    color: var(--gold);
   }
   .banner-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--green);
     flex-shrink: 0;
+    margin-top: 7px;
+  }
+  .banner.mockup .banner-dot {
+    background: var(--amber);
+  }
+  .banner-title {
+    font-weight: 600;
   }
 
   /* ========== LEADERBOARD TABLE ========== */
@@ -782,17 +791,22 @@
     </div>
 
     <!-- Banner -->
-    <div class="banner animate-in delay-1">
+    <div class="banner mockup animate-in delay-1">
       <div class="banner-dot"></div>
-      NN-MCTS opponents (AlphaZero-trained neural network, ELO 1982). Heuristic move selection
-      with identical algorithm for all agents &mdash; measures benchmark lifecycle, not agent reasoning.
+      <div>
+        <span class="banner-title">Mockup Data</span> &mdash;
+        The AlphaZero model is currently being retrained from scratch after critical bug fixes.
+        All scores below are simulated placeholder data to preview the leaderboard format.
+        Real benchmark results will replace this once training completes and agents are evaluated
+        against calibrated NN-MCTS opponents.
+      </div>
     </div>
 
     <!-- Summary stats -->
     <div class="run-meta animate-in delay-2">
       <div class="run-meta-item">
         <div class="run-meta-label">Agents Tested</div>
-        <div class="run-meta-value">3</div>
+        <div class="run-meta-value">7</div>
       </div>
       <div class="run-meta-item">
         <div class="run-meta-label">Token Budget</div>
@@ -800,7 +814,7 @@
       </div>
       <div class="run-meta-item">
         <div class="run-meta-label">Total Eval Games</div>
-        <div class="run-meta-value">30</div>
+        <div class="run-meta-value">70</div>
       </div>
       <div class="run-meta-item">
         <div class="run-meta-label">Opponent Type</div>
@@ -820,22 +834,134 @@
         <div>Status</div>
       </div>
 
-      <!-- Row 1: Codex CLI -->
-      <div class="leaderboard-row" data-detail="detail-codex" onclick="toggleDetail(this)">
+      <!-- Row 1: Claude Code -->
+      <div class="leaderboard-row" data-detail="detail-claude" onclick="toggleDetail(this)">
         <div class="lb-rank gold">1</div>
         <div class="lb-agent">
-          <div class="lb-agent-name">Codex CLI</div>
-          <div class="lb-agent-model">GPT &middot; OpenAI</div>
+          <div class="lb-agent-name">Claude Code</div>
+          <div class="lb-agent-model">Claude Opus 4.6 &middot; Anthropic</div>
         </div>
-        <div class="lb-gain positive">+404</div>
+        <div class="lb-gain positive">+347</div>
         <div class="lb-elo-chart">
           <div class="elo-bar-row">
             <span class="elo-bar-label">B</span>
-            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:65%"><span class="elo-bar-value">979</span></div></div>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:52%"><span class="elo-bar-value">782</span></div></div>
           </div>
           <div class="elo-bar-row">
             <span class="elo-bar-label">F</span>
-            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:92%"><span class="elo-bar-value">1,383</span></div></div>
+            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:75%"><span class="elo-bar-value">1,129</span></div></div>
+          </div>
+        </div>
+        <div class="lb-games">12 / 3</div>
+        <div class="lb-status done">Done</div>
+      </div>
+      <div class="detail-panel" id="detail-claude">
+        <div class="detail-inner">
+          <div class="detail-stats">
+            <div class="detail-stat">
+              <div class="detail-stat-label">Baseline ELO</div>
+              <div class="detail-stat-value">782</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Final ELO</div>
+              <div class="detail-stat-value">1,129</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Eval Record</div>
+              <div class="detail-stat-value">7W 3D 2L</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Rating Deviation</div>
+              <div class="detail-stat-value">95</div>
+            </div>
+          </div>
+          <div class="detail-notes">
+            <h4>Simulated Run Notes</h4>
+            <p>
+              12 evaluation games against NN-MCTS opponents (ELO 850&ndash;1200).
+              Strong study phase &mdash; identified Lancer dominance from GM games and
+              prioritized gold node control for early promotion.
+              Baseline: 3 games (1W 1D 1L), ELO 782 &plusmn;160.
+            </p>
+            <div class="caveat">
+              This is simulated mockup data. Real results pending model retraining.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 2: OpenCode (Claude) -->
+      <div class="leaderboard-row" data-detail="detail-opencode-claude" onclick="toggleDetail(this)">
+        <div class="lb-rank silver">2</div>
+        <div class="lb-agent">
+          <div class="lb-agent-name">OpenCode</div>
+          <div class="lb-agent-model">Claude Sonnet 4.5 &middot; Anthropic</div>
+        </div>
+        <div class="lb-gain positive">+289</div>
+        <div class="lb-elo-chart">
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">B</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:55%"><span class="elo-bar-value">821</span></div></div>
+          </div>
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">F</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:74%"><span class="elo-bar-value">1,110</span></div></div>
+          </div>
+        </div>
+        <div class="lb-games">10 / 3</div>
+        <div class="lb-status done">Done</div>
+      </div>
+      <div class="detail-panel" id="detail-opencode-claude">
+        <div class="detail-inner">
+          <div class="detail-stats">
+            <div class="detail-stat">
+              <div class="detail-stat-label">Baseline ELO</div>
+              <div class="detail-stat-value">821</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Final ELO</div>
+              <div class="detail-stat-value">1,110</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Eval Record</div>
+              <div class="detail-stat-value">5W 4D 1L</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Rating Deviation</div>
+              <div class="detail-stat-value">102</div>
+            </div>
+          </div>
+          <div class="detail-notes">
+            <h4>Simulated Run Notes</h4>
+            <p>
+              10 evaluation games against NN-MCTS opponents (ELO 800&ndash;1150).
+              Methodical study approach &mdash; studied all 5 GM games before any practice.
+              Good positional play but occasionally missed tactical shots.
+              Baseline: 3 games (1W 1D 1L), ELO 821 &plusmn;165.
+            </p>
+            <div class="caveat">
+              This is simulated mockup data. Real results pending model retraining.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 3: Codex CLI -->
+      <div class="leaderboard-row" data-detail="detail-codex" onclick="toggleDetail(this)">
+        <div class="lb-rank bronze">3</div>
+        <div class="lb-agent">
+          <div class="lb-agent-name">Codex CLI</div>
+          <div class="lb-agent-model">GPT o3 &middot; OpenAI</div>
+        </div>
+        <div class="lb-gain positive">+241</div>
+        <div class="lb-elo-chart">
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">B</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:50%"><span class="elo-bar-value">748</span></div></div>
+          </div>
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">F</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:66%"><span class="elo-bar-value">989</span></div></div>
           </div>
         </div>
         <div class="lb-games">10 / 3</div>
@@ -846,110 +972,52 @@
           <div class="detail-stats">
             <div class="detail-stat">
               <div class="detail-stat-label">Baseline ELO</div>
-              <div class="detail-stat-value">979</div>
+              <div class="detail-stat-value">748</div>
             </div>
             <div class="detail-stat">
               <div class="detail-stat-label">Final ELO</div>
-              <div class="detail-stat-value">1,383</div>
+              <div class="detail-stat-value">989</div>
             </div>
             <div class="detail-stat">
               <div class="detail-stat-label">Eval Record</div>
-              <div class="detail-stat-value">6W 4D 0L</div>
+              <div class="detail-stat-value">5W 3D 2L</div>
             </div>
             <div class="detail-stat">
               <div class="detail-stat-label">Rating Deviation</div>
-              <div class="detail-stat-value">110</div>
+              <div class="detail-stat-value">108</div>
             </div>
           </div>
           <div class="detail-notes">
-            <h4>Eval Game Details</h4>
+            <h4>Simulated Run Notes</h4>
             <p>
-              10 evaluation games against NN-MCTS opponents (ELO 1050&ndash;1358).
-              6 wins, 4 draws, 0 losses. Games averaged 27 moves.
-              Baseline: 3 games (all draws), ELO 979 &plusmn;177.
+              10 evaluation games against NN-MCTS opponents (ELO 700&ndash;1050).
+              Aggressive style &mdash; prioritized captures and material advantage.
+              Strong opening play but weaker in endgames.
+              Baseline: 3 games (0W 2D 1L), ELO 748 &plusmn;172.
             </p>
             <div class="caveat">
-              Heuristic move selection (captures &gt; promotions &gt; center control &gt; random).
-              All agents used the same algorithm &mdash; ELO differences are due to random variation
-              in move selection and opponent assignment.
+              This is simulated mockup data. Real results pending model retraining.
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Row 2: Claude Code -->
-      <div class="leaderboard-row" data-detail="detail-claude" onclick="toggleDetail(this)">
-        <div class="lb-rank silver">2</div>
-        <div class="lb-agent">
-          <div class="lb-agent-name">Claude Code</div>
-          <div class="lb-agent-model">Claude Opus 4.6 &middot; Anthropic</div>
-        </div>
-        <div class="lb-gain positive">+282</div>
-        <div class="lb-elo-chart">
-          <div class="elo-bar-row">
-            <span class="elo-bar-label">B</span>
-            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:69%"><span class="elo-bar-value">1,029</span></div></div>
-          </div>
-          <div class="elo-bar-row">
-            <span class="elo-bar-label">F</span>
-            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:87%"><span class="elo-bar-value">1,311</span></div></div>
-          </div>
-        </div>
-        <div class="lb-games">10 / 3</div>
-        <div class="lb-status done">Done</div>
-      </div>
-      <div class="detail-panel" id="detail-claude">
-        <div class="detail-inner">
-          <div class="detail-stats">
-            <div class="detail-stat">
-              <div class="detail-stat-label">Baseline ELO</div>
-              <div class="detail-stat-value">1,029</div>
-            </div>
-            <div class="detail-stat">
-              <div class="detail-stat-label">Final ELO</div>
-              <div class="detail-stat-value">1,311</div>
-            </div>
-            <div class="detail-stat">
-              <div class="detail-stat-label">Eval Record</div>
-              <div class="detail-stat-value">3W 7D 0L</div>
-            </div>
-            <div class="detail-stat">
-              <div class="detail-stat-label">Rating Deviation</div>
-              <div class="detail-stat-value">110</div>
-            </div>
-          </div>
-          <div class="detail-notes">
-            <h4>Eval Game Details</h4>
-            <p>
-              10 evaluation games against NN-MCTS opponents (ELO 981&ndash;1396).
-              3 wins, 7 draws, 0 losses. Games averaged 29 moves.
-              Baseline: 3 games (1W 2D), ELO 1,029 &plusmn;180.
-            </p>
-            <div class="caveat">
-              Heuristic move selection (captures &gt; promotions &gt; center control &gt; random).
-              All agents used the same algorithm &mdash; ELO differences are due to random variation
-              in move selection and opponent assignment.
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Row 3: Gemini CLI -->
+      <!-- Row 4: Gemini CLI -->
       <div class="leaderboard-row" data-detail="detail-gemini" onclick="toggleDetail(this)">
-        <div class="lb-rank bronze">3</div>
+        <div class="lb-rank">4</div>
         <div class="lb-agent">
           <div class="lb-agent-name">Gemini CLI</div>
-          <div class="lb-agent-model">Gemini &middot; Google</div>
+          <div class="lb-agent-model">Gemini 2.5 Pro &middot; Google</div>
         </div>
-        <div class="lb-gain negative">&minus;211</div>
+        <div class="lb-gain positive">+178</div>
         <div class="lb-elo-chart">
           <div class="elo-bar-row">
             <span class="elo-bar-label">B</span>
-            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:76%"><span class="elo-bar-value">1,145</span></div></div>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:53%"><span class="elo-bar-value">795</span></div></div>
           </div>
           <div class="elo-bar-row">
             <span class="elo-bar-label">F</span>
-            <div class="elo-bar-track"><div class="elo-bar-fill final negative" style="width:62%"><span class="elo-bar-value">934</span></div></div>
+            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:65%"><span class="elo-bar-value">973</span></div></div>
           </div>
         </div>
         <div class="lb-games">10 / 3</div>
@@ -960,33 +1028,200 @@
           <div class="detail-stats">
             <div class="detail-stat">
               <div class="detail-stat-label">Baseline ELO</div>
-              <div class="detail-stat-value">1,145</div>
+              <div class="detail-stat-value">795</div>
             </div>
             <div class="detail-stat">
               <div class="detail-stat-label">Final ELO</div>
-              <div class="detail-stat-value">934</div>
+              <div class="detail-stat-value">973</div>
             </div>
             <div class="detail-stat">
               <div class="detail-stat-label">Eval Record</div>
-              <div class="detail-stat-value">2W 8D 0L</div>
+              <div class="detail-stat-value">4W 4D 2L</div>
             </div>
             <div class="detail-stat">
               <div class="detail-stat-label">Rating Deviation</div>
-              <div class="detail-stat-value">111</div>
+              <div class="detail-stat-value">105</div>
             </div>
           </div>
           <div class="detail-notes">
-            <h4>Eval Game Details</h4>
+            <h4>Simulated Run Notes</h4>
             <p>
-              10 evaluation games against NN-MCTS opponents (ELO 735&ndash;1008).
-              2 wins, 8 draws, 0 losses. Games averaged 28 moves.
-              Baseline: 3 games (1W 2D), ELO 1,145 &plusmn;177.
+              10 evaluation games against NN-MCTS opponents (ELO 750&ndash;1020).
+              Solid study phase but conservative play style &mdash; drew many winnable positions.
+              Good at avoiding blunders but slow to capitalize on advantages.
+              Baseline: 3 games (1W 1D 1L), ELO 795 &plusmn;168.
             </p>
             <div class="caveat">
-              Higher baseline ELO (1,145) from a lucky baseline win, but the adaptive
-              Glicko-2 system assigned weaker eval opponents (ELO 735&ndash;1008).
-              Mostly drawing those opponents produced a negative ELO gain.
-              Same heuristic algorithm as all other agents.
+              This is simulated mockup data. Real results pending model retraining.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 5: OpenCode (GPT) -->
+      <div class="leaderboard-row" data-detail="detail-opencode-gpt" onclick="toggleDetail(this)">
+        <div class="lb-rank">5</div>
+        <div class="lb-agent">
+          <div class="lb-agent-name">OpenCode</div>
+          <div class="lb-agent-model">GPT-4.1 &middot; OpenAI</div>
+        </div>
+        <div class="lb-gain positive">+132</div>
+        <div class="lb-elo-chart">
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">B</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:48%"><span class="elo-bar-value">723</span></div></div>
+          </div>
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">F</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:57%"><span class="elo-bar-value">855</span></div></div>
+          </div>
+        </div>
+        <div class="lb-games">10 / 3</div>
+        <div class="lb-status done">Done</div>
+      </div>
+      <div class="detail-panel" id="detail-opencode-gpt">
+        <div class="detail-inner">
+          <div class="detail-stats">
+            <div class="detail-stat">
+              <div class="detail-stat-label">Baseline ELO</div>
+              <div class="detail-stat-value">723</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Final ELO</div>
+              <div class="detail-stat-value">855</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Eval Record</div>
+              <div class="detail-stat-value">3W 5D 2L</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Rating Deviation</div>
+              <div class="detail-stat-value">112</div>
+            </div>
+          </div>
+          <div class="detail-notes">
+            <h4>Simulated Run Notes</h4>
+            <p>
+              10 evaluation games against NN-MCTS opponents (ELO 680&ndash;900).
+              Decent learning curve but spent too many tokens on practice games,
+              leaving less budget for evaluation. Struggled with Bombard usage.
+              Baseline: 3 games (0W 2D 1L), ELO 723 &plusmn;175.
+            </p>
+            <div class="caveat">
+              This is simulated mockup data. Real results pending model retraining.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 6: OpenCode (Grok) -->
+      <div class="leaderboard-row" data-detail="detail-opencode-grok" onclick="toggleDetail(this)">
+        <div class="lb-rank">6</div>
+        <div class="lb-agent">
+          <div class="lb-agent-name">OpenCode</div>
+          <div class="lb-agent-model">Grok 3 &middot; xAI</div>
+        </div>
+        <div class="lb-gain positive">+58</div>
+        <div class="lb-elo-chart">
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">B</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:51%"><span class="elo-bar-value">765</span></div></div>
+          </div>
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">F</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill final" style="width:55%"><span class="elo-bar-value">823</span></div></div>
+          </div>
+        </div>
+        <div class="lb-games">8 / 3</div>
+        <div class="lb-status done">Done</div>
+      </div>
+      <div class="detail-panel" id="detail-opencode-grok">
+        <div class="detail-inner">
+          <div class="detail-stats">
+            <div class="detail-stat">
+              <div class="detail-stat-label">Baseline ELO</div>
+              <div class="detail-stat-value">765</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Final ELO</div>
+              <div class="detail-stat-value">823</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Eval Record</div>
+              <div class="detail-stat-value">2W 4D 2L</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Rating Deviation</div>
+              <div class="detail-stat-value">118</div>
+            </div>
+          </div>
+          <div class="detail-notes">
+            <h4>Simulated Run Notes</h4>
+            <p>
+              8 evaluation games against NN-MCTS opponents (ELO 720&ndash;870).
+              Struggled to extract strategy from GM games. Played mostly random-looking
+              moves in the opening. Some improvement in later games after practice.
+              Baseline: 3 games (1W 0D 2L), ELO 765 &plusmn;180.
+            </p>
+            <div class="caveat">
+              This is simulated mockup data. Real results pending model retraining.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 7: Goose -->
+      <div class="leaderboard-row" data-detail="detail-goose" onclick="toggleDetail(this)">
+        <div class="lb-rank">7</div>
+        <div class="lb-agent">
+          <div class="lb-agent-name">Goose</div>
+          <div class="lb-agent-model">Claude Sonnet 4.5 &middot; Block</div>
+        </div>
+        <div class="lb-gain negative">&minus;47</div>
+        <div class="lb-elo-chart">
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">B</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill baseline" style="width:56%"><span class="elo-bar-value">837</span></div></div>
+          </div>
+          <div class="elo-bar-row">
+            <span class="elo-bar-label">F</span>
+            <div class="elo-bar-track"><div class="elo-bar-fill final negative" style="width:53%"><span class="elo-bar-value">790</span></div></div>
+          </div>
+        </div>
+        <div class="lb-games">8 / 3</div>
+        <div class="lb-status done">Done</div>
+      </div>
+      <div class="detail-panel" id="detail-goose">
+        <div class="detail-inner">
+          <div class="detail-stats">
+            <div class="detail-stat">
+              <div class="detail-stat-label">Baseline ELO</div>
+              <div class="detail-stat-value">837</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Final ELO</div>
+              <div class="detail-stat-value">790</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Eval Record</div>
+              <div class="detail-stat-value">1W 4D 3L</div>
+            </div>
+            <div class="detail-stat">
+              <div class="detail-stat-label">Rating Deviation</div>
+              <div class="detail-stat-value">120</div>
+            </div>
+          </div>
+          <div class="detail-notes">
+            <h4>Simulated Run Notes</h4>
+            <p>
+              8 evaluation games against NN-MCTS opponents (ELO 780&ndash;890).
+              Lucky baseline (2W 1D 0L) inflated starting ELO.
+              Struggled with the CLI interface &mdash; wasted tokens on malformed commands.
+              Negative gain despite having the same underlying model as OpenCode (Claude).
+              Baseline: 3 games (2W 1D 0L), ELO 837 &plusmn;155.
+            </p>
+            <div class="caveat">
+              This is simulated mockup data. Real results pending model retraining.
             </div>
           </div>
         </div>
@@ -1186,6 +1421,12 @@
             <td class="status-tested">Tested</td>
           </tr>
           <tr>
+            <td>OpenCode</td>
+            <td><code>opencode "prompt"</code></td>
+            <td>&mdash;</td>
+            <td class="status-untested">Untested</td>
+          </tr>
+          <tr>
             <td>Goose</td>
             <td><code>goose run -t "prompt"</code></td>
             <td>&mdash;</td>
@@ -1210,9 +1451,9 @@
       <h3>Opponent Calibration</h3>
       <p>
         Opponents are NN-MCTS agents using the trained AlphaZero network at varying simulation
-        counts. The opponent pool maps ELO to simulation count: 0 sims = ELO 400, 5 sims = 700,
-        10 sims = 900, 25 sims = 1200, 50 sims = 1500, with log-space interpolation between
-        calibrated points.
+        counts. ELO calibration is performed via round-robin Glicko-2 tournament between
+        NN-MCTS agents at different simulation counts. Log-space interpolation between
+        calibrated points determines the simulation count for any target ELO.
       </p>
 
       <h3>Rating System</h3>
