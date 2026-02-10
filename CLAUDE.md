@@ -6,6 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 GameBench is a benchmark measuring how efficiently LLMs learn novel strategic reasoning from examples using DaveChess, a custom board game designed to be absent from training data. The system uses AlphaZero self-play training on a Jetson Orin Nano to produce an expert neural network that serves dual roles: generating synthetic grandmaster games for LLM study, and acting as the calibrated opponent that agents play against during evaluation.
 
+## Current Status (Feb 2026)
+
+**Benchmark is ready but needs NN-MCTS calibration on GPU (Jetson).**
+
+What's done:
+- AlphaZero model trained (dark-sky-65, ELO 1982), `checkpoints/best.pt`
+- GM games downloaded from W&B to `data/gm_games/`
+- Sandbox setup and `agent_cli.py` working
+- GitHub Pages leaderboard at `docs/index.html` (currently has placeholder heuristic-player data)
+
+What's needed:
+1. **Run NN-MCTS calibration on Jetson** (GPU makes it fast). The existing manual calibration (`checkpoints/calibration.json`: 0=400, 5=700, 10=900, 25=1200, 50=1500) was hand-estimated — run `python scripts/calibrate_opponents.py --checkpoint checkpoints/best.pt` on Jetson for proper round-robin Glicko-2 calibration. MCTSLite calibration (`--no-network`) is too slow even at moderate sim counts because each simulation is a full random rollout.
+2. **Copy calibration.json to sandbox** and run real agent benchmarks (Claude Code, Codex CLI, Gemini CLI) with NN-MCTS opponents on Jetson GPU
+3. **Update leaderboard** with real agent results
+
 ## Key Commands
 
 ### Development & Testing
