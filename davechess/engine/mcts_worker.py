@@ -139,10 +139,14 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
         _play_wave(wave_games, nn_mcts, random_mcts, evaluator,
                    temperature_threshold)
 
+        draw_value_target = mcts_config.get("draw_value_target", 0.0)
+
         # Finalize games and send results
         worker_results = []
         for g in wave_games:
-            training_data, game_record = _finalize_game(g)
+            training_data, game_record = _finalize_game(
+                g, draw_value_target=draw_value_target
+            )
             worker_results.append({
                 "game_idx": g.game_idx,
                 "game_type": g.game_type,

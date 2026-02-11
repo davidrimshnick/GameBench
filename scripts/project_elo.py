@@ -69,6 +69,48 @@ def fetch_history(run_name=None):
     # Fetch history
     history = target_run.history(samples=5000, pandas=False)
 
+    # Merge history rows by iteration; W&B often logs multiple rows per
+    # iteration from different phases.
+    per_iter = {}
+    for row in history:
+        it = row.get('iteration')
+        if it is None:
+            continue
+        it = int(it)
+        rec = per_iter.setdefault(it, {})
+
+        elo = row.get('elo_estimate') or row.get('elo/estimate')
+        if elo is not None:
+            rec['elo'] = float(elo)
+
+        pl = row.get('train/policy_loss') or row.get('iteration/avg_policy_loss')
+        if pl is not None:
+            rec['policy_loss'] = float(pl)
+
+        vl = row.get('train/value_loss') or row.get('iteration/avg_value_loss')
+        if vl is not None:
+            rec['value_loss'] = float(vl)
+
+        ts = row.get('_timestamp')
+        if ts is not None:
+            rec['timestamp'] = float(ts)
+
+        gl = row.get('selfplay/avg_game_length')
+        if gl is not None:
+            rec['game_length'] = float(gl)
+
+        dr = row.get('selfplay/draw_rate')
+        if dr is not None:
+            rec['draw_rate'] = float(dr)
+        else:
+            draws = row.get('selfplay/draws')
+            white_wins = row.get('selfplay/white_wins')
+            black_wins = row.get('selfplay/black_wins')
+            if draws is not None and white_wins is not None and black_wins is not None:
+                total = draws + white_wins + black_wins
+                if total > 0:
+                    rec['draw_rate'] = float(draws / total)
+
     iterations = []
     elos = []
     policy_losses = []
@@ -77,28 +119,22 @@ def fetch_history(run_name=None):
     game_lengths = []
     draw_rates = []
 
-    for row in history:
-        it = row.get('iteration')
-        elo = row.get('elo_estimate') or row.get('elo/estimate')
-        pl = row.get('train/policy_loss') or row.get('iteration/avg_policy_loss')
-        vl = row.get('train/value_loss') or row.get('iteration/avg_value_loss')
-        ts = row.get('_timestamp')
-        gl = row.get('selfplay/avg_game_length')
-        dr = row.get('selfplay/draw_rate')
-
-        if it is not None and elo is not None:
-            iterations.append(int(it))
-            elos.append(float(elo))
-            if pl is not None:
-                policy_losses.append(float(pl))
-            if vl is not None:
-                value_losses.append(float(vl))
-            if ts is not None:
-                timestamps.append(float(ts))
-            if gl is not None:
-                game_lengths.append(float(gl))
-            if dr is not None:
-                draw_rates.append(float(dr))
+    for it in sorted(per_iter):
+        rec = per_iter[it]
+        if 'elo' not in rec:
+            continue
+        iterations.append(it)
+        elos.append(rec['elo'])
+        if 'policy_loss' in rec:
+            policy_losses.append(rec['policy_loss'])
+        if 'value_loss' in rec:
+            value_losses.append(rec['value_loss'])
+        if 'timestamp' in rec:
+            timestamps.append(rec['timestamp'])
+        if 'game_length' in rec:
+            game_lengths.append(rec['game_length'])
+        if 'draw_rate' in rec:
+            draw_rates.append(rec['draw_rate'])
 
     data = {
         'run_name': target_run.name,

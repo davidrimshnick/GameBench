@@ -176,8 +176,21 @@ class GameState:
 
     def get_position_key(self) -> tuple:
         """Return a hashable key for threefold repetition detection.
-        Excludes resources (they change every turn via income, preventing repeats).
+
+        Includes coarse resource buckets (per player) based on promotion
+        affordability so positions with materially different options don't
+        collapse into the same repetition key.
         """
+        def _resource_bucket(resource: int) -> int:
+            # Promotion thresholds: Rider=3, Bombard=5, Lancer=7
+            if resource < 3:
+                return 0
+            if resource < 5:
+                return 1
+            if resource < 7:
+                return 2
+            return 3
+
         cells = []
         for row in range(BOARD_SIZE):
             for col in range(BOARD_SIZE):
@@ -186,7 +199,12 @@ class GameState:
                     cells.append(None)
                 else:
                     cells.append((cell.piece_type, cell.player))
-        return (tuple(cells), self.current_player)
+        return (
+            tuple(cells),
+            self.current_player,
+            _resource_bucket(self.resources[Player.WHITE]),
+            _resource_bucket(self.resources[Player.BLACK]),
+        )
 
     def serialize(self) -> str:
         """Serialize game state to JSON string."""

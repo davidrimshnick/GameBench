@@ -158,7 +158,7 @@ python scripts/endgame_barrier_analysis.py
 
 The AlphaZero implementation has several critical modifications for DaveChess:
 
-1. **Value Target Structure**: Uses standard AlphaZero three-valued targets (+1.0 for wins, 0.0 for draws, -1.0 for losses) with tanh output head. Drawn games are included in training data so the model learns that draw-prone positions are worse than winning ones. Earlier versions incorrectly used 0/1 targets with a tanh head, causing the network to treat losses as neutral (tanh midpoint = 0 = "uncertain"). Another earlier version discarded draws entirely, but with the threefold repetition rule, draws carry meaningful signal.
+1. **Value Target Structure**: Uses tanh-aligned value targets (+1.0 for wins, configurable draw target, -1.0 for losses). Default training config sets `selfplay.draw_value_target: -0.1` to discourage draw-seeking local minima in draw-heavy self-play. Earlier versions incorrectly used 0/1 targets with a tanh head, causing the network to treat losses as neutral (tanh midpoint = 0 = "uncertain"). Another earlier version discarded draws entirely, but with repetition/turn-limit rules, draws still carry strategic signal.
 
 2. **Smart Seed Generation**: Two types of seeds bootstrap learning:
    - **Heuristic games**: `CommanderHunter` and `HeuristicPlayer` provide strategic full-game seeds with middlegame patterns.
@@ -171,7 +171,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 3. **Warm-Start from W&B**: If `checkpoints/best.pt` exists when starting "fresh" training (no step checkpoint), the trainer loads those weights into both networks instead of starting from random. This enables restoring a model from W&B artifacts and injecting new seed data without losing learned knowledge.
 
-4. **Adaptive MCTS Simulations**: The `adaptive_simulations()` function in `training.py` scales simulation count based on model ELO (25 sims at ELO 0 → 100 sims at ELO 2000) to speed up early training. Min sims raised from 10→25 (selfplay) and 15→30 (eval) because too-shallow search produced low-quality data that couldn't learn from seed strategies.
+4. **Adaptive MCTS Simulations**: The `adaptive_simulations()` function in `training.py` scales simulation count based on model ELO. Self-play uses a configurable minimum floor (`mcts.min_selfplay_simulations`, default 50) and a smoothed ELO signal (`training.adaptive_elo_smoothing`) rather than raw probe ELO to avoid search-depth jitter from noisy probes.
 
 ### Game State Representation
 
@@ -186,7 +186,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 1. **Capture (Chess-style)**: Any piece can capture any piece by moving onto it. Attacker always takes the defender's square — no strength comparison. Enables sacrifices, forks, pins, and tactical depth.
 2. **Commander Safety**: Must resolve check immediately (move/block/capture). Cannot make a move that leaves own Commander in check.
-3. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player, excluding resources) = draw. 50-move rule: 50 moves per side (100 halfmoves) with no capture or promotion = draw.
+3. **Win Conditions**: Checkmate opponent's Commander (only way to win). Turn 100 with no checkmate = draw. Threefold repetition of the same position (board + player + resource affordability buckets) = draw. 50-move rule: 50 moves per side (100 halfmoves) with no capture or promotion = draw.
 4. **Piece Types**: Commander (C), Warrior (W, pawn-like), Rider (R, up to 7 squares orthogonal / 3 diagonal), Bombard (B, 1 sq move + ranged attack), Lancer (L, up to 7 squares any direction with jump)
 5. **Promotion Costs**: R=3, B=5, L=7. No deployment — pieces promote in place by spending Gold resources.
 6. **Starting Army**: 12 pieces per side — 1 Commander, 3 Riders, 2 Bombards, 6 Warriors. No new pieces are ever added.
@@ -208,8 +208,8 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 4. **Training Instability**: Early iterations produce all draws/max-length games
    - Solution: Smart seeds with strategic play, adaptive simulation counts
 
-5. **Draw Data Flooding Replay Buffer**: When 60-70% of self-play games are draws, the buffer fills with low-information positions that dilute the signal from decisive games.
-   - Solution (previous): Discarded draws entirely. (Current): With threefold repetition rule, draws carry meaningful signal. Draws are now kept with value target 0.0 (standard AlphaZero three-valued targets). The repetition rule shortens the worst-case draws, and the model learns to avoid draw-prone positions.
+5. **Draw Data Flooding Replay Buffer**: When self-play is draw-heavy, the buffer fills with low-information positions that dilute decisive signal.
+   - Solution: Keep draws but reduce their gradient dominance. Training supports configurable draw targets (`selfplay.draw_value_target`) and draw loss weighting (`training.draw_sample_weight`). Self-play now logs draw reasons (`repetition`, `turn_limit`, `fifty_move`, `stalemate_or_other`) so we can distinguish rule-pathology from normal stabilization.
 
 6. **Consecutive Rejection Stalls**: Training network can get stuck in local minima, failing eval repeatedly against the best network (7+ consecutive rejections observed).
    - Solution: Auto-reset mechanism resets training network to best model weights after `max_consecutive_rejections` (default 7) consecutive failures. Counter persists across restarts via checkpoint.
@@ -232,8 +232,8 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 12. **Memory Diagnostics**: Silent OOM kills during training are hard to diagnose on Jetson (kernel kills process without error in app logs).
    - Solution: `_log_memory()` helper logs RSS and GPU memory at phase transitions (after self-play, before/after eval, before/after checkpoint save). Explicit `del current_mcts, best_mcts; gc.collect()` after eval to free MCTS circular references.
 
-13. **Threefold Repetition**: At high ELO (2000+), 75% of self-play games end in draws via Warrior-toggle oscillation (Wb1-c1/Wc1-b1 repeated to turn 100). The policy network couldn't learn to avoid repetition because the rule wasn't in `apply_move()`.
-   - Solution: Added `position_counts` dict to `GameState` tracking `get_position_key()` occurrences (board + current_player only, excluding resources — resources change every turn via income, preventing repeats). In both `apply_move()` and `apply_move_fast()`, draw is declared when any position occurs 3 times. MCTS search sees repetition draws as terminal nodes (value 0.0). The `clone()` method copies `position_counts` so game loops from cloned states track correctly.
+13. **Threefold Repetition**: At high ELO, oscillation loops can dominate self-play.
+   - Solution: `position_counts` tracks `get_position_key()` occurrences in both `apply_move()` and `apply_move_fast()`. The key now includes coarse resource buckets (promotion affordability) so materially different states are not collapsed into false repeats. MCTS sees repetition draws as terminal nodes, and `clone()` copies `position_counts` for correct loop tracking.
 
 14. **Self-Play Overfitting**: At ELO 4000+, the network learned to exploit its own play patterns but lost to random MCTS rollouts. The policy became too narrow — all 20 games per iteration were homogeneous self-play with modest Dirichlet noise (alpha=0.3, epsilon=0.25).
    - Solution: Three changes to increase diversity: (1) Lowered `dirichlet_alpha` from 0.3→0.15 for spikier noise (DaveChess has ~30-80 legal moves, not Go's ~400). (2) Raised `dirichlet_epsilon` from 0.25→0.4 so 40% of the root policy comes from noise. (3) Added `random_opponent_fraction` (default 0.25): 25% of self-play games are played against a no-NN MCTS opponent (uniform policy + zero value), forcing the network to handle non-standard play. Training examples are only collected from the NN side in these games. The NN alternates White/Black across random-opponent games.

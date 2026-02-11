@@ -8,6 +8,8 @@ network:
 
 mcts:
   num_simulations: 100         # Need enough depth for meaningful policy targets
+  min_selfplay_simulations: 50 # Keep early self-play deep enough for decisive tactics
+  # fixed_selfplay_simulations: 64  # Uncomment to disable adaptive sims entirely
   cpuct: 1.5
   dirichlet_alpha: 0.15            # Spikier noise for fewer legal moves than Go
   dirichlet_epsilon: 0.4            # 40% noise to break self-play overfitting
@@ -20,15 +22,21 @@ selfplay:
   min_buffer_size: 1000        # Train immediately on seed games
   random_opponent_fraction: 0.25  # 25% vs random MCTS — enough diversity without wasting data
   parallel_games: 20             # All 20 games simultaneously for batched GPU eval
+  draw_value_target: -0.1      # Penalize draw-seeking local minima
 
 training:
   batch_size: 128
   learning_rate: 0.001         # Lower LR for more stable learning
   momentum: 0.9
   weight_decay: 0.0001
+  draw_sample_weight: 0.4      # Downweight draw positions in loss vs decisive outcomes
   steps_per_iteration: 800     # ~2 passes through 50K buffer per iteration
   checkpoint_interval: 100
   elo_probe_interval: 5        # MCTSLite ELO estimation every N iterations (non-gating)
+  elo_probe_games: 20          # Reduce probe variance vs 4-game probes
+  elo_probe_mctslite_sims: 50
+  elo_probe_nn_sims: 64
+  adaptive_elo_smoothing: 0.7  # Smooth probe ELO before mapping to adaptive sims
   max_iterations: 200
 
 paths:

@@ -149,6 +149,8 @@ class Trainer:
         self.training_step = 0
         self.iteration = 0
         self.elo_estimate = 0  # Running ELO estimate from MCTSLite probes
+        # Smoothed ELO used for adaptive self-play sims (less jittery than probes)
+        self.elo_for_sims = 0.0
 
         # Paths
         paths = config.get("paths", {})
@@ -182,6 +184,7 @@ class Trainer:
             "training_step": self.training_step,
             "iteration": self.iteration,
             "elo_estimate": self.elo_estimate,
+            "elo_for_sims": self.elo_for_sims,
         }
         if self.scaler is not None:
             checkpoint["scaler_state"] = self.scaler.state_dict()
@@ -242,6 +245,7 @@ class Trainer:
         self.training_step = checkpoint["training_step"]
         self.iteration = checkpoint["iteration"]
         self.elo_estimate = checkpoint.get("elo_estimate", checkpoint.get("best_elo_estimate", 0))
+        self.elo_for_sims = checkpoint.get("elo_for_sims", float(self.elo_estimate))
 
         if self.scaler is not None and "scaler_state" in checkpoint:
             self.scaler.load_state_dict(checkpoint["scaler_state"])
@@ -289,26 +293,43 @@ class Trainer:
 
         self.network.train()
         self.optimizer.zero_grad()
+        draw_sample_weight = float(self.config.get("training", {}).get("draw_sample_weight", 1.0))
+
+        def _compute_losses(policy_logits, value_pred):
+            per_example_policy_loss = -torch.sum(
+                policies_t * torch.log_softmax(policy_logits, dim=1), dim=1
+            )
+            per_example_value_loss = (value_pred - values_t) ** 2
+
+            if draw_sample_weight != 1.0:
+                # Downweight draw targets (value==0) so decisive positions contribute
+                # proportionally more gradient signal.
+                draw_mask = torch.isclose(values_t, torch.zeros_like(values_t), atol=1e-6)
+                sample_weights = torch.where(
+                    draw_mask,
+                    torch.full_like(values_t, draw_sample_weight),
+                    torch.ones_like(values_t),
+                )
+                sample_weights = sample_weights / sample_weights.mean().clamp_min(1e-6)
+            else:
+                sample_weights = torch.ones_like(values_t)
+
+            policy_loss = torch.mean(per_example_policy_loss * sample_weights.squeeze(1))
+            value_loss = torch.mean(per_example_value_loss * sample_weights)
+            total_loss = policy_loss + value_loss
+            return policy_loss, value_loss, total_loss
 
         if self.scaler is not None:
             with autocast("cuda"):
                 policy_logits, value_pred = self.network(planes_t)
-                policy_loss = -torch.mean(
-                    torch.sum(policies_t * torch.log_softmax(policy_logits, dim=1), dim=1)
-                )
-                value_loss = torch.mean((value_pred - values_t) ** 2)
-                total_loss = policy_loss + value_loss
+                policy_loss, value_loss, total_loss = _compute_losses(policy_logits, value_pred)
 
             self.scaler.scale(total_loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
             policy_logits, value_pred = self.network(planes_t)
-            policy_loss = -torch.mean(
-                torch.sum(policies_t * torch.log_softmax(policy_logits, dim=1), dim=1)
-            )
-            value_loss = torch.mean((value_pred - values_t) ** 2)
-            total_loss = policy_loss + value_loss
+            policy_loss, value_loss, total_loss = _compute_losses(policy_logits, value_pred)
 
             total_loss.backward()
             self.optimizer.step()
@@ -338,7 +359,8 @@ class Trainer:
         return losses
 
     def estimate_elo_mctslite(self, num_games: int = 4,
-                              mctslite_sims: int = 50) -> dict:
+                              mctslite_sims: int = 50,
+                              nn_sims: Optional[int] = None) -> dict:
         """Estimate ELO by playing the NN against MCTSLite (no neural network).
 
         This is a lightweight, non-gating probe. MCTSLite uses random rollouts
@@ -350,8 +372,9 @@ class Trainer:
         """
         from davechess.engine.mcts_lite import MCTSLite
 
-        # Use modest NN-MCTS sims for speed (this is just a probe)
-        nn_sims = max(25, mctslite_sims)
+        # Use configured NN-MCTS sims if provided, else a modest default for speed.
+        if nn_sims is None:
+            nn_sims = max(25, mctslite_sims)
         nn_mcts = MCTS(self.network, num_simulations=nn_sims,
                        temperature=0.1, device=self.device)
 
@@ -424,6 +447,7 @@ class Trainer:
             "avg_game_length": sum(game_lengths) / len(game_lengths) if game_lengths else 0,
             "estimated_elo": estimated_elo,
             "mctslite_sims": mctslite_sims,
+            "nn_sims": nn_sims,
         }
 
     def log_metrics(self, metrics: dict):
@@ -552,8 +576,22 @@ class Trainer:
         # This ensures self-play data always matches the network being trained,
         # avoiding distribution mismatch that causes eval regression.
         base_sims = mcts_cfg.get("num_simulations", 200)
-        num_sims = adaptive_simulations(self.elo_estimate, min_sims=25, max_sims=base_sims)
-        logger.info(f"Self-play phase... (adaptive sims: {num_sims}, ELO={self.elo_estimate:.0f})")
+        min_sims = int(mcts_cfg.get("min_selfplay_simulations", 25))
+        fixed_sims = mcts_cfg.get("fixed_selfplay_simulations")
+        if fixed_sims is not None:
+            num_sims = int(fixed_sims)
+            logger.info(f"Self-play phase... (fixed sims: {num_sims})")
+        else:
+            num_sims = adaptive_simulations(
+                self.elo_for_sims,
+                min_sims=min_sims,
+                max_sims=base_sims,
+            )
+            logger.info(
+                "Self-play phase... "
+                f"(adaptive sims: {num_sims}, probe_ELO={self.elo_estimate:.0f}, "
+                f"smoothed_ELO={self.elo_for_sims:.0f})"
+            )
         selfplay_start = time.time()
         num_workers = sp_cfg.get("num_workers", 1)
         parallel_games = sp_cfg.get("parallel_games", 0)
@@ -565,6 +603,7 @@ class Trainer:
             dirichlet_alpha=mcts_cfg.get("dirichlet_alpha", 0.3),
             dirichlet_epsilon=mcts_cfg.get("dirichlet_epsilon", 0.25),
             random_opponent_fraction=sp_cfg.get("random_opponent_fraction", 0.0),
+            draw_value_target=float(sp_cfg.get("draw_value_target", 0.0)),
             device=self.device,
         )
         if num_workers > 1:
@@ -593,6 +632,24 @@ class Trainer:
                     f"D:{sp_stats['draws']} white_win%={sp_stats['white_win_pct']:.1%} "
                     f"lengths={sp_stats['min_game_length']}-{sp_stats['max_game_length']} "
                     f"avg={sp_stats['avg_game_length']:.0f}")
+        draw_reason_counts = sp_stats.get("draw_reason_counts", {})
+        if sp_stats["draws"] > 0:
+            logger.info(
+                "Draw reasons: "
+                f"repetition={draw_reason_counts.get('repetition', 0)}, "
+                f"turn_limit={draw_reason_counts.get('turn_limit', 0)}, "
+                f"fifty_move={draw_reason_counts.get('fifty_move', 0)}, "
+                f"other={draw_reason_counts.get('stalemate_or_other', 0)}"
+            )
+
+        total_selfplay_games = (
+            sp_stats["white_wins"] + sp_stats["black_wins"] + sp_stats["draws"]
+        )
+        draw_rate = sp_stats["draws"] / total_selfplay_games if total_selfplay_games else 0.0
+        decisive_rate = (
+            (sp_stats["white_wins"] + sp_stats["black_wins"]) / total_selfplay_games
+            if total_selfplay_games else 0.0
+        )
 
         sp_metrics = {
             "iteration": self.iteration,
@@ -605,6 +662,13 @@ class Trainer:
             "selfplay/white_wins": sp_stats["white_wins"],
             "selfplay/black_wins": sp_stats["black_wins"],
             "selfplay/draws": sp_stats["draws"],
+            "selfplay/total_games": total_selfplay_games,
+            "selfplay/draw_rate": draw_rate,
+            "selfplay/decisive_rate": decisive_rate,
+            "selfplay/draw_reason_turn_limit": draw_reason_counts.get("turn_limit", 0),
+            "selfplay/draw_reason_fifty_move": draw_reason_counts.get("fifty_move", 0),
+            "selfplay/draw_reason_repetition": draw_reason_counts.get("repetition", 0),
+            "selfplay/draw_reason_other": draw_reason_counts.get("stalemate_or_other", 0),
             "selfplay/white_win_pct": sp_stats["white_win_pct"],
             "selfplay/num_simulations": num_sims,
         }
@@ -612,9 +676,9 @@ class Trainer:
             _safe_wandb_log(sp_metrics, step=self.training_step)
             # Log per-game details as a table
             if "game_details" in sp_stats:
-                table = wandb.Table(columns=["game", "length", "winner"])
+                table = wandb.Table(columns=["game", "length", "winner", "draw_reason"])
                 for g in sp_stats["game_details"]:
-                    table.add_data(g["game"], g["length"], g["winner"])
+                    table.add_data(g["game"], g["length"], g["winner"], g.get("draw_reason"))
                 _safe_wandb_log({"selfplay/games": table}, step=self.training_step)
         if self.tb_writer:
             for k, v in sp_metrics.items():
@@ -723,21 +787,37 @@ class Trainer:
             gc.collect()
             if self.device != "cpu":
                 torch.cuda.empty_cache()
+            probe_num_games = int(train_cfg.get("elo_probe_games", 20))
+            probe_mctslite_sims = int(train_cfg.get("elo_probe_mctslite_sims", 50))
+            probe_nn_sims = int(train_cfg.get("elo_probe_nn_sims", max(min_sims, probe_mctslite_sims)))
             elo_results = self.estimate_elo_mctslite(
-                num_games=4, mctslite_sims=50)
+                num_games=probe_num_games,
+                mctslite_sims=probe_mctslite_sims,
+                nn_sims=probe_nn_sims,
+            )
             self.elo_estimate = elo_results["estimated_elo"]
+            smoothing = float(train_cfg.get("adaptive_elo_smoothing", 0.7))
+            smoothing = min(max(smoothing, 0.0), 0.99)
+            self.elo_for_sims = (
+                smoothing * self.elo_for_sims + (1.0 - smoothing) * self.elo_estimate
+            )
             logger.info(f"MCTSLite ELO estimate: {self.elo_estimate:.0f} "
                         f"(W:{elo_results['wins']} L:{elo_results['losses']} D:{elo_results['draws']} "
-                        f"win_rate={elo_results['win_rate']:.2f} avg_len={elo_results['avg_game_length']:.0f})")
+                        f"win_rate={elo_results['win_rate']:.2f} avg_len={elo_results['avg_game_length']:.0f}, "
+                        f"nn_sims={elo_results['nn_sims']}, mctslite_sims={elo_results['mctslite_sims']})")
 
             if self.use_wandb:
                 elo_metrics = {
                     "elo/estimate": self.elo_estimate,
+                    "elo/for_sims": self.elo_for_sims,
                     "elo/vs_mctslite_win_rate": elo_results["win_rate"],
                     "elo/vs_mctslite_wins": elo_results["wins"],
                     "elo/vs_mctslite_losses": elo_results["losses"],
                     "elo/vs_mctslite_draws": elo_results["draws"],
                     "elo/vs_mctslite_avg_length": elo_results["avg_game_length"],
+                    "elo/vs_mctslite_num_games": probe_num_games,
+                    "elo/vs_mctslite_nn_sims": elo_results["nn_sims"],
+                    "elo/vs_mctslite_sims": elo_results["mctslite_sims"],
                 }
                 _safe_wandb_log(elo_metrics, step=self.training_step)
                 wandb.run.summary["elo_estimate"] = self.elo_estimate
@@ -765,8 +845,8 @@ class Trainer:
         if self.use_wandb:
             wandb.run.summary["total_iterations"] = self.iteration
             if elo_results:
-                total_sp = sp_stats['white_wins'] + sp_stats['black_wins'] + sp_stats['draws']
-                sp_draw_pct = sp_stats['draws'] / total_sp * 100 if total_sp > 0 else 0
+                total_sp = total_selfplay_games
+                sp_draw_pct = draw_rate * 100
                 iter_elapsed = time.time() - iteration_start
                 wandb.alert(
                     title=f"Iter {self.iteration}: ELO {self.elo_estimate:.0f}",
@@ -810,6 +890,13 @@ class Trainer:
             "num_examples": num_new_examples,
             "buffer_size": len(self.replay_buffer),
             "elo_estimate": self.elo_estimate,
+            "elo_for_sims": self.elo_for_sims,
+            "selfplay_draw_rate": draw_rate,
+            "selfplay_decisive_rate": decisive_rate,
+            "selfplay_draw_reason_repetition": draw_reason_counts.get("repetition", 0),
+            "selfplay_draw_reason_turn_limit": draw_reason_counts.get("turn_limit", 0),
+            "selfplay_draw_reason_fifty_move": draw_reason_counts.get("fifty_move", 0),
+            "selfplay_draw_reason_other": draw_reason_counts.get("stalemate_or_other", 0),
             "elapsed_sec": iteration_elapsed,
             **avg_losses,
         })
@@ -838,6 +925,7 @@ class Trainer:
                     self.network.load_state_dict(best_ckpt["network_state"])
                     old_elo = best_ckpt.get("elo_estimate", 0)
                     self.elo_estimate = 0
+                    self.elo_for_sims = 0.0
                     logger.info(f"Warm-starting from existing best.pt (old ELO {old_elo:.0f}, reset to 0)")
                     warm_started = True
                     del best_ckpt

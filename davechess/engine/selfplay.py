@@ -25,6 +25,19 @@ from davechess.engine.network import state_to_planes, move_to_policy_index, POLI
 from davechess.engine.mcts import MCTS, BatchedEvaluator
 
 
+def classify_draw_reason(state: GameState) -> str:
+    """Classify why a finished game ended in a draw."""
+    if state.winner is not None:
+        return "not_draw"
+    if state.turn > 100:
+        return "turn_limit"
+    if state.halfmove_clock >= 100:
+        return "fifty_move"
+    if state.position_counts and max(state.position_counts.values()) >= 3:
+        return "repetition"
+    return "stalemate_or_other"
+
+
 class ReplayBuffer:
     """Circular replay buffer for training data.
 
@@ -158,7 +171,8 @@ class ReplayBuffer:
 def play_selfplay_game(mcts_engine: MCTS,
                        temperature_threshold: int = 30,
                        opponent_mcts: MCTS = None,
-                       nn_plays_white: bool = True) -> tuple[list, dict]:
+                       nn_plays_white: bool = True,
+                       draw_value_target: float = 0.0) -> tuple[list, dict]:
     """Play one self-play game and return training examples + game record.
 
     Args:
@@ -169,13 +183,15 @@ def play_selfplay_game(mcts_engine: MCTS,
             plays the other. Training examples are only collected from
             the mcts_engine's turns.
         nn_plays_white: When opponent_mcts is set, which side the NN plays.
+        draw_value_target: Value target assigned to drawn positions.
 
     Returns:
         (training_data, game_record) where:
         - training_data: list of (planes, policy_target, value_target) tuples
-          (empty for draws)
+          from NN turns in the game
         - game_record: dict with "moves" (list of (state, move) pairs),
-          "winner" ("white"/"black"/"draw"), "length" (int)
+          "winner" ("white"/"black"/"draw"), "length" (int),
+          and "draw_reason" (or None for decisive games)
     """
     state = GameState()
     examples: list[tuple[np.ndarray, dict, int]] = []  # (planes, policy_dict, player)
@@ -220,11 +236,18 @@ def play_selfplay_game(mcts_engine: MCTS,
     if state.winner is not None:
         winner = int(state.winner)
         winner_str = "white" if state.winner == Player.WHITE else "black"
+        draw_reason = None
     else:
         winner = -1
         winner_str = "draw"
+        draw_reason = classify_draw_reason(state)
 
-    game_record = {"moves": game_moves, "winner": winner_str, "length": move_count}
+    game_record = {
+        "moves": game_moves,
+        "winner": winner_str,
+        "length": move_count,
+        "draw_reason": draw_reason,
+    }
 
     # Assign value targets based on outcome
     training_data = []
@@ -234,9 +257,9 @@ def play_selfplay_game(mcts_engine: MCTS,
         for idx, prob in policy_dict.items():
             policy[idx] = prob
 
-        # Value from this player's perspective: +1 win, -1 loss, 0 draw
+        # Value from this player's perspective: +1 win, -1 loss, draw_value_target draw
         if winner == -1:
-            value = 0.0
+            value = draw_value_target
         elif winner == player:
             value = 1.0
         else:
@@ -252,6 +275,7 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
                        dirichlet_alpha: float = 0.3,
                        dirichlet_epsilon: float = 0.25,
                        random_opponent_fraction: float = 0.0,
+                       draw_value_target: float = 0.0,
                        device: str = "cpu") -> tuple[list, dict]:
     """Run a batch of self-play games sequentially.
 
@@ -264,6 +288,7 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
         dirichlet_epsilon: Fraction of Dirichlet noise to blend with policy.
         random_opponent_fraction: Fraction of games played vs random MCTS
             (no neural network) to prevent self-play overfitting.
+        draw_value_target: Value target assigned to drawn positions.
         device: Torch device string.
 
     Returns:
@@ -279,6 +304,12 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
     draws = 0
     game_lengths = []
     game_details = []
+    draw_reason_counts = {
+        "turn_limit": 0,
+        "fifty_move": 0,
+        "repetition": 0,
+        "stalemate_or_other": 0,
+    }
 
     game_records = []
 
@@ -299,14 +330,17 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
                 mcts, temperature_threshold,
                 opponent_mcts=random_mcts_by_sims[sims],
                 nn_plays_white=nn_plays_white,
+                draw_value_target=draw_value_target,
             )
             game_type = "vs_random"
         else:
             # Standard self-play
-            examples, game_record = play_selfplay_game(mcts, temperature_threshold)
+            examples, game_record = play_selfplay_game(
+                mcts, temperature_threshold, draw_value_target=draw_value_target
+            )
             game_type = "selfplay"
 
-        game_len = len(examples)
+        game_len = game_record["length"]
         all_examples.extend(examples)
         game_lengths.append(game_len)
 
@@ -317,9 +351,12 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
             black_wins += 1
         else:
             draws += 1
+            draw_reason = game_record.get("draw_reason", "stalemate_or_other")
+            draw_reason_counts[draw_reason] = draw_reason_counts.get(draw_reason, 0) + 1
 
         game_details.append({"game": game_idx + 1, "length": game_record["length"],
-                             "winner": winner, "type": game_type})
+                             "winner": winner, "type": game_type,
+                             "draw_reason": game_record.get("draw_reason")})
         game_records.append(game_record)
 
         logger.info(f"  Self-play game {game_idx+1}/{num_games} ({game_type}): "
@@ -338,6 +375,7 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
         "game_details": game_details,
         "game_records": game_records,
         "num_random_games": num_random_games,
+        "draw_reason_counts": draw_reason_counts,
     }
 
     return all_examples, stats
@@ -349,6 +387,7 @@ class _ActiveGame:
         "game_idx", "state", "nn_engine", "opponent_engine",
         "nn_plays_white", "move_count", "temperature_threshold",
         "examples", "game_moves", "game_type", "finished", "winner_str",
+        "draw_reason",
     ]
 
     def __init__(self, game_idx: int, nn_engine: MCTS,
@@ -367,17 +406,21 @@ class _ActiveGame:
         self.game_type = game_type
         self.finished = False
         self.winner_str = "draw"
+        self.draw_reason = None
 
 
 def _record_winner(g: _ActiveGame):
     """Set the winner string on a finished game."""
     if g.state.winner is not None:
         g.winner_str = "white" if g.state.winner == Player.WHITE else "black"
+        g.draw_reason = None
     else:
         g.winner_str = "draw"
+        g.draw_reason = classify_draw_reason(g.state)
 
 
-def _finalize_game(g: _ActiveGame) -> tuple[list, dict]:
+def _finalize_game(g: _ActiveGame,
+                   draw_value_target: float = 0.0) -> tuple[list, dict]:
     """Convert a finished game into training data and game record.
 
     Returns (training_data, game_record) in same format as play_selfplay_game().
@@ -396,7 +439,7 @@ def _finalize_game(g: _ActiveGame) -> tuple[list, dict]:
         for idx, prob in policy_dict.items():
             policy[idx] = prob
         if winner == -1:
-            value = 0.0
+            value = draw_value_target
         elif winner == player:
             value = 1.0
         else:
@@ -404,7 +447,7 @@ def _finalize_game(g: _ActiveGame) -> tuple[list, dict]:
         training_data.append((planes, policy, value))
 
     game_record = {"moves": g.game_moves, "winner": winner_str,
-                   "length": g.move_count}
+                   "length": g.move_count, "draw_reason": g.draw_reason}
     return training_data, game_record
 
 
@@ -497,6 +540,7 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                                  dirichlet_alpha: float = 0.3,
                                  dirichlet_epsilon: float = 0.25,
                                  random_opponent_fraction: float = 0.0,
+                                 draw_value_target: float = 0.0,
                                  device: str = "cpu",
                                  parallel_games: int = 10) -> tuple[list, dict]:
     """Run self-play games with batched NN evaluation for GPU efficiency.
@@ -518,6 +562,12 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
     game_lengths = []
     game_details = []
     game_records = []
+    draw_reason_counts = {
+        "turn_limit": 0,
+        "fifty_move": 0,
+        "repetition": 0,
+        "stalemate_or_other": 0,
+    }
 
     evaluator = BatchedEvaluator(network, device=device)
 
@@ -561,9 +611,11 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                    temperature_threshold)
 
         for g in wave_games:
-            training_data, game_record = _finalize_game(g)
+            training_data, game_record = _finalize_game(
+                g, draw_value_target=draw_value_target
+            )
             all_examples.extend(training_data)
-            game_lengths.append(len(training_data))
+            game_lengths.append(game_record["length"])
 
             winner = game_record["winner"]
             if winner == "white":
@@ -572,10 +624,13 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                 black_wins += 1
             else:
                 draws += 1
+                draw_reason = game_record.get("draw_reason", "stalemate_or_other")
+                draw_reason_counts[draw_reason] = draw_reason_counts.get(draw_reason, 0) + 1
 
             game_details.append({"game": g.game_idx + 1,
                                  "length": game_record["length"],
-                                 "winner": winner, "type": g.game_type})
+                                 "winner": winner, "type": g.game_type,
+                                 "draw_reason": game_record.get("draw_reason")})
             game_records.append(game_record)
 
             logger.info(f"  Self-play game {g.game_idx+1}/{num_games} ({g.game_type}): "
@@ -596,6 +651,7 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
         "game_details": game_details,
         "game_records": game_records,
         "num_random_games": num_random_games,
+        "draw_reason_counts": draw_reason_counts,
     }
 
     return all_examples, stats
@@ -606,6 +662,7 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
                                dirichlet_alpha: float = 0.3,
                                dirichlet_epsilon: float = 0.25,
                                random_opponent_fraction: float = 0.0,
+                               draw_value_target: float = 0.0,
                                device: str = "cpu",
                                num_workers: int = 4) -> tuple[list, dict]:
     """Run self-play with multiprocess CPU workers and centralized GPU inference.
@@ -636,6 +693,7 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
         "temperature_threshold": temperature_threshold,
         "dirichlet_alpha": dirichlet_alpha,
         "dirichlet_epsilon": dirichlet_epsilon,
+        "draw_value_target": draw_value_target,
         "cpuct": 1.5,
     }
 
@@ -734,6 +792,12 @@ def _aggregate_multiprocess_results(all_worker_results: dict, num_games: int,
     game_lengths = []
     game_details = []
     game_records = []
+    draw_reason_counts = {
+        "turn_limit": 0,
+        "fifty_move": 0,
+        "repetition": 0,
+        "stalemate_or_other": 0,
+    }
 
     # Sort results by game_idx for deterministic ordering
     all_game_results = []
@@ -743,7 +807,7 @@ def _aggregate_multiprocess_results(all_worker_results: dict, num_games: int,
 
     for r in all_game_results:
         all_examples.extend(r["training_data"])
-        game_lengths.append(len(r["training_data"]))
+        game_lengths.append(r["game_record"]["length"])
 
         winner = r["game_record"]["winner"]
         if winner == "white":
@@ -752,12 +816,15 @@ def _aggregate_multiprocess_results(all_worker_results: dict, num_games: int,
             black_wins += 1
         else:
             draws += 1
+            draw_reason = r["game_record"].get("draw_reason", "stalemate_or_other")
+            draw_reason_counts[draw_reason] = draw_reason_counts.get(draw_reason, 0) + 1
 
         game_details.append({
             "game": r["game_idx"] + 1,
             "length": r["game_record"]["length"],
             "winner": winner,
             "type": r["game_type"],
+            "draw_reason": r["game_record"].get("draw_reason"),
         })
         game_records.append(r["game_record"])
 
@@ -776,6 +843,7 @@ def _aggregate_multiprocess_results(all_worker_results: dict, num_games: int,
         "game_details": game_details,
         "game_records": game_records,
         "num_random_games": num_random_games,
+        "draw_reason_counts": draw_reason_counts,
     }
 
     return all_examples, stats

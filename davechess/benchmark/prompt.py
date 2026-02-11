@@ -61,7 +61,7 @@ You cannot make a move that leaves your own Commander in check.
 ## Win Conditions
 1. Checkmate opponent's Commander (they have no legal move to escape check) → you win
 2. Turn 100 with no checkmate → draw
-3. Threefold repetition of the same board position → draw
+3. Threefold repetition of the same position (board + side to move + promotion-affordability buckets) → draw
 4. 50-move rule: 50 moves per side with no capture or promotion → draw
 
 ## Result
