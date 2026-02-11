@@ -15,7 +15,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from davechess.engine.smart_seeds import generate_smart_seeds, generate_endgame_seeds
+from davechess.engine.smart_seeds import generate_smart_seeds, generate_endgame_seeds, generate_middlegame_checkmate_seeds
 
 
 def main():
@@ -26,6 +26,10 @@ def main():
                         help="Number of endgame wins to generate (default: 200)")
     parser.add_argument("--endgame-sims", type=int, default=400,
                         help="MCTS simulations per move in endgames (default: 400)")
+    parser.add_argument("--num-middlegames", type=int, default=0,
+                        help="Number of middlegame checkmate wins to generate (default: 0)")
+    parser.add_argument("--middlegame-sims", type=int, default=100,
+                        help="MCTS simulations per move in middlegames (default: 100)")
     parser.add_argument("--output", type=str, default="checkpoints/smart_seeds.pkl",
                         help="Output file path (default: checkpoints/smart_seeds.pkl)")
     parser.add_argument("--force", action="store_true",
@@ -46,26 +50,47 @@ def main():
         existing_count = len(buffer)
         print(f"Loaded existing seeds: {existing_count} positions ({os.path.getsize(args.output) / (1024*1024):.1f} MB)")
 
-        print(f"\n=== Generating {args.num_endgames} additional endgame wins ({args.endgame_sims} sims) ===")
-        endgame_buffer = generate_endgame_seeds(
-            num_positions=args.num_endgames,
-            mcts_sims=args.endgame_sims,
-            verbose=True,
-        )
-        endgame_count = len(endgame_buffer)
-
-        for i in range(endgame_count):
-            buffer.push(
-                endgame_buffer.planes[i],
-                endgame_buffer.policies[i],
-                endgame_buffer.values[i],
+        endgame_count = 0
+        if args.num_endgames > 0:
+            print(f"\n=== Generating {args.num_endgames} additional endgame wins ({args.endgame_sims} sims) ===")
+            endgame_buffer = generate_endgame_seeds(
+                num_positions=args.num_endgames,
+                mcts_sims=args.endgame_sims,
+                verbose=True,
             )
-        del endgame_buffer
+            endgame_count = len(endgame_buffer)
+
+            for i in range(endgame_count):
+                buffer.push(
+                    endgame_buffer.planes[i],
+                    endgame_buffer.policies[i],
+                    endgame_buffer.values[i],
+                )
+            del endgame_buffer
+
+        middlegame_count = 0
+        if args.num_middlegames > 0:
+            print(f"\n=== Generating {args.num_middlegames} middlegame checkmate wins ({args.middlegame_sims} sims) ===")
+            mid_buffer = generate_middlegame_checkmate_seeds(
+                num_positions=args.num_middlegames,
+                mcts_sims=args.middlegame_sims,
+                verbose=True,
+            )
+            middlegame_count = len(mid_buffer)
+
+            for i in range(middlegame_count):
+                buffer.push(
+                    mid_buffer.planes[i],
+                    mid_buffer.policies[i],
+                    mid_buffer.values[i],
+                )
+            del mid_buffer
 
         total = len(buffer)
         print(f"\n=== Summary ===")
         print(f"Existing positions:     {existing_count}")
         print(f"New endgame positions:  {endgame_count}")
+        print(f"New middlegame positions: {middlegame_count}")
         print(f"Total positions:        {total}")
 
     else:
@@ -109,10 +134,30 @@ def main():
             )
         del endgame_buffer
 
+        # Generate middlegame checkmate seeds
+        middlegame_count = 0
+        if args.num_middlegames > 0:
+            print(f"\n=== Phase 3: Generating {args.num_middlegames} middlegame checkmate wins ({args.middlegame_sims} sims) ===")
+            mid_buffer = generate_middlegame_checkmate_seeds(
+                num_positions=args.num_middlegames,
+                mcts_sims=args.middlegame_sims,
+                verbose=True,
+            )
+            middlegame_count = len(mid_buffer)
+
+            for i in range(middlegame_count):
+                buffer.push(
+                    mid_buffer.planes[i],
+                    mid_buffer.policies[i],
+                    mid_buffer.values[i],
+                )
+            del mid_buffer
+
         total = len(buffer)
         print(f"\n=== Summary ===")
         print(f"Heuristic positions: {heuristic_count}")
         print(f"Endgame positions:   {endgame_count}")
+        print(f"Middlegame positions: {middlegame_count}")
         print(f"Total positions:     {total}")
 
     # Create output directory if needed

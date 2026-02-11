@@ -505,3 +505,223 @@ def generate_endgame_seeds(
         )
 
     return buffer
+
+
+def _random_middlegame_position(
+    white_attackers: list[PieceType],
+    black_defenders: list[PieceType],
+) -> Optional[GameState]:
+    """Generate a middlegame position with material imbalance.
+
+    White has Commander + attackers, Black has Commander + defenders.
+    Black Commander on edge/corner, Black defenders nearby.
+    White Commander farther away (center-ish), White attackers spread out.
+    """
+    # Black Commander: edge/corner (realistic mating target)
+    if random.random() < 0.5:
+        bc_r, bc_c = random.choice([(0, 0), (0, 7), (7, 0), (7, 7)])
+    else:
+        edge = random.choice(['top', 'bottom', 'left', 'right'])
+        if edge == 'top':
+            bc_r, bc_c = 7, random.randint(1, 6)
+        elif edge == 'bottom':
+            bc_r, bc_c = 0, random.randint(1, 6)
+        elif edge == 'left':
+            bc_r, bc_c = random.randint(1, 6), 0
+        else:
+            bc_r, bc_c = random.randint(1, 6), 7
+
+    occupied = {(bc_r, bc_c)}
+    black_pieces = [(bc_r, bc_c, PieceType.COMMANDER)]
+
+    # Black defenders: 2-4 Manhattan from Black Commander
+    for pt in black_defenders:
+        candidates = []
+        for r in range(BOARD_SIZE):
+            for c in range(BOARD_SIZE):
+                if (r, c) in occupied:
+                    continue
+                dist = abs(r - bc_r) + abs(c - bc_c)
+                if 1 <= dist <= 4:
+                    candidates.append((r, c))
+        if not candidates:
+            return None
+        r, c = random.choice(candidates)
+        black_pieces.append((r, c, pt))
+        occupied.add((r, c))
+
+    # White Commander: 4-6 Manhattan from Black Commander
+    wc_candidates = []
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            if (r, c) in occupied:
+                continue
+            dist = abs(r - bc_r) + abs(c - bc_c)
+            if 4 <= dist <= 7:
+                # Not adjacent to Black Commander
+                if abs(r - bc_r) > 1 or abs(c - bc_c) > 1:
+                    wc_candidates.append((r, c))
+    if not wc_candidates:
+        return None
+    wc_r, wc_c = random.choice(wc_candidates)
+    occupied.add((wc_r, wc_c))
+    white_pieces = [(wc_r, wc_c, PieceType.COMMANDER)]
+
+    # White attackers: 3-7 Manhattan from Black Commander, not adjacent
+    for pt in white_attackers:
+        candidates = []
+        for r in range(BOARD_SIZE):
+            for c in range(BOARD_SIZE):
+                if (r, c) in occupied:
+                    continue
+                if abs(r - bc_r) <= 1 and abs(c - bc_c) <= 1:
+                    continue
+                dist = abs(r - bc_r) + abs(c - bc_c)
+                if 2 <= dist <= 7:
+                    candidates.append((r, c))
+        if not candidates:
+            return None
+        r, c = random.choice(candidates)
+        white_pieces.append((r, c, pt))
+        occupied.add((r, c))
+
+    state = _make_endgame_state(white_pieces, black_pieces, Player.WHITE)
+
+    # Validate: neither side in check at start
+    if is_in_check(state, Player.WHITE):
+        return None
+    if is_in_check(state, Player.BLACK):
+        return None
+
+    return state
+
+
+def generate_middlegame_checkmate_seeds(
+    num_positions: int = 300,
+    mcts_sims: int = 100,
+    max_game_moves: int = 60,
+    verbose: bool = False,
+) -> ReplayBuffer:
+    """Generate middlegame positions with material imbalance played to checkmate.
+
+    Bridges the gap between heuristic full games (natural but often drawn) and
+    endgame seeds (always checkmate but bare-minimum pieces). These positions
+    have White with extra pieces and Black with some defenders, teaching the
+    network how to break through defenses and convert advantages into checkmate.
+    """
+    from davechess.engine.mcts_lite import MCTSLite
+
+    buffer = ReplayBuffer(max_size=200000)
+    mcts = MCTSLite(num_simulations=mcts_sims, max_rollout_depth=200)
+
+    # (white_attackers, black_defenders, label, weight)
+    middlegame_configs = [
+        # Rider-heavy attacks vs light defense
+        ([PieceType.RIDER, PieceType.RIDER, PieceType.LANCER],
+         [PieceType.WARRIOR, PieceType.BOMBARD],
+         "2R+L+C vs W+B+C", 3),
+        # Lancer-heavy attack vs moderate defense
+        ([PieceType.RIDER, PieceType.LANCER, PieceType.LANCER],
+         [PieceType.RIDER, PieceType.WARRIOR],
+         "R+2L+C vs R+W+C", 3),
+        # Riders + Bombard vs Warrior wall
+        ([PieceType.RIDER, PieceType.RIDER, PieceType.BOMBARD],
+         [PieceType.WARRIOR, PieceType.WARRIOR],
+         "2R+B+C vs 2W+C", 2),
+        # Mixed attack vs mixed defense
+        ([PieceType.RIDER, PieceType.LANCER, PieceType.BOMBARD],
+         [PieceType.WARRIOR, PieceType.BOMBARD],
+         "R+L+B+C vs W+B+C", 2),
+        # Three Riders vs heavier defense
+        ([PieceType.RIDER, PieceType.RIDER, PieceType.RIDER],
+         [PieceType.WARRIOR, PieceType.WARRIOR, PieceType.BOMBARD],
+         "3R+C vs 2W+B+C", 2),
+        # Dominant Lancers vs minimal defense
+        ([PieceType.LANCER, PieceType.LANCER],
+         [PieceType.WARRIOR],
+         "2L+C vs W+C", 2),
+    ]
+    total_weight = sum(w for _, _, _, w in middlegame_configs)
+
+    wins = 0
+    draws = 0
+    total_positions = 0
+    attempts = 0
+    max_attempts = num_positions * 30
+
+    if verbose:
+        print(f"Generating middlegame checkmate seeds ({mcts_sims} MCTS sims per move)...")
+
+    while wins < num_positions and attempts < max_attempts:
+        # Pick config by weight
+        rand_val = random.random() * total_weight
+        cumulative = 0
+        for white_attackers, black_defenders, label, weight in middlegame_configs:
+            cumulative += weight
+            if rand_val <= cumulative:
+                break
+
+        state = _random_middlegame_position(white_attackers, black_defenders)
+        if state is None:
+            attempts += 1
+            continue
+
+        attempts += 1
+
+        # Play out with MCTS, recording positions
+        game_states = []
+        game_moves = []
+        game_policies = []
+        move_count = 0
+
+        while not state.done and move_count < max_game_moves:
+            moves = generate_legal_moves(state)
+            if not moves:
+                break
+
+            best_move, visit_policy = mcts.search_with_policy(state)
+
+            game_states.append(state.clone())
+            game_moves.append(best_move)
+
+            policy = np.zeros(POLICY_SIZE, dtype=np.float32)
+            for m, prob in visit_policy.items():
+                try:
+                    idx = move_to_policy_index(m)
+                    policy[idx] = prob
+                except (ValueError, IndexError):
+                    pass
+            game_policies.append(policy)
+
+            apply_move(state, best_move)
+            move_count += 1
+
+        # Keep games with checkmate and ≥8 moves (enough to show conversion)
+        if state.done and state.winner is not None and move_count >= 8:
+            wins += 1
+            winner = state.winner
+
+            for gs, policy in zip(game_states, game_policies):
+                planes = state_to_planes(gs)
+                value = 1.0 if gs.current_player == winner else -1.0
+                buffer.push(planes, policy, value)
+                total_positions += 1
+
+            if verbose:
+                print(
+                    f"  [win {wins}/{num_positions}] {label}: "
+                    f"{move_count} moves, {'White' if winner == Player.WHITE else 'Black'} wins | "
+                    f"{total_positions} positions ({attempts} attempts)",
+                    flush=True,
+                )
+        else:
+            draws += 1
+
+    if verbose:
+        win_rate = wins / max(attempts, 1) * 100
+        print(
+            f"Middlegame seeds complete: {wins} wins, {draws} draws "
+            f"({win_rate:.0f}% win rate), {total_positions} positions"
+        )
+
+    return buffer
