@@ -788,12 +788,14 @@ class Trainer:
         total_loss_sum = 0.0
         policy_loss_sum = 0.0
         value_loss_sum = 0.0
+        value_scale_sum = 0.0
 
         for step in range(steps):
             losses = self.train_step(batch_size)
             total_loss_sum += losses["total_loss"]
             policy_loss_sum += losses["policy_loss"]
             value_loss_sum += losses["value_loss"]
+            value_scale_sum += losses["value_scale"]
 
             if (self.training_step % checkpoint_interval == 0):
                 self.save_checkpoint()
@@ -802,8 +804,12 @@ class Trainer:
             "avg_total_loss": total_loss_sum / steps if steps > 0 else 0,
             "avg_policy_loss": policy_loss_sum / steps if steps > 0 else 0,
             "avg_value_loss": value_loss_sum / steps if steps > 0 else 0,
+            "avg_value_scale": value_scale_sum / steps if steps > 0 else 0,
         }
-        logger.info(f"Training: {avg_losses}")
+        logger.info(f"Training: policy={avg_losses['avg_policy_loss']:.4f} "
+                     f"value={avg_losses['avg_value_loss']:.6f} "
+                     f"value_scale={avg_losses['avg_value_scale']:.1f} "
+                     f"total={avg_losses['avg_total_loss']:.4f}")
 
         # Detect loss spikes (divergence) — halve LR and continue
         if avg_losses["avg_total_loss"] > 10.0:
@@ -900,7 +906,7 @@ class Trainer:
                         f"Self-play: {sp_stats['white_wins']}W/{sp_stats['black_wins']}B/{sp_stats['draws']}D "
                         f"({sp_draw_pct:.0f}% draws) avg={sp_stats['avg_game_length']:.0f} moves "
                         f"[{sp_stats['min_game_length']}-{sp_stats['max_game_length']}]\n"
-                        f"Loss: policy={avg_losses['avg_policy_loss']:.3f} value={avg_losses['avg_value_loss']:.3f}\n"
+                        f"Loss: policy={avg_losses['avg_policy_loss']:.4f} value={avg_losses['avg_value_loss']:.6f} vscale={avg_losses['avg_value_scale']:.1f}\n"
                         f"Buffer: {len(self.replay_buffer)} | Mem: {_get_rss_mb():.0f}MB | Time: {iter_elapsed/60:.1f}min"
                     ),
                     wait_duration=0,
