@@ -7,8 +7,8 @@ network:
   board_size: 8
 
 mcts:
-  num_simulations: 100         # Need enough depth for meaningful policy targets
-  min_selfplay_simulations: 100 # Deeper search for finding checkmate tactics
+  num_simulations: 200         # Deep enough to see checkmate sequences
+  min_selfplay_simulations: 200 # Need depth to find mates, not just positional play
   # fixed_selfplay_simulations: 64  # Uncomment to disable adaptive sims entirely
   cpuct: 1.5
   dirichlet_alpha: 0.15            # Spikier noise for fewer legal moves than Go
