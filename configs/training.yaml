@@ -47,6 +47,7 @@ training:
   elo_probe_mctslite_sims: 50
   elo_probe_nn_sims: 64
   adaptive_elo_smoothing: 0.7  # Smooth probe ELO before mapping to adaptive sims
+  seed_removal_elo: 1000       # Clear seed partition once ELO exceeds this (self-play is better)
   max_iterations: 200
 
 paths:

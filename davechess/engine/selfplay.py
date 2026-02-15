@@ -207,6 +207,13 @@ class StructuredReplayBuffer:
         else:
             self._draws.push(planes, policy, value)
 
+    def clear_seeds(self):
+        """Remove all seed positions, freeing the partition for self-play data."""
+        n = len(self._seeds)
+        self._seeds = ReplayBuffer(max_size=self.seed_size)
+        gc.collect()
+        return n
+
     def sample(self, batch_size: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Uniform random sample across all three partitions."""
         total = len(self)

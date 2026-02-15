@@ -838,6 +838,14 @@ class Trainer:
                         f"win_rate={elo_results['win_rate']:.2f} avg_len={elo_results['avg_game_length']:.0f}, "
                         f"nn_sims={elo_results['nn_sims']}, mctslite_sims={elo_results['mctslite_sims']})")
 
+            # Clear seed partition once model is strong enough to self-improve
+            seed_elo_threshold = float(train_cfg.get("seed_removal_elo", 1000))
+            parts = self.replay_buffer.partition_sizes()
+            if self.elo_estimate >= seed_elo_threshold and parts["seeds"] > 0:
+                n_cleared = self.replay_buffer.clear_seeds()
+                logger.info(f"Cleared {n_cleared} seed positions (ELO {self.elo_estimate:.0f} "
+                            f">= threshold {seed_elo_threshold:.0f})")
+
             if self.use_wandb:
                 elo_metrics = {
                     "elo/estimate": self.elo_estimate,
