@@ -322,20 +322,23 @@ class Trainer:
 
             policy_loss = torch.mean(per_example_policy_loss * sample_weights.squeeze(1))
             value_loss = torch.mean(per_example_value_loss * sample_weights)
-            total_loss = policy_loss + value_loss
-            return policy_loss, value_loss, total_loss
+            # Dynamic scaling: value loss gets same gradient magnitude as policy loss.
+            # .detach() so the scaling factor doesn't create second-order gradients.
+            value_scale = (policy_loss / value_loss.clamp_min(1e-6)).detach()
+            total_loss = policy_loss + value_scale * value_loss
+            return policy_loss, value_loss, total_loss, value_scale
 
         if self.scaler is not None:
             with autocast("cuda"):
                 policy_logits, value_pred = self.network(planes_t)
-                policy_loss, value_loss, total_loss = _compute_losses(policy_logits, value_pred)
+                policy_loss, value_loss, total_loss, value_scale = _compute_losses(policy_logits, value_pred)
 
             self.scaler.scale(total_loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
             policy_logits, value_pred = self.network(planes_t)
-            policy_loss, value_loss, total_loss = _compute_losses(policy_logits, value_pred)
+            policy_loss, value_loss, total_loss, value_scale = _compute_losses(policy_logits, value_pred)
 
             total_loss.backward()
             self.optimizer.step()
@@ -346,6 +349,7 @@ class Trainer:
             "total_loss": total_loss.item(),
             "policy_loss": policy_loss.item(),
             "value_loss": value_loss.item(),
+            "value_scale": value_scale.item(),
         }
 
         if self.training_step % 10 == 0:
@@ -354,6 +358,7 @@ class Trainer:
                 "train/total_loss": losses["total_loss"],
                 "train/policy_loss": losses["policy_loss"],
                 "train/value_loss": losses["value_loss"],
+                "train/value_scale": losses["value_scale"],
                 "train/learning_rate": lr,
             }
             if self.use_wandb:
