@@ -36,8 +36,8 @@ except ImportError:
 
 from davechess.engine.network import DaveChessNetwork, POLICY_SIZE, state_to_planes, move_to_policy_index
 from davechess.engine.selfplay import (
-    ReplayBuffer, run_selfplay_batch, run_selfplay_batch_parallel,
-    run_selfplay_multiprocess,
+    ReplayBuffer, StructuredReplayBuffer, run_selfplay_batch,
+    run_selfplay_batch_parallel, run_selfplay_multiprocess,
 )
 from davechess.engine.mcts import MCTS
 from davechess.game.state import GameState, Player
@@ -141,8 +141,11 @@ class Trainer:
             weight_decay=train_cfg.get("weight_decay", 1e-4),
         )
 
-        self.replay_buffer = ReplayBuffer(
-            max_size=config.get("selfplay", {}).get("replay_buffer_size", 500_000)
+        sp_cfg = config.get("selfplay", {})
+        self.replay_buffer = StructuredReplayBuffer(
+            seed_size=sp_cfg.get("buffer_seed_size", 20_000),
+            decisive_size=sp_cfg.get("buffer_decisive_size", 20_000),
+            draw_size=sp_cfg.get("buffer_draw_size", 10_000),
         )
 
         self.scaler = GradScaler("cuda") if HAS_TORCH and device != "cpu" else None
@@ -259,7 +262,10 @@ class Trainer:
         buf_path = path.replace(".pt", "_buffer.npz")
         if os.path.exists(buf_path):
             self.replay_buffer.load_data(buf_path)
-            logger.info(f"Loaded replay buffer: {len(self.replay_buffer)} positions")
+            parts = self.replay_buffer.partition_sizes()
+            logger.info(f"Loaded replay buffer: {len(self.replay_buffer)} positions "
+                        f"(seeds={parts['seeds']}, decisive={parts['decisive']}, "
+                        f"draws={parts['draws']})")
         elif self.use_wandb:
             try:
                 artifact = wandb.use_artifact("replay-buffer:latest")
@@ -506,9 +512,9 @@ class Trainer:
                     pickle.dump(smart_buffer, f)
                 logger.info(f"Saved seed games to {seed_file}")
 
-            # Copy smart seeds to our replay buffer, then free the pickle data
+            # Copy smart seeds to permanent seed partition, then free the pickle data
             for i in range(total_positions):
-                self.replay_buffer.push(
+                self.replay_buffer.push_seed(
                     smart_buffer.planes[i],
                     smart_buffer.policies[i],
                     smart_buffer.values[i]
@@ -646,8 +652,11 @@ class Trainer:
         if self.device != "cpu":
             torch.cuda.empty_cache()
         _log_memory("after_selfplay")
+        parts = self.replay_buffer.partition_sizes()
         logger.info(f"Generated {num_new_examples} examples. "
-                    f"Buffer size: {len(self.replay_buffer)}")
+                    f"Buffer: {len(self.replay_buffer)} "
+                    f"(seeds={parts['seeds']}, decisive={parts['decisive']}, "
+                    f"draws={parts['draws']})")
         logger.info(f"Self-play stats: W:{sp_stats['white_wins']} B:{sp_stats['black_wins']} "
                     f"D:{sp_stats['draws']} white_win%={sp_stats['white_win_pct']:.1%} "
                     f"lengths={sp_stats['min_game_length']}-{sp_stats['max_game_length']} "
@@ -675,6 +684,9 @@ class Trainer:
             "iteration": self.iteration,
             "selfplay/num_examples": num_new_examples,
             "selfplay/buffer_size": len(self.replay_buffer),
+            "selfplay/buffer_seeds": parts["seeds"],
+            "selfplay/buffer_decisive": parts["decisive"],
+            "selfplay/buffer_draws": parts["draws"],
             "selfplay/elapsed_sec": selfplay_elapsed,
             "selfplay/avg_game_length": sp_stats["avg_game_length"],
             "selfplay/min_game_length": sp_stats["min_game_length"],

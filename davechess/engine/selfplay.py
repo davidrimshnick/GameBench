@@ -169,6 +169,207 @@ class ReplayBuffer:
         gc.collect()
 
 
+class StructuredReplayBuffer:
+    """Replay buffer with three managed partitions: seeds, decisive, draws.
+
+    Seeds are permanent (never evicted). Decisive and draw positions use
+    separate circular buffers so draw-heavy self-play can't displace
+    tactical/checkmate signal.
+
+    Default partition sizes: 20K seeds + 20K decisive + 10K draws = 50K total.
+    """
+
+    def __init__(self, seed_size: int = 20_000, decisive_size: int = 20_000,
+                 draw_size: int = 10_000):
+        self.seed_size = seed_size
+        self.decisive_size = decisive_size
+        self.draw_size = draw_size
+
+        self._seeds = ReplayBuffer(max_size=seed_size)
+        self._decisive = ReplayBuffer(max_size=decisive_size)
+        self._draws = ReplayBuffer(max_size=draw_size)
+
+    def __len__(self) -> int:
+        return len(self._seeds) + len(self._decisive) + len(self._draws)
+
+    @property
+    def max_size(self) -> int:
+        return self.seed_size + self.decisive_size + self.draw_size
+
+    def push_seed(self, planes: np.ndarray, policy: np.ndarray, value: float):
+        """Add a seed position (permanent, never evicted by self-play)."""
+        self._seeds.push(planes, policy, value)
+
+    def push(self, planes: np.ndarray, policy: np.ndarray, value: float):
+        """Add a self-play position, routed by value magnitude."""
+        if abs(value) > 0.5:
+            self._decisive.push(planes, policy, value)
+        else:
+            self._draws.push(planes, policy, value)
+
+    def sample(self, batch_size: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Uniform random sample across all three partitions."""
+        total = len(self)
+        if total == 0:
+            return (np.empty((0, 14, 8, 8), dtype=np.float32),
+                    np.empty((0, POLICY_SIZE), dtype=np.float32),
+                    np.empty(0, dtype=np.float32))
+
+        n = min(batch_size, total)
+        len_s = len(self._seeds)
+        len_d = len(self._decisive)
+        indices = random.sample(range(total), n)
+
+        planes_list = []
+        policies_list = []
+        values_list = []
+        for idx in indices:
+            if idx < len_s:
+                buf, local_idx = self._seeds, idx
+            elif idx < len_s + len_d:
+                buf, local_idx = self._decisive, idx - len_s
+            else:
+                buf, local_idx = self._draws, idx - len_s - len_d
+            planes_list.append(buf.planes[local_idx])
+            policies_list.append(buf.policies[local_idx])
+            values_list.append(buf.values[local_idx])
+
+        return (np.stack(planes_list),
+                np.stack(policies_list),
+                np.array(values_list, dtype=np.float32))
+
+    def partition_sizes(self) -> dict:
+        """Return sizes of each partition."""
+        return {
+            "seeds": len(self._seeds),
+            "decisive": len(self._decisive),
+            "draws": len(self._draws),
+        }
+
+    def save(self, path: str):
+        """Save buffer metadata."""
+        meta = {
+            "size": len(self),
+            "max_size": self.max_size,
+            "partitions": self.partition_sizes(),
+        }
+        with open(path, "w") as f:
+            json.dump(meta, f)
+
+    def save_data(self, path: str, chunk_size: int = 5000):
+        """Save all partitions to a single compressed npz file."""
+        import tempfile
+        import zipfile
+
+        total = len(self)
+        if total == 0:
+            np.savez_compressed(path,
+                                planes=np.empty((0, 14, 8, 8)),
+                                policies=np.empty((0, POLICY_SIZE)),
+                                values=np.empty(0),
+                                partition_offsets=np.array([0, 0, 0, 0]))
+            return
+
+        len_s = len(self._seeds)
+        len_d = len(self._decisive)
+        offsets = np.array([0, len_s, len_s + len_d, total], dtype=np.int64)
+
+        all_bufs = [self._seeds, self._decisive, self._draws]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            planes_path = os.path.join(tmp, "planes.npy")
+            planes_mmap = np.lib.format.open_memmap(
+                planes_path, mode="w+", dtype=np.float32, shape=(total, 14, 8, 8))
+            pos = 0
+            for buf in all_bufs:
+                n = len(buf)
+                for start in range(0, n, chunk_size):
+                    end = min(start + chunk_size, n)
+                    chunk = np.stack([buf.planes[i] for i in range(start, end)])
+                    planes_mmap[pos + start:pos + end] = chunk
+                    del chunk
+                pos += n
+            del planes_mmap
+            gc.collect()
+
+            policies_path = os.path.join(tmp, "policies.npy")
+            policies_mmap = np.lib.format.open_memmap(
+                policies_path, mode="w+", dtype=np.float32, shape=(total, POLICY_SIZE))
+            pos = 0
+            for buf in all_bufs:
+                n = len(buf)
+                for start in range(0, n, chunk_size):
+                    end = min(start + chunk_size, n)
+                    chunk = np.stack([buf.policies[i] for i in range(start, end)])
+                    policies_mmap[pos + start:pos + end] = chunk
+                    del chunk
+                pos += n
+            del policies_mmap
+            gc.collect()
+
+            values_list = []
+            for buf in all_bufs:
+                values_list.extend(buf.values)
+            values_arr = np.array(values_list, dtype=np.float32)
+            values_path = os.path.join(tmp, "values.npy")
+            np.save(values_path, values_arr)
+            del values_list, values_arr
+            gc.collect()
+
+            offsets_path = os.path.join(tmp, "partition_offsets.npy")
+            np.save(offsets_path, offsets)
+
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(planes_path, "planes.npy")
+                zf.write(policies_path, "policies.npy")
+                zf.write(values_path, "values.npy")
+                zf.write(offsets_path, "partition_offsets.npy")
+
+    def load_data(self, path: str, chunk_size: int = 5000):
+        """Load partitioned buffer from disk.
+
+        Handles both new format (with partition_offsets) and old flat format.
+        """
+        data = np.load(path)
+
+        values_arr = data["values"]
+        planes_arr = data["planes"]
+        policies_arr = data["policies"]
+        total = len(values_arr)
+
+        if "partition_offsets" in data:
+            offsets = data["partition_offsets"]
+            ranges = [
+                (0, int(offsets[1]), self._seeds),
+                (int(offsets[1]), int(offsets[2]), self._decisive),
+                (int(offsets[2]), int(offsets[3]), self._draws),
+            ]
+        else:
+            # Legacy flat format — route by value magnitude
+            ranges = None
+
+        if ranges is not None:
+            for start_off, end_off, buf in ranges:
+                for i in range(start_off, end_off):
+                    buf.push(
+                        planes_arr[i].astype(np.float32, copy=False),
+                        policies_arr[i].astype(np.float32, copy=False),
+                        float(values_arr[i]),
+                    )
+        else:
+            for i in range(total):
+                v = float(values_arr[i])
+                p = planes_arr[i].astype(np.float32, copy=False)
+                pol = policies_arr[i].astype(np.float32, copy=False)
+                if abs(v) > 0.5:
+                    self._decisive.push(p, pol, v)
+                else:
+                    self._draws.push(p, pol, v)
+
+        del values_arr, planes_arr, policies_arr, data
+        gc.collect()
+
+
 def play_selfplay_game(mcts_engine: MCTS,
                        temperature_threshold: int = 30,
                        opponent_mcts: MCTS = None,

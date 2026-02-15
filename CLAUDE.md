@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Do NOT use plan mode (EnterPlanMode) — it is glitchy and causes issues. Just explore and implement directly.**
+
 ## Project Overview
 
 GameBench is a benchmark measuring how efficiently LLMs learn novel strategic reasoning from examples using DaveChess, a custom board game designed to be absent from training data. The system uses AlphaZero self-play training on a Jetson Orin Nano to produce an expert neural network that serves dual roles: generating synthetic grandmaster games for LLM study, and acting as the calibrated opponent that agents play against during evaluation.

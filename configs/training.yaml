@@ -24,7 +24,10 @@ gumbel:
 
 selfplay:
   num_games_per_iteration: 20  # More games = more diverse training data
-  replay_buffer_size: 50000
+  replay_buffer_size: 50000    # Total (informational only, actual = seed + decisive + draw)
+  buffer_seed_size: 20000      # Permanent seed partition (checkmates, tactical wins)
+  buffer_decisive_size: 20000  # Circular: self-play decisive positions (abs(value) > 0.5)
+  buffer_draw_size: 10000      # Circular: self-play draw positions (abs(value) <= 0.5)
   num_workers: 4               # CPU worker processes for MCTS tree traversal
   min_buffer_size: 1000        # Train immediately on seed games
   random_opponent_fraction: 0.25  # 25% vs random MCTS — enough diversity without wasting data
