@@ -806,10 +806,9 @@ class Trainer:
             "avg_value_loss": value_loss_sum / steps if steps > 0 else 0,
             "avg_value_scale": value_scale_sum / steps if steps > 0 else 0,
         }
-        logger.info(f"Training: policy={avg_losses['avg_policy_loss']:.4f} "
-                     f"value={avg_losses['avg_value_loss']:.6f} "
-                     f"value_scale={avg_losses['avg_value_scale']:.1f} "
-                     f"total={avg_losses['avg_total_loss']:.4f}")
+        scaled_value = avg_losses['avg_value_loss'] * avg_losses['avg_value_scale']
+        logger.info(f"Training: policy={avg_losses['avg_policy_loss']:.3f} "
+                     f"value={scaled_value:.3f} (raw={avg_losses['avg_value_loss']:.4f} x{avg_losses['avg_value_scale']:.0f})")
 
         # Detect loss spikes (divergence) — halve LR and continue
         if avg_losses["avg_total_loss"] > 10.0:
@@ -906,7 +905,7 @@ class Trainer:
                         f"Self-play: {sp_stats['white_wins']}W/{sp_stats['black_wins']}B/{sp_stats['draws']}D "
                         f"({sp_draw_pct:.0f}% draws) avg={sp_stats['avg_game_length']:.0f} moves "
                         f"[{sp_stats['min_game_length']}-{sp_stats['max_game_length']}]\n"
-                        f"Loss: policy={avg_losses['avg_policy_loss']:.4f} value={avg_losses['avg_value_loss']:.6f} vscale={avg_losses['avg_value_scale']:.1f}\n"
+                        f"Loss: policy={avg_losses['avg_policy_loss']:.3f} value={avg_losses['avg_value_loss'] * avg_losses['avg_value_scale']:.3f} (raw={avg_losses['avg_value_loss']:.4f} x{avg_losses['avg_value_scale']:.0f})\n"
                         f"Buffer: {len(self.replay_buffer)} | Mem: {_get_rss_mb():.0f}MB | Time: {iter_elapsed/60:.1f}min"
                     ),
                     wait_duration=0,
