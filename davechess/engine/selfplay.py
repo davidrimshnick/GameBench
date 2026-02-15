@@ -23,6 +23,7 @@ from davechess.game.state import GameState, Player, Move
 from davechess.game.rules import generate_legal_moves, apply_move
 from davechess.engine.network import state_to_planes, move_to_policy_index, POLICY_SIZE
 from davechess.engine.mcts import MCTS, BatchedEvaluator
+from davechess.engine.gumbel_mcts import GumbelMCTS, GumbelBatchedSearch
 
 
 def classify_draw_reason(state: GameState) -> str:
@@ -466,14 +467,16 @@ def _apply_game_move(g: _ActiveGame, move: Move, info: dict, is_nn_turn: bool):
         _record_winner(g)
 
 
-def _play_wave(wave_games: list[_ActiveGame], nn_mcts: MCTS,
+def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
                random_mcts: Optional[MCTS], evaluator: BatchedEvaluator,
-               temperature_threshold: int):
+               temperature_threshold: int,
+               gumbel_search: Optional[GumbelBatchedSearch] = None):
     """Play a wave of games to completion with batched evaluation.
 
     At each step:
     1. Partition active games by engine type (NN vs random).
-    2. NN games: batched MCTS search via MCTS.batched_search().
+    2. NN games: Gumbel batched search (if gumbel_search provided) or
+       standard MCTS.batched_search().
     3. Random games: sequential MCTS search (no NN needed).
     4. Select moves, update states, check for game end.
     """
@@ -506,26 +509,40 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts: MCTS,
         if not nn_games and not random_games:
             break
 
-        # Batched MCTS for NN games
+        # Batched search for NN games
         if nn_games:
-            # Create per-game engine copies with correct temperature
-            engines: list[MCTS] = []
-            for g in nn_games:
-                temp = 1.0 if g.move_count < temperature_threshold else 0.1
-                eng = MCTS(nn_mcts.network, num_simulations=nn_mcts.num_simulations,
-                           cpuct=nn_mcts.cpuct, dirichlet_alpha=nn_mcts.dirichlet_alpha,
-                           dirichlet_epsilon=nn_mcts.dirichlet_epsilon,
-                           temperature=temp, device=nn_mcts.device)
-                engines.append(eng)
+            if gumbel_search is not None:
+                # Gumbel MCTS — batched Sequential Halving
+                states = [g.state for g in nn_games]
+                temps = [1.0 if g.move_count < temperature_threshold else 0.1
+                         for g in nn_games]
+                results = gumbel_search.batched_search(states, temps)
 
-            states = [g.state for g in nn_games]
-            noise_flags = [True] * len(nn_games)
+                for g, (move, info) in zip(nn_games, results):
+                    if move is not None:
+                        _apply_game_move(g, move, info, is_nn_turn=True)
+                    else:
+                        g.finished = True
+                        _record_winner(g)
+            else:
+                # Standard MCTS — batched PUCT search
+                engines: list[MCTS] = []
+                for g in nn_games:
+                    temp = 1.0 if g.move_count < temperature_threshold else 0.1
+                    eng = MCTS(nn_mcts.network, num_simulations=nn_mcts.num_simulations,
+                               cpuct=nn_mcts.cpuct, dirichlet_alpha=nn_mcts.dirichlet_alpha,
+                               dirichlet_epsilon=nn_mcts.dirichlet_epsilon,
+                               temperature=temp, device=nn_mcts.device)
+                    engines.append(eng)
 
-            roots = MCTS.batched_search(engines, states, evaluator, noise_flags)
+                states = [g.state for g in nn_games]
+                noise_flags = [True] * len(nn_games)
 
-            for g, eng, root in zip(nn_games, engines, roots):
-                move, info = eng.get_move_from_root(root, g.state)
-                _apply_game_move(g, move, info, is_nn_turn=True)
+                roots = MCTS.batched_search(engines, states, evaluator, noise_flags)
+
+                for g, eng, root in zip(nn_games, engines, roots):
+                    move, info = eng.get_move_from_root(root, g.state)
+                    _apply_game_move(g, move, info, is_nn_turn=True)
 
         # Sequential MCTS for random-opponent games
         for g in random_games:
@@ -542,7 +559,8 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                                  random_opponent_fraction: float = 0.0,
                                  draw_value_target: float = 0.0,
                                  device: str = "cpu",
-                                 parallel_games: int = 10) -> tuple[list, dict]:
+                                 parallel_games: int = 10,
+                                 gumbel_config: Optional[dict] = None) -> tuple[list, dict]:
     """Run self-play games with batched NN evaluation for GPU efficiency.
 
     Plays multiple games simultaneously, collecting leaf evaluations from
@@ -551,6 +569,8 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
     Args:
         Same as run_selfplay_batch(), plus:
         parallel_games: Number of games to play simultaneously.
+        gumbel_config: If provided, use Gumbel MCTS instead of standard MCTS.
+            Keys: max_num_considered_actions, gumbel_scale, maxvisit_init, value_scale.
 
     Returns:
         (all_examples, stats) — same format as run_selfplay_batch().
@@ -570,6 +590,21 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
     }
 
     evaluator = BatchedEvaluator(network, device=device)
+
+    # Create Gumbel batched search if configured
+    gumbel_search: Optional[GumbelBatchedSearch] = None
+    if gumbel_config is not None:
+        gumbel_search = GumbelBatchedSearch(
+            network=network,
+            num_simulations=num_simulations,
+            max_num_considered_actions=gumbel_config.get("max_num_considered_actions", 16),
+            gumbel_scale=gumbel_config.get("gumbel_scale", 1.0),
+            maxvisit_init=gumbel_config.get("maxvisit_init", 50.0),
+            value_scale=gumbel_config.get("value_scale", 0.1),
+            device=device,
+        )
+        logger.info(f"Using Gumbel MCTS (k={gumbel_search.max_num_considered_actions}, "
+                     f"sims={num_simulations})")
 
     nn_mcts = MCTS(network, num_simulations=num_simulations,
                    dirichlet_alpha=dirichlet_alpha,
@@ -608,7 +643,7 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
             ))
 
         _play_wave(wave_games, nn_mcts, random_mcts, evaluator,
-                   temperature_threshold)
+                   temperature_threshold, gumbel_search=gumbel_search)
 
         for g in wave_games:
             training_data, game_record = _finalize_game(

@@ -1,7 +1,7 @@
 # AlphaZero training configuration
 # Tuned for Jetson Orin Nano Super (8GB shared, CUDA 12.6)
 network:
-  num_res_blocks: 20
+  num_res_blocks: 10
   num_filters: 256
   input_planes: 14
   board_size: 8
@@ -14,6 +14,13 @@ mcts:
   dirichlet_alpha: 0.15            # Spikier noise for fewer legal moves than Go
   dirichlet_epsilon: 0.4            # 40% noise to break self-play overfitting
   temperature_threshold: 60    # moves before temperature drops to near-zero
+
+gumbel:
+  enabled: true
+  max_num_considered_actions: 16   # Top-k actions for Sequential Halving
+  gumbel_scale: 1.0               # Scale of Gumbel noise
+  maxvisit_init: 50.0             # Q-transform: baseline visit scale
+  value_scale: 0.1                # Q-transform: Q-value scaling factor
 
 selfplay:
   num_games_per_iteration: 20  # More games = more diverse training data

@@ -595,6 +595,18 @@ class Trainer:
         selfplay_start = time.time()
         num_workers = sp_cfg.get("num_workers", 1)
         parallel_games = sp_cfg.get("parallel_games", 0)
+        # Build Gumbel config if enabled
+        gumbel_cfg = self.config.get("gumbel", {})
+        use_gumbel = gumbel_cfg.get("enabled", False)
+        gumbel_config = None
+        if use_gumbel:
+            gumbel_config = {
+                "max_num_considered_actions": gumbel_cfg.get("max_num_considered_actions", 16),
+                "gumbel_scale": gumbel_cfg.get("gumbel_scale", 1.0),
+                "maxvisit_init": gumbel_cfg.get("maxvisit_init", 50.0),
+                "value_scale": gumbel_cfg.get("value_scale", 0.1),
+            }
+
         sp_kwargs = dict(
             network=self.network,
             num_games=sp_cfg.get("num_games_per_iteration", 100),
@@ -606,7 +618,13 @@ class Trainer:
             draw_value_target=float(sp_cfg.get("draw_value_target", 0.0)),
             device=self.device,
         )
-        if num_workers > 1:
+        if use_gumbel:
+            # Gumbel MCTS handles its own batched evaluation — no multiprocess needed
+            examples, sp_stats = run_selfplay_batch_parallel(
+                **sp_kwargs, parallel_games=parallel_games,
+                gumbel_config=gumbel_config,
+            )
+        elif num_workers > 1:
             examples, sp_stats = run_selfplay_multiprocess(
                 **sp_kwargs, num_workers=num_workers,
             )
