@@ -8,7 +8,7 @@ network:
 
 mcts:
   num_simulations: 100         # Need enough depth for meaningful policy targets
-  min_selfplay_simulations: 50 # Keep early self-play deep enough for decisive tactics
+  min_selfplay_simulations: 100 # Deeper search for finding checkmate tactics
   # fixed_selfplay_simulations: 64  # Uncomment to disable adaptive sims entirely
   cpuct: 1.5
   dirichlet_alpha: 0.15            # Spikier noise for fewer legal moves than Go
