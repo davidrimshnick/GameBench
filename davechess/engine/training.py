@@ -636,20 +636,17 @@ class Trainer:
             examples, sp_stats = run_selfplay_batch(**sp_kwargs)
         selfplay_elapsed = time.time() - selfplay_start
 
-        # Only add decisive (win/loss) positions to buffer — draws flood the
-        # buffer with low-signal data and push out valuable seed positions.
-        decisive_examples = [(p, pol, v) for p, pol, v in examples if abs(v) > 0.5]
-        num_new_examples = len(decisive_examples)
-        num_filtered = len(examples) - num_new_examples
-        for planes, policy, value in decisive_examples:
+        # Add all positions to buffer — draws carry useful value signal
+        # (draw_sample_weight in training config downweights them in the loss).
+        num_new_examples = len(examples)
+        for planes, policy, value in examples:
             self.replay_buffer.push(planes, policy, value)
-        del examples, decisive_examples
+        del examples
         gc.collect()
         if self.device != "cpu":
             torch.cuda.empty_cache()
         _log_memory("after_selfplay")
-        logger.info(f"Generated {num_new_examples} decisive examples "
-                    f"(filtered {num_filtered} draw positions). "
+        logger.info(f"Generated {num_new_examples} examples. "
                     f"Buffer size: {len(self.replay_buffer)}")
         logger.info(f"Self-play stats: W:{sp_stats['white_wins']} B:{sp_stats['black_wins']} "
                     f"D:{sp_stats['draws']} white_win%={sp_stats['white_win_pct']:.1%} "
@@ -677,7 +674,6 @@ class Trainer:
         sp_metrics = {
             "iteration": self.iteration,
             "selfplay/num_examples": num_new_examples,
-            "selfplay/num_filtered_draws": num_filtered,
             "selfplay/buffer_size": len(self.replay_buffer),
             "selfplay/elapsed_sec": selfplay_elapsed,
             "selfplay/avg_game_length": sp_stats["avg_game_length"],
