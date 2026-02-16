@@ -810,13 +810,6 @@ class Trainer:
         logger.info(f"Training: policy={avg_losses['avg_policy_loss']:.3f} "
                      f"value={scaled_value:.3f} (raw={avg_losses['avg_value_loss']:.4f} x{avg_losses['avg_value_scale']:.0f})")
 
-        # Detect loss spikes (divergence) — halve LR and continue
-        if avg_losses["avg_total_loss"] > 10.0:
-            logger.warning("Loss spike detected! Halving learning rate.")
-            for param_group in self.optimizer.param_groups:
-                param_group["lr"] *= 0.5
-                logger.info(f"Reduced LR to {param_group['lr']}")
-
         # Pure AlphaZero: no eval gatekeeper. Save best.pt every iteration.
         self.save_best()
 
