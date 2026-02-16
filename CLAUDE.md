@@ -12,14 +12,17 @@ GameBench is a benchmark measuring how efficiently LLMs learn novel strategic re
 
 ## Current Status (Feb 2026)
 
-**Training restarted from scratch with pure AlphaZero architecture (no best-network gatekeeper). Monitoring on W&B.**
-
-Previous `best.pt` (claimed ELO 1982) was broken — see Known Issues #15-17. The model was only pre-trained on seeds (354 steps, iteration 0) with fictional ELO inherited across 28 crashed restarts. It could not beat random MCTS.
+**Training in progress on Jetson with Muon optimizer, 128 Gumbel sims, 40 games/iteration. Monitoring on W&B (run: comfy-capybara-84).**
 
 What's done:
-- Training pipeline bugs fixed (see Known Issues #15-17)
+- Training pipeline bugs fixed (see Known Issues #15-19)
 - **Switched to pure AlphaZero** — single continuously-updated network, no best/training split, no eval gatekeeper (see Known Issue #19)
-- **MCTSLite ELO probes** — lightweight, non-gating ELO estimation every 5 iterations against MCTSLite at 50 sims
+- **Muon optimizer** — Newton-Schulz orthogonalization for conv/hidden weights (99.9% of params), SGD for heads/biases/BN. Single-GPU implementation via `MuonSGD` class in `training.py`.
+- **128 Gumbel MCTS sims** — up from 50, gives meaningful search depth at 30-80 legal moves
+- **40 self-play games per iteration** — doubled from 20 for better data throughput (~5K positions/iter)
+- **MCTSLite ELO probes** — lightweight, non-gating ELO estimation every iteration against MCTSLite at 50 sims
+- **Hot-reload config** — `training.yaml` is re-read at the start of each iteration (network architecture preserved). No restart needed to change hyperparameters.
+- **Existing buffer carry-over** — place `existing_buffer.npz` in checkpoints/ to inject old replay data into a fresh run (one-shot, auto-deleted after load)
 - Sandbox setup and `agent_cli.py` working
 - GitHub Pages leaderboard at `docs/index.html` (currently has mockup data)
 - Benchmark automation scripts: `run_overnight_benchmark.sh` (runs all 3 agents sequentially), per-agent launchers (`_launch_codex_benchmark.py`, `_launch_gemini_benchmark.py`), and a heuristic baseline player (`_play_benchmark.py`)
@@ -28,7 +31,7 @@ What's done:
 - `DaveChessNetwork.from_checkpoint()` classmethod auto-infers architecture from weights (no more hardcoded num_res_blocks/num_filters)
 
 What's needed:
-1. **Delete old checkpoints and train from scratch on Jetson** — remove old `best.pt`, `step_*.pt`, and run `python scripts/train.py --config configs/training.yaml`. Monitor on W&B for real ELO progression with the fixed pipeline.
+1. **Training in progress** — monitoring on W&B for ELO progression. Early results: policy loss dropping (3.1 → 2.99 over 2 iterations), draw rate decreasing. ~50 min/iteration with 128 sims × 40 games.
 2. **Run NN-MCTS calibration on Jetson** once training produces a model that consistently beats random MCTS. Run `python scripts/calibrate_opponents.py --checkpoint checkpoints/best.pt`.
 3. **Copy calibration.json to sandbox** and run real agent benchmarks (Claude Code, Codex CLI, Gemini CLI) with NN-MCTS opponents on Jetson GPU using `run_overnight_benchmark.sh`
 4. **Update leaderboard** with real agent results (replace placeholder heuristic-player data)
@@ -175,7 +178,11 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 3. **Warm-Start from W&B**: If `checkpoints/best.pt` exists when starting "fresh" training (no step checkpoint), the trainer loads those weights into both networks instead of starting from random. This enables restoring a model from W&B artifacts and injecting new seed data without losing learned knowledge.
 
-4. **Adaptive MCTS Simulations**: The `adaptive_simulations()` function in `training.py` scales simulation count based on model ELO. Self-play uses a configurable minimum floor (`mcts.min_selfplay_simulations`, default 50) and a smoothed ELO signal (`training.adaptive_elo_smoothing`) rather than raw probe ELO to avoid search-depth jitter from noisy probes.
+4. **Adaptive MCTS Simulations**: The `adaptive_simulations()` function in `training.py` scales simulation count based on model ELO. Self-play uses a configurable minimum floor (`mcts.min_selfplay_simulations`, default 128) and a smoothed ELO signal (`training.adaptive_elo_smoothing`) rather than raw probe ELO to avoid search-depth jitter from noisy probes.
+
+5. **Muon Optimizer**: `MuonSGD` class splits parameters: conv/hidden weights (ndim >= 2, not BN) use Muon (Newton-Schulz orthogonalization via `zeropower_via_newtonschulz5`), while BN params, biases, and FC heads use standard SGD. Muon LR (0.02) is higher than SGD because orthogonalized updates have unit spectral norm. Requires `pip install muon-optimizer`. Falls back to SGD if not installed.
+
+6. **Hot-Reload Config**: `training.yaml` is re-read at the top of each iteration via `_hot_reload_config()`. Network architecture is preserved (unsafe to change mid-run), all other settings update live. No restart needed to change learning rate, sim count, ELO probe interval, etc.
 
 ### Game State Representation
 
@@ -227,8 +234,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 9. **CUDA Fragmentation After Self-play**: Higher adaptive sims fragment GPU memory, causing `NVML_SUCCESS` assert failures when transitioning to training.
    - Solution: `torch.cuda.empty_cache()` before training phase and before eval phase
 
-10. **Temperature Threshold Too Low**: At `temperature_threshold: 30`, the model played near-deterministically after move 30 with noisy policies, entrenching defensive patterns.
-   - Solution: Raised to 60 to maintain exploration longer in self-play
+10. **Temperature Threshold Tuning**: Originally 30 (too exploitative with weak policies), raised to 60, now back to 30 with 128 sims providing better policy quality. The right threshold depends on policy confidence — higher sims produce sharper policies that can exploit earlier.
 
 11. **Seed Re-injection Memory Spike**: Periodic seed injection (every 5 iterations) loads a 233MB pickle. Without cleanup, the pickle data persists in memory alongside the replay buffer.
    - Solution: Explicit `del smart_buffer; gc.collect()` after copying seeds to replay buffer
@@ -255,13 +261,13 @@ The AlphaZero implementation has several critical modifications for DaveChess:
    - Solution: If random losses > random wins, force win_rate=0 to veto promotion.
 
 19. **Best/Training Network Split Was AlphaGo Zero, Not AlphaZero**: The codebase used an AlphaGo Zero-style architecture with separate best and training networks, an eval gatekeeper, and promotion logic. Real AlphaZero uses a single continuously-updated network — DeepMind dropped the best/training split because it wastes ~50% of compute on eval games that produce zero training data. The eval gatekeeper also created perverse dynamics: ELO was measured relative to best (not absolute), and combined with draw-counting bugs (#15) and crash inheritance (#16), ELO ratcheted up without real improvement.
-   - Solution: Removed `best_network` entirely. Single network self-plays and continuously trains. No eval gatekeeper, no consecutive rejection logic, no promotion. ELO is estimated via periodic MCTSLite probes (every 5 iterations, non-gating). `best.pt` is saved every iteration for benchmark use.
+   - Solution: Removed `best_network` entirely. Single network self-plays and continuously trains. No eval gatekeeper, no consecutive rejection logic, no promotion. ELO is estimated via periodic MCTSLite probes (every iteration, non-gating). `best.pt` is saved every iteration for benchmark use.
 
 ### Hardware Constraints (Jetson Orin Nano)
 
 - 8GB shared RAM (CPU + GPU)
 - Multiprocess MCTS: 4 CPU workers + GPU inference server in main process
-- Network: 20 ResBlocks, 256 filters (~24M params, ~1GB GPU with training)
+- Network: 10 ResBlocks, 256 filters (~12.4M params, ~350MB peak GPU with training)
 - Training uses mixed precision (FP16) when available
 - Replay buffer capped at 30K positions (~700MB with 4288-wide policy vectors). Save/load uses chunked I/O (5K chunks) to avoid temp array spikes
 - All buffer data enforced as float32 on push — prevents accidental float64 doubling
@@ -485,5 +491,5 @@ Key metrics to watch:
 - `selfplay/avg_game_length` - Should decrease over time; turn 100 = draw limit
 - `selfplay/draw_rate` - Should decrease as model learns to checkmate before turn 100
 - `selfplay/white_win_rate` - Should stay near 0.5 for balance
-- `eval/win_rate` - Must exceed 0.51 to update best model
+- `elo_probe/elo` - MCTSLite ELO estimate (non-gating, measured every iteration)
 - `training/policy_loss` - Should decrease over iterations

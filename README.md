@@ -107,7 +107,7 @@ GameBench/
 
 1. **Game Engine** -- DaveChess rules, state representation, DCN notation, CLI
 2. **Game Validation** -- Lightweight MCTS stress-tests rules for degenerate strategies
-3. **AlphaZero Training** -- ResNet policy+value network, PUCT MCTS, self-play
+3. **AlphaZero Training** -- ResNet policy+value network, Gumbel MCTS, Muon optimizer, self-play
 4. **Game Generation & ELO Calibration** -- Calibrated opponent ladder (random to 1600 sims)
 5. **Agentic Benchmark** -- Token budget + tools, autonomous learning, Glicko-2 ELO measurement
 
@@ -152,6 +152,7 @@ Designed for Jetson Orin Nano Super (8GB shared RAM, 6-core ARM, CUDA 12.6).
 
 - `torch` (training/inference)
 - `numpy`, `pyyaml`, `tqdm`
+- `muon-optimizer` (Muon optimizer for training, optional — falls back to SGD)
 - `openai` (LLM benchmark, agentic benchmark)
 - `anthropic` (agentic benchmark, optional)
 - `matplotlib` (charts)
