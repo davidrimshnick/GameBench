@@ -943,9 +943,17 @@ class Trainer:
             return
 
         logger.info("Training phase...")
-        # Clear GPU cache before training to avoid CUDA fragmentation after self-play
+        # Aggressively defragment GPU before training:
+        # Move network to CPU, release ALL GPU memory, then move back.
+        # plain empty_cache() only releases cached blocks but NVML still
+        # sees the fragmented address space on Jetson's unified memory.
         if self.device != "cpu":
+            self.network.cpu()
+            self.optimizer.zero_grad(set_to_none=True)
+            gc.collect()
             torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            self.network.to(self.device)
         batch_size = train_cfg.get("batch_size", 256)
         max_steps = train_cfg.get("steps_per_iteration", 1000)
         # Scale steps to buffer size: ~2 passes through the data, capped at max_steps.
@@ -1216,13 +1224,35 @@ class Trainer:
             logger.info(f"Pre-training complete: avg_loss={avg_loss:.4f} over {steps} steps")
             self.save_best()
 
+        cuda_crash_retries = 0
+        max_cuda_retries = 3
+
         while self.iteration < max_iter:
             try:
                 self.run_iteration()
+                cuda_crash_retries = 0  # Reset on success
             except KeyboardInterrupt:
                 logger.info("Training interrupted. Saving checkpoint...")
                 self.save_checkpoint(tag="interrupted", save_buffer=True)
                 break
+            except RuntimeError as e:
+                if "NVML_SUCCESS" in str(e) and cuda_crash_retries < max_cuda_retries:
+                    cuda_crash_retries += 1
+                    logger.warning(
+                        f"CUDA NVML crash during iteration {self.iteration} "
+                        f"(retry {cuda_crash_retries}/{max_cuda_retries}). "
+                        f"Clearing GPU memory and retrying..."
+                    )
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    # Brief pause to let the driver stabilize
+                    time.sleep(5)
+                    continue
+                else:
+                    logger.error(f"Error during iteration {self.iteration}: {e}")
+                    self.save_checkpoint(tag="error", save_buffer=True)
+                    raise
             except Exception as e:
                 logger.error(f"Error during iteration {self.iteration}: {e}")
                 self.save_checkpoint(tag="error", save_buffer=True)
