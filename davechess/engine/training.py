@@ -29,6 +29,12 @@ except ImportError:
     HAS_WANDB = False
 
 try:
+    from muon import zeropower_via_newtonschulz5
+    HAS_MUON = True
+except ImportError:
+    HAS_MUON = False
+
+try:
     from torch.utils.tensorboard import SummaryWriter
     HAS_TB = True
 except ImportError:
@@ -116,6 +122,116 @@ def win_rate_to_elo_diff(win_rate: float) -> float:
     return -400.0 * math.log10(1.0 / win_rate - 1.0)
 
 
+class MuonSGD:
+    """Dual optimizer: Muon for conv/hidden weights, SGD for heads/biases/BN.
+
+    Single-GPU implementation — uses the Newton-Schulz orthogonalization from
+    the muon package but without distributed all_gather.
+    """
+
+    def __init__(self, network: nn.Module, muon_lr: float = 0.02,
+                 muon_momentum: float = 0.95, sgd_lr: float = 0.001,
+                 sgd_momentum: float = 0.9, weight_decay: float = 1e-4):
+        # Split parameters: conv weights (ndim >= 2, not BN) → Muon, rest → SGD
+        muon_params = []
+        sgd_params = []
+        for name, param in network.named_parameters():
+            if not param.requires_grad:
+                continue
+            # BatchNorm params, biases, and 1D params → SGD
+            if "bn" in name or "bias" in name or param.ndim < 2:
+                sgd_params.append(param)
+            else:
+                muon_params.append(param)
+
+        self.muon_params = muon_params
+        self.muon_lr = muon_lr
+        self.muon_momentum = muon_momentum
+        self.muon_wd = weight_decay
+
+        # Momentum buffers for Muon params
+        self.muon_state = {}
+        for p in muon_params:
+            self.muon_state[p] = {"momentum_buffer": torch.zeros_like(p)}
+
+        # Standard SGD for everything else
+        self.sgd = optim.SGD(sgd_params, lr=sgd_lr, momentum=sgd_momentum,
+                             weight_decay=weight_decay)
+
+        logger.info(f"MuonSGD: {len(muon_params)} Muon params, "
+                    f"{len(sgd_params)} SGD params, "
+                    f"muon_lr={muon_lr}, sgd_lr={sgd_lr}")
+
+    @property
+    def param_groups(self):
+        """Expose param_groups for LR logging compatibility."""
+        return [{"lr": self.muon_lr, "type": "muon"}] + self.sgd.param_groups
+
+    def zero_grad(self):
+        for p in self.muon_params:
+            if p.grad is not None:
+                p.grad.zero_()
+        self.sgd.zero_grad()
+
+    @torch.no_grad()
+    def step(self):
+        # Muon update for conv/hidden weights
+        for p in self.muon_params:
+            if p.grad is None:
+                continue
+            state = self.muon_state[p]
+            buf = state["momentum_buffer"]
+            grad = p.grad
+
+            # Momentum + Nesterov
+            buf.lerp_(grad, 1 - self.muon_momentum)
+            update = grad.lerp_(buf, self.muon_momentum)  # Nesterov
+
+            # Reshape for Newton-Schulz (conv4D → 2D)
+            orig_shape = update.shape
+            if update.ndim == 4:
+                update = update.view(len(update), -1)
+
+            # Newton-Schulz orthogonalization
+            update = zeropower_via_newtonschulz5(update, steps=5)
+            scale = max(1, update.size(-2) / update.size(-1)) ** 0.5
+            update = update * scale
+
+            update = update.reshape(orig_shape)
+
+            # Weight decay + update
+            p.mul_(1 - self.muon_lr * self.muon_wd)
+            p.add_(update, alpha=-self.muon_lr)
+
+        # SGD update for heads/biases/BN
+        self.sgd.step()
+
+    def state_dict(self):
+        muon_buffers = {}
+        for i, p in enumerate(self.muon_params):
+            muon_buffers[i] = self.muon_state[p]["momentum_buffer"]
+        return {
+            "muon_lr": self.muon_lr,
+            "muon_momentum": self.muon_momentum,
+            "muon_wd": self.muon_wd,
+            "muon_buffers": muon_buffers,
+            "sgd_state": self.sgd.state_dict(),
+        }
+
+    def load_state_dict(self, state):
+        if "sgd_state" in state:
+            self.sgd.load_state_dict(state["sgd_state"])
+        if "muon_buffers" in state:
+            for i, p in enumerate(self.muon_params):
+                if i in state["muon_buffers"]:
+                    self.muon_state[p]["momentum_buffer"].copy_(
+                        state["muon_buffers"][i]
+                    )
+        self.muon_lr = state.get("muon_lr", self.muon_lr)
+        self.muon_momentum = state.get("muon_momentum", self.muon_momentum)
+        self.muon_wd = state.get("muon_wd", self.muon_wd)
+
+
 class Trainer:
     """AlphaZero training loop."""
 
@@ -134,12 +250,25 @@ class Trainer:
         )  # CPU initially, moved to GPU in train()
 
         train_cfg = config.get("training", {})
-        self.optimizer = optim.SGD(
-            self.network.parameters(),
-            lr=train_cfg.get("learning_rate", 0.01),
-            momentum=train_cfg.get("momentum", 0.9),
-            weight_decay=train_cfg.get("weight_decay", 1e-4),
-        )
+        optimizer_type = train_cfg.get("optimizer", "sgd").lower()
+        if optimizer_type == "muon" and HAS_MUON:
+            self.optimizer = MuonSGD(
+                self.network,
+                muon_lr=train_cfg.get("learning_rate", 0.02),
+                muon_momentum=train_cfg.get("muon_momentum", 0.95),
+                sgd_lr=train_cfg.get("head_lr", 0.001),
+                sgd_momentum=train_cfg.get("momentum", 0.9),
+                weight_decay=train_cfg.get("weight_decay", 1e-4),
+            )
+        else:
+            if optimizer_type == "muon" and not HAS_MUON:
+                logger.warning("Muon requested but not installed, falling back to SGD")
+            self.optimizer = optim.SGD(
+                self.network.parameters(),
+                lr=train_cfg.get("learning_rate", 0.01),
+                momentum=train_cfg.get("momentum", 0.9),
+                weight_decay=train_cfg.get("weight_decay", 1e-4),
+            )
 
         sp_cfg = config.get("selfplay", {})
         self.replay_buffer = StructuredReplayBuffer(
@@ -244,7 +373,11 @@ class Trainer:
         # Load everything on CPU — network moves to GPU later in train()
         checkpoint = torch.load(path, map_location="cpu", weights_only=False)
         self.network.load_state_dict(checkpoint["network_state"])
-        self.optimizer.load_state_dict(checkpoint["optimizer_state"])
+        try:
+            self.optimizer.load_state_dict(checkpoint["optimizer_state"])
+        except (ValueError, KeyError, TypeError) as e:
+            logger.warning(f"Could not load optimizer state (optimizer type changed?): {e}")
+            logger.warning("Starting with fresh optimizer state — momentum will rebuild in ~50 steps")
         self.training_step = checkpoint["training_step"]
         self.iteration = checkpoint["iteration"]
         self.elo_estimate = checkpoint.get("elo_estimate", checkpoint.get("best_elo_estimate", 0))
@@ -327,14 +460,35 @@ class Trainer:
             total_loss = policy_loss + value_weight * value_loss
             return policy_loss, value_loss, total_loss, value_weight
 
+        is_muon = isinstance(self.optimizer, MuonSGD)
+
         if self.scaler is not None:
             with autocast("cuda"):
                 policy_logits, value_pred = self.network(planes_t)
                 policy_loss, value_loss, total_loss, value_scale = _compute_losses(policy_logits, value_pred)
 
             self.scaler.scale(total_loss).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            if is_muon:
+                # MuonSGD: manually unscale grads then step
+                self.scaler.unscale_(self.optimizer.sgd)
+                # Unscale Muon params manually
+                scale = self.scaler.get_scale()
+                if scale > 0:
+                    inv_scale = 1.0 / scale
+                    for p in self.optimizer.muon_params:
+                        if p.grad is not None:
+                            p.grad.mul_(inv_scale)
+                    # Check for inf/nan in grads (skip step if found)
+                    found_inf = any(
+                        torch.isinf(p.grad).any() or torch.isnan(p.grad).any()
+                        for p in self.optimizer.muon_params if p.grad is not None
+                    )
+                    if not found_inf:
+                        self.optimizer.step()
+                self.scaler.update()
+            else:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
         else:
             policy_logits, value_pred = self.network(planes_t)
             policy_loss, value_loss, total_loss, value_scale = _compute_losses(policy_logits, value_pred)
@@ -979,6 +1133,16 @@ class Trainer:
             # Seed the replay buffer with heuristic games
             logger.info("Seeding replay buffer with heuristic games")
             self.seed_buffer(num_games=100)
+            # Check for existing buffer to carry over self-play data
+            existing_buf = self.checkpoint_dir / "existing_buffer.npz"
+            if existing_buf.exists():
+                logger.info(f"Loading existing buffer from {existing_buf}")
+                self.replay_buffer.load_data(str(existing_buf))
+                parts = self.replay_buffer.partition_sizes()
+                logger.info(f"Loaded existing buffer: {len(self.replay_buffer)} positions "
+                            f"(seeds={parts['seeds']}, decisive={parts['decisive']}, "
+                            f"draws={parts['draws']})")
+                existing_buf.unlink()  # One-shot: don't reload on next fresh start
             logger.info(f"Initial seeding complete. Buffer size: {len(self.replay_buffer)}")
             # Save initial checkpoint so resume works if we crash mid-iteration
             self.save_checkpoint(save_buffer=True)
@@ -991,16 +1155,27 @@ class Trainer:
         # Rebuild optimizer to point at GPU params
         train_cfg = self.config.get("training", {})
         old_state = self.optimizer.state_dict()
-        self.optimizer = optim.SGD(
-            self.network.parameters(),
-            lr=train_cfg.get("learning_rate", 0.01),
-            momentum=train_cfg.get("momentum", 0.9),
-            weight_decay=train_cfg.get("weight_decay", 1e-4),
-        )
+        ot = train_cfg.get("optimizer", "sgd").lower()
+        if ot == "muon" and HAS_MUON:
+            self.optimizer = MuonSGD(
+                self.network,
+                muon_lr=train_cfg.get("learning_rate", 0.02),
+                muon_momentum=train_cfg.get("muon_momentum", 0.95),
+                sgd_lr=train_cfg.get("head_lr", 0.001),
+                sgd_momentum=train_cfg.get("momentum", 0.9),
+                weight_decay=train_cfg.get("weight_decay", 1e-4),
+            )
+        else:
+            self.optimizer = optim.SGD(
+                self.network.parameters(),
+                lr=train_cfg.get("learning_rate", 0.01),
+                momentum=train_cfg.get("momentum", 0.9),
+                weight_decay=train_cfg.get("weight_decay", 1e-4),
+            )
         try:
             self.optimizer.load_state_dict(old_state)
         except Exception:
-            pass  # Fresh optimizer if state doesn't match
+            pass  # Fresh optimizer ok (SGD->Muon switch)
         del old_state
         gc.collect()
 

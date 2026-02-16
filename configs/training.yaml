@@ -7,13 +7,13 @@ network:
   board_size: 8
 
 mcts:
-  num_simulations: 50          # Each sim does real subtree search now; fewer sims = faster iterations
-  min_selfplay_simulations: 50  # Each sim does real subtree search now; fewer sims = faster iterations
+  num_simulations: 128         # Enough sims for meaningful search at 30-80 legal moves
+  min_selfplay_simulations: 128 # Match base sims — adaptive scaling starts from here
   # fixed_selfplay_simulations: 64  # Uncomment to disable adaptive sims entirely
   cpuct: 1.5
   dirichlet_alpha: 0.15            # Spikier noise for fewer legal moves than Go
   dirichlet_epsilon: 0.4            # 40% noise to break self-play overfitting
-  temperature_threshold: 60    # moves before temperature drops to near-zero
+  temperature_threshold: 30    # Exploit in middlegame/endgame where tactics matter
 
 gumbel:
   enabled: true
@@ -23,7 +23,7 @@ gumbel:
   value_scale: 0.1                # Q-transform: Q-value scaling factor
 
 selfplay:
-  num_games_per_iteration: 20  # More games = more diverse training data
+  num_games_per_iteration: 40  # 2x more games for better data throughput
   replay_buffer_size: 50000    # Total (informational only, actual = seed + decisive + draw)
   buffer_seed_size: 20000      # Permanent seed partition (checkmates, tactical wins)
   buffer_decisive_size: 20000  # Circular: self-play decisive positions (abs(value) > 0.5)
@@ -31,12 +31,15 @@ selfplay:
   num_workers: 4               # CPU worker processes for MCTS tree traversal
   min_buffer_size: 1000        # Train immediately on seed games
   random_opponent_fraction: 0.25  # 25% vs random MCTS — enough diversity without wasting data
-  parallel_games: 20             # All 20 games simultaneously for batched GPU eval
+  parallel_games: 40             # All 40 games simultaneously for batched GPU eval
   draw_value_target: -0.1      # Penalize draw-seeking local minima
 
 training:
+  optimizer: muon               # muon = Muon for conv/hidden + SGD for heads/biases/BN
   batch_size: 128
-  learning_rate: 0.001         # Lower LR for more stable learning
+  learning_rate: 0.02           # Muon default LR (higher than SGD since updates are orthogonalized)
+  muon_momentum: 0.95           # Muon momentum (default)
+  head_lr: 0.001                # SGD LR for policy/value heads and biases
   momentum: 0.9
   weight_decay: 0.0001
   value_loss_weight: 20.0      # Fixed c: balances policy CE (~5-6) vs value MSE (~0.1)
@@ -46,7 +49,7 @@ training:
   elo_probe_interval: 5        # MCTSLite ELO estimation every N iterations (non-gating)
   elo_probe_games: 10          # Balance probe cost (~20min) vs variance
   elo_probe_mctslite_sims: 50
-  elo_probe_nn_sims: 64
+  elo_probe_nn_sims: 128
   adaptive_elo_smoothing: 0.7  # Smooth probe ELO before mapping to adaptive sims
   seed_removal_elo: 1000       # Clear seed partition once ELO exceeds this (self-play is better)
   max_iterations: 200
