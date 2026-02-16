@@ -308,9 +308,9 @@ class Trainer:
             per_example_value_loss = (value_pred - values_t) ** 2
 
             if draw_sample_weight != 1.0:
-                # Downweight draw targets (value==0) so decisive positions contribute
-                # proportionally more gradient signal.
-                draw_mask = torch.isclose(values_t, torch.zeros_like(values_t), atol=1e-6)
+                # Downweight draw positions so decisive positions contribute
+                # proportionally more gradient signal. Match buffer's threshold.
+                draw_mask = (values_t.abs() <= 0.5)
                 sample_weights = torch.where(
                     draw_mask,
                     torch.full_like(values_t, draw_sample_weight),

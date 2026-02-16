@@ -388,6 +388,36 @@ class GumbelBatchedSearch:
         self.temperature = temperature
         self.device = device
 
+    @staticmethod
+    def _subtree_lookahead(child_state: GameState,
+                           child_logits: np.ndarray) -> Optional[GameState]:
+        """Pick the best-policy move from child_state and return the grandchild.
+
+        Returns None if child_state is terminal or has no legal moves.
+        The grandchild state will be batch-evaluated by the caller.
+        """
+        if child_state.done:
+            return None
+        legal_moves = generate_legal_moves(child_state)
+        if not legal_moves:
+            return None
+
+        # Use child's policy logits to pick the most promising move
+        move_indices = [move_to_policy_index(m) for m in legal_moves]
+        priors = np.array([child_logits[idx] for idx in move_indices],
+                          dtype=np.float64)
+        # Softmax to get probabilities
+        priors = priors - priors.max()
+        priors = np.exp(priors)
+        priors = priors / priors.sum()
+
+        # Stochastic selection weighted by policy (not pure argmax) to add
+        # variety across re-visits to the same child
+        best = np.random.choice(len(legal_moves), p=priors)
+        grandchild = child_state.clone()
+        apply_move_fast(grandchild, legal_moves[best])
+        return grandchild
+
     def _batch_evaluate(self, states: list[GameState]) -> list[tuple[np.ndarray, np.ndarray, float]]:
         """Batch evaluate states. Returns list of (policy, logits, value)."""
         if not states:
@@ -474,13 +504,15 @@ class GumbelBatchedSearch:
                 "child_states": [None] * num_actions,
                 "child_expanded": [False] * num_actions,
                 "child_values": [0.0] * num_actions,
+                "child_logits": [None] * num_actions,  # Store child policy for subtree search
                 "temperature": temperatures[i],
             })
 
         # Run simulations in lockstep across all games
         for sim_idx in range(self.num_simulations):
             # For each game, select action to simulate
-            to_evaluate: list[tuple[int, int, GameState]] = []  # (game_idx, action_idx, state)
+            to_evaluate: list[tuple[int, int, GameState]] = []  # (game_idx, action_idx, child_state)
+            to_evaluate_subtree: list[tuple[int, int, GameState]] = []  # (game_idx, action_idx, grandchild_state)
 
             for gi in range(n):
                 g = games[gi]
@@ -538,26 +570,63 @@ class GumbelBatchedSearch:
                     g["visit_counts"][a] += 1
                     g["total_values"][a] += v
                 elif not g["child_expanded"][a]:
-                    # Need NN evaluation
+                    # First visit — need NN evaluation
                     to_evaluate.append((gi, a, child_state))
                 else:
-                    # Already expanded — use stored value (simple approach)
-                    v = -g["child_values"][a]
-                    g["visit_counts"][a] += 1
-                    g["total_values"][a] += v
+                    # Re-visit: do 1-ply subtree search from this child.
+                    # Pick a move by child policy, get grandchild state.
+                    grandchild = self._subtree_lookahead(
+                        child_state, g["child_logits"][a])
+                    if grandchild is None:
+                        # Child is terminal or has no legal moves — reuse stored value
+                        v = -g["child_values"][a]
+                        g["visit_counts"][a] += 1
+                        g["total_values"][a] += v
+                    elif grandchild.done:
+                        # Grandchild is terminal — resolve immediately
+                        if grandchild.winner is not None:
+                            v = 1.0 if grandchild.winner == g["state"].current_player else -1.0
+                        else:
+                            v = 0.0
+                        g["visit_counts"][a] += 1
+                        g["total_values"][a] += v
+                    else:
+                        # Queue grandchild for batched NN eval
+                        to_evaluate_subtree.append((gi, a, grandchild))
 
-            # Batch evaluate all pending states
+            # Batch evaluate all pending states (first visits + subtree grandchildren)
+            all_eval_states = []
+            first_visit_count = 0
             if to_evaluate:
-                eval_states = [s for _, _, s in to_evaluate]
-                eval_results = self._batch_evaluate(eval_states)
+                all_eval_states.extend(s for _, _, s in to_evaluate)
+                first_visit_count = len(to_evaluate)
+            if to_evaluate_subtree:
+                all_eval_states.extend(s for _, _, s in to_evaluate_subtree)
 
-                for (gi, a, _), (_, child_logits, child_val) in zip(to_evaluate, eval_results):
+            if all_eval_states:
+                all_results = self._batch_evaluate(all_eval_states)
+
+                # Process first-visit expansions
+                for idx, (gi, a, _) in enumerate(to_evaluate):
+                    _, child_logits, child_val = all_results[idx]
                     g = games[gi]
                     g["child_expanded"][a] = True
                     g["child_values"][a] = child_val
+                    g["child_logits"][a] = child_logits
                     v = -child_val  # Negate to root's perspective
                     g["visit_counts"][a] += 1
                     g["total_values"][a] += v
+
+                # Process subtree re-visit evaluations
+                for idx, (gi, a, grandchild) in enumerate(to_evaluate_subtree):
+                    _, _, gc_val = all_results[first_visit_count + idx]
+                    g = games[gi]
+                    # gc_val is from grandchild.current_player's perspective.
+                    # Path: root -> child (opponent) -> grandchild (root's turn).
+                    # grandchild.current_player == root.current_player.
+                    # gc_val is already from root's perspective.
+                    g["visit_counts"][a] += 1
+                    g["total_values"][a] += gc_val
 
         # Collect results
         results = []
