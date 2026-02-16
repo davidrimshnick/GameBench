@@ -300,9 +300,10 @@ class GumbelMCTS:
         policy_target = {move_indices[i]: float(improved_policy[i])
                          for i in range(num_actions)}
 
-        # Select action to play
-        # Final action: argmax(gumbel + logits + sigma(completed_q))
-        final_scores = gumbel + logits + sigma_q
+        # Select action to play.
+        # Gumbel noise is only for simulation-time exploration / ranking. The
+        # executed move should come from the improved policy itself.
+        final_scores = improved_logits
         if self.temperature == 0:
             selected_idx = np.argmax(final_scores)
         else:
@@ -654,8 +655,8 @@ class GumbelBatchedSearch:
             policy_target = {g["move_indices"][i]: float(improved_policy[i])
                              for i in range(g["num_actions"])}
 
-            # Select action
-            final_scores = g["gumbel"] + g["logits"] + sigma_q
+            # Select action from improved policy (not gumbel-perturbed scores).
+            final_scores = improved_logits
             if g["temperature"] == 0 or g["temperature"] < 0.2:
                 selected_idx = np.argmax(final_scores)
             else:
