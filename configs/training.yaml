@@ -7,8 +7,8 @@ network:
   board_size: 8
 
 mcts:
-  num_simulations: 100         # With fixed Gumbel subtree search, each sim does real work
-  min_selfplay_simulations: 100 # With fixed Gumbel subtree search, each sim does real work
+  num_simulations: 50          # Each sim does real subtree search now; fewer sims = faster iterations
+  min_selfplay_simulations: 50  # Each sim does real subtree search now; fewer sims = faster iterations
   # fixed_selfplay_simulations: 64  # Uncomment to disable adaptive sims entirely
   cpuct: 1.5
   dirichlet_alpha: 0.15            # Spikier noise for fewer legal moves than Go
