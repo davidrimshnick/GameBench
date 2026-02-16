@@ -322,11 +322,10 @@ class Trainer:
 
             policy_loss = torch.mean(per_example_policy_loss * sample_weights.squeeze(1))
             value_loss = torch.mean(per_example_value_loss * sample_weights)
-            # Dynamic scaling: value loss gets same gradient magnitude as policy loss.
-            # .detach() so the scaling factor doesn't create second-order gradients.
-            value_scale = (policy_loss / value_loss.clamp_min(1e-6)).detach()
-            total_loss = policy_loss + value_scale * value_loss
-            return policy_loss, value_loss, total_loss, value_scale
+            # Fixed weight to balance policy CE (~5-6) vs value MSE (~0.1)
+            value_weight = float(self.config.get("training", {}).get("value_loss_weight", 20.0))
+            total_loss = policy_loss + value_weight * value_loss
+            return policy_loss, value_loss, total_loss, value_weight
 
         if self.scaler is not None:
             with autocast("cuda"):
@@ -349,7 +348,7 @@ class Trainer:
             "total_loss": total_loss.item(),
             "policy_loss": policy_loss.item(),
             "value_loss": value_loss.item(),
-            "value_scale": value_scale.item(),
+            "value_scale": float(value_scale),
         }
 
         if self.training_step % 10 == 0:
@@ -806,9 +805,8 @@ class Trainer:
             "avg_value_loss": value_loss_sum / steps if steps > 0 else 0,
             "avg_value_scale": value_scale_sum / steps if steps > 0 else 0,
         }
-        scaled_value = avg_losses['avg_value_loss'] * avg_losses['avg_value_scale']
         logger.info(f"Training: policy={avg_losses['avg_policy_loss']:.3f} "
-                     f"value={scaled_value:.3f} (raw={avg_losses['avg_value_loss']:.4f} x{avg_losses['avg_value_scale']:.0f})")
+                     f"value={avg_losses['avg_value_loss']:.4f}")
 
         # Pure AlphaZero: no eval gatekeeper. Save best.pt every iteration.
         self.save_best()
@@ -898,7 +896,7 @@ class Trainer:
                         f"Self-play: {sp_stats['white_wins']}W/{sp_stats['black_wins']}B/{sp_stats['draws']}D "
                         f"({sp_draw_pct:.0f}% draws) avg={sp_stats['avg_game_length']:.0f} moves "
                         f"[{sp_stats['min_game_length']}-{sp_stats['max_game_length']}]\n"
-                        f"Loss: policy={avg_losses['avg_policy_loss']:.3f} value={avg_losses['avg_value_loss'] * avg_losses['avg_value_scale']:.3f} (raw={avg_losses['avg_value_loss']:.4f} x{avg_losses['avg_value_scale']:.0f})\n"
+                        f"Loss: policy={avg_losses['avg_policy_loss']:.3f} value={avg_losses['avg_value_loss']:.4f}\n"
                         f"Buffer: {len(self.replay_buffer)} | Mem: {_get_rss_mb():.0f}MB | Time: {iter_elapsed/60:.1f}min"
                     ),
                     wait_duration=0,
