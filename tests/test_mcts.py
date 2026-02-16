@@ -227,6 +227,7 @@ class TestBatchedMCTS:
         assert stats["num_random_games"] == 2
 
 
+
 class TestMultiprocessMCTS:
     def test_remote_batched_evaluator_no_network(self):
         """RemoteBatchedEvaluator with use_network=False returns uniform policy."""
@@ -308,3 +309,53 @@ class TestMultiprocessMCTS:
         assert isinstance(examples, list)
         assert len(examples) > 0
         assert stats["num_random_games"] == 2
+
+
+class TestGumbelActionSelection:
+    def test_gumbel_search_temp0_ignores_root_gumbel_for_played_move(self, monkeypatch):
+        """At low temp, played move should come from improved policy, not gumbel."""
+        from davechess.engine.gumbel_mcts import GumbelMCTS
+
+        def fake_gumbel(size):
+            import numpy as np
+            arr = np.zeros(size, dtype=np.float64)
+            if size > 1:
+                arr[1] = 100.0
+            return arr
+
+        monkeypatch.setattr("numpy.random.gumbel", fake_gumbel)
+
+        state = GameState()
+        legal_moves = generate_legal_moves(state)
+        assert len(legal_moves) > 1
+
+        mcts = GumbelMCTS(network=None, num_simulations=8, temperature=0.0)
+        move, _ = mcts.search(state)
+
+        # With uniform logits/values (network=None), improved_logits tie and
+        # argmax picks index 0. A gumbel-driven final argmax would pick index 1.
+        assert move == legal_moves[0]
+
+    def test_batched_gumbel_search_temp0_ignores_root_gumbel_for_played_move(self, monkeypatch):
+        """Batched variant should also avoid gumbel noise in final action."""
+        from davechess.engine.gumbel_mcts import GumbelBatchedSearch
+
+        def fake_gumbel(size):
+            import numpy as np
+            arr = np.zeros(size, dtype=np.float64)
+            if size > 1:
+                arr[1] = 100.0
+            return arr
+
+        monkeypatch.setattr("numpy.random.gumbel", fake_gumbel)
+
+        state = GameState()
+        legal_moves = generate_legal_moves(state)
+        assert len(legal_moves) > 1
+
+        search = GumbelBatchedSearch(network=None, num_simulations=8, temperature=0.0)
+        results = search.batched_search([state], [0.0])
+        move, _ = results[0]
+
+        assert move == legal_moves[0]
+

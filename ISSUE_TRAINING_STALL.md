@@ -84,3 +84,35 @@ buffer_capacity: 50000
 5. **Learning rate / optimizer?** Using Adam at 0.001 with no schedule. Standard AlphaZero uses SGD with momentum and a step schedule. Could the optimizer be a factor?
 
 6. **Is the draw_value_target of -0.1 enough?** Draws are scored at -0.1 (slight penalty), but maybe the penalty needs to be stronger to push the model away from draw-seeking play.
+
+
+## Diagnosis update (code review findings)
+
+Primary issue identified in `gumbel_mcts.py`:
+
+- **Root Gumbel noise was being used to choose the played move at low temperature** (`temperature==0` / `<0.2`).
+  - Search correctly used `gumbel + logits + sigma_q` for **simulation-time exploration**.
+  - But final move selection also used those same gumbel-perturbed scores.
+  - That means even in near-greedy mode, action choice stayed randomly biased by freshly sampled Gumbel noise every turn.
+  - Practical effect: noisy execution policy, weaker self-play trajectories, slower tactical convergence, and elevated turn-limit draw rate.
+
+### Fix applied
+
+- Final action selection now uses the **improved policy logits** (`logits + sigma_q`) instead of gumbel-perturbed scores.
+- Gumbel noise remains active for top-k ranking / sequential-halving exploration only.
+- Added tests for both `GumbelMCTS` and `GumbelBatchedSearch` that force extreme gumbel on action #2 and verify low-temperature play still follows improved-policy argmax.
+
+### Interpretation of your questions
+
+1. **Subtree lookahead sign**: your sign convention is correct for the implemented 2-ply path:
+   - first visit: `v = -child_val`
+   - re-visit via grandchild eval: `v = gc_val`
+2. **Subtree lookahead correctness**: structurally reasonable for a batched approximation, but still shallower/noisier than full recursive search.
+3. **PUCT vs Gumbel**: before swapping algorithms, validate this final-action fix first; it removes a major source of policy noise.
+
+### Next checks to run after this fix
+
+- Track draw reason split (`turn_limit`, `repetition`, `fifty_move`) for iterations 8-15.
+- Compare policy loss trend pre/post fix over equal iteration windows.
+- Run an earlier ELO probe (e.g., every 5 iterations temporarily) to reduce diagnosis latency.
+- If still stalled, reduce `temperature_threshold` and/or increase decisive game fraction (fewer random-opponent games).
