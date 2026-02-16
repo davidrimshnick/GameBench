@@ -130,7 +130,8 @@ def main():
         else:
             logger.info("W&B not available — logging to file only")
 
-    trainer = Trainer(config, device=device, use_wandb=use_wandb)
+    trainer = Trainer(config, device=device, use_wandb=use_wandb,
+                      config_path=args.config)
 
     param_count = sum(p.numel() for p in trainer.network.parameters())
     logger.info(f"Network parameters: {param_count:,}")

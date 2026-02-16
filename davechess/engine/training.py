@@ -235,8 +235,10 @@ class MuonSGD:
 class Trainer:
     """AlphaZero training loop."""
 
-    def __init__(self, config: dict, device: str = "cpu", use_wandb: bool = False):
+    def __init__(self, config: dict, device: str = "cpu", use_wandb: bool = False,
+                 config_path: Optional[str] = None):
         self.config = config
+        self.config_path = config_path  # For hot-reloading between iterations
         self.device = device
         self.use_wandb = use_wandb and HAS_WANDB
         self.tb_writer = None
@@ -716,8 +718,24 @@ class Trainer:
         logger.info(f"Seeded buffer with {total_positions} positions from "
                     f"{num_games} games. Buffer size: {len(self.replay_buffer)}")
 
+    def _hot_reload_config(self):
+        """Re-read config YAML if available. Skips network architecture (unsafe to change)."""
+        if not self.config_path:
+            return
+        try:
+            import yaml
+            with open(self.config_path) as f:
+                new_config = yaml.safe_load(f)
+            # Preserve network config (can't change architecture mid-run)
+            new_config["network"] = self.config.get("network", {})
+            self.config = new_config
+            logger.info("Hot-reloaded config from %s", self.config_path)
+        except Exception as e:
+            logger.warning("Config hot-reload failed: %s", e)
+
     def run_iteration(self):
         """Run one training iteration: self-play + training + evaluation."""
+        self._hot_reload_config()
         sp_cfg = self.config.get("selfplay", {})
         train_cfg = self.config.get("training", {})
         mcts_cfg = self.config.get("mcts", {})
