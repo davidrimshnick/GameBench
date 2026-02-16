@@ -1,118 +1,164 @@
-# Training stall: policy loss plateau, high draw rate, ELO not improving
+# Training stall: policy loss drops but ELO flat, value head degrading
 
 ## Summary
 
-AlphaZero training for DaveChess is stalling. After fixing a critical bug in the batched Gumbel MCTS (82a7f3f), we restarted training from scratch with proper subtree search. After 7+ iterations, the policy loss is flat at ~2.45 and self-play is 50-70% draws (turn-limit). ELO probe hasn't fired yet (runs at iteration 10), but the loss trajectory and draw rate suggest the model isn't learning to play decisively.
+AlphaZero training for DaveChess is stalling despite multiple bug fixes. We've now run two full training sessions:
 
-## What we've fixed so far
+1. **Run 1 (genial-sky-80):** Warm-started from old model, 7 iterations with fixed Gumbel subtree search but noisy move selection. Policy loss flat at ~2.45, ELO never probed.
+2. **Run 2 (genial-plasma-81):** Fresh start with both fixes (subtree search + move selection fix from PR #3). 19 iterations. Policy loss drops steadily (7.2→5.8), but **ELO is flat at 150-190** and the **value head is getting worse**.
 
-1. **Batched Gumbel MCTS re-visit bug** (82a7f3f): Re-visits to already-expanded actions were reusing a constant stored value (`v = -g["child_values"][a]`) instead of doing deeper search. With k=16 and 200 sims, each action got ~12 visits but all returned the same Q-value. Fixed with subtree lookahead — re-visits now pick a move from the child state using stored policy logits and batch-evaluate the grandchild.
+The model cannot beat MCTSLite (random rollouts) at 50 sims. After 19 iterations of training, the NN adds essentially zero value over random play.
 
-2. **draw_sample_weight was a no-op** (82a7f3f): Draw mask checked `value == 0` but draws have `value = -0.1` (from `draw_value_target`), so the configured `draw_sample_weight: 0.4` did nothing. Fixed to check `abs(value) <= 0.5`.
+## Bug fixes applied (all merged to master)
 
-3. **Structured replay buffer** (5198d97): Three partitions — 20K seeds (permanent), 20K decisive, 10K draws. Seeds never get evicted.
+1. **Batched Gumbel MCTS re-visit bug** (82a7f3f): Re-visits reused a constant stored value instead of doing deeper search. Fixed with subtree lookahead.
+2. **Gumbel noise in move selection** (PR #3): Final action selection was using `gumbel + logits + sigma_q` — Gumbel noise leaked into the played move even at temp=0. Fixed to use `improved_logits` (no Gumbel).
+3. **draw_sample_weight was a no-op** (82a7f3f): Draw mask checked `value == 0` but draws have `value = -0.1`. Fixed.
+4. **Structured replay buffer** (5198d97): Three partitions — 20K seeds, 20K decisive, 10K draws.
+5. **Dynamic value loss scaling** (0245337): Scales value loss to match policy gradient magnitude.
 
-4. **Dynamic value loss scaling** (0245337): Scales value loss to match policy loss gradient magnitude.
+## Current training metrics (run 2: genial-plasma-81)
 
-## Current training metrics (run: genial-sky-80)
+W&B: https://wandb.ai/david-rimshnick-david-rimshnick/davechess/runs/ny4xis0k
 
-W&B: https://wandb.ai/david-rimshnick-david-rimshnick/davechess/runs/4ntz5n8k
+### Loss trajectory — policy drops, value degrades
 
-**Loss (flat across 7 iterations):**
-| Iter | Policy Loss | Value Loss (raw) | Scale |
-|------|-----------|-----------------|-------|
-| 1 | 2.391 | 0.0707 | 54x |
-| 2 | 2.402 | 0.0631 | 58x |
-| 3 | 2.455 | 0.0750 | 48x |
-| 4 | 2.456 | 0.0599 | 66x |
-| 5 | 2.512 | 0.0585 | 68x |
-| 6 | 2.521 | 0.0650 | 66x |
-| 7 | 2.447 | 0.0622 | 56x |
+| Iter | Policy | Value (raw) | Value Scale | ELO |
+|------|--------|-------------|-------------|-----|
+| 1 | 7.176 | 0.1553 | 52x | |
+| 2 | 6.744 | 0.1168 | 70x | |
+| 3 | 6.512 | 0.0893 | 95x | |
+| 4 | 6.308 | 0.0828 | 101x | |
+| 5 | 6.224 | 0.0668 | 132x | **192** |
+| 6 | 6.147 | 0.0723 | 116x | |
+| 7 | 6.061 | 0.0812 | 96x | |
+| 8 | 6.021 | 0.0822 | 91x | |
+| 9 | 5.988 | 0.1014 | 67x | |
+| 10 | 5.967 | 0.1197 | 57x | **192** |
+| 11 | 5.930 | 0.1477 | 44x | |
+| 12 | 5.917 | 0.1703 | 38x | |
+| 13 | 5.897 | 0.1891 | 33x | |
+| 14 | 5.881 | 0.2284 | 27x | |
+| 15 | 5.876 | 0.2485 | 25x | **153** |
+| 16 | 5.862 | 0.2738 | 23x | |
+| 17 | 5.846 | 0.2965 | 21x | |
+| 18 | 5.838 | 0.3188 | 19x | |
+| 19 | 5.839 | 0.3435 | 18x | |
 
-**Self-play (50-70% draws, mostly turn-limit):**
-| Iter | W | B | D | Draw% | Avg Length |
-|------|---|---|---|-------|-----------|
-| 1 | 7 | 5 | 8 | 40% | 145 |
-| 2 | 4 | 4 | 12 | 60% | 148 |
-| 3 | 7 | 4 | 9 | 45% | 148 |
-| 4 | 3 | 3 | 14 | 70% | 170 |
-| 5 | 6 | 1 | 13 | 65% | 161 |
-| 6 | 4 | 3 | 13 | 65% | 169 |
-| 7 | 5 | 5 | 10 | 50% | 164 |
+**Key observation:** Raw value loss increases 5x from iter 5→19 (0.067→0.344) while policy loss drops 6%. The value head is getting *worse* even as the policy head slowly improves. ELO is flat→declining (192→192→153).
 
-**Buffer at iter 7:** 34,645 total (seeds=19,118, decisive=5,527, draws=10,000)
+### Self-play stats
 
-## Symptoms
+Draw rate fluctuates 40-65%, mostly turn-limit draws. Average game length ~140-170. Decisive rate improved slightly over iterations but not dramatically.
 
-- **Policy loss not decreasing** — bouncing around 2.4-2.5 (random would be ~8.4 for 4288 action space, so it's learned something from seeds, but not improving)
-- **High draw rate** — 50-70% of self-play games are turn-limit draws (200 moves). The model can't find checkmates.
-- **Average game length not decreasing** — steady 145-170 moves, should trend down as the model learns to checkmate
-- **ELO was 265 in previous run** (with broken MCTS) — unclear if the fix is helping yet since the ELO probe hasn't run in the new training
+### ELO probe details
+
+The probe uses **standard PUCT MCTS** (not Gumbel) with 64 sims, so this tests the raw NN quality:
+- **Probe at iter 5:** 0W 3L 7D → ELO 192
+- **Probe at iter 10:** 0W 3L 7D → ELO 192
+- **Probe at iter 15:** 1W 5L 4D → ELO 153
+
+Zero wins in the first 20 probe games. The NN with proper MCTS at 64 sims can't beat MCTSLite (random rollouts) at 50 sims.
+
+### Buffer composition at iter 19
+
+```
+Total: 47,505
+Seeds:    19,118 (40%)  — permanent, +1/-1 targets only, from heuristic players
+Decisive: 18,387 (39%) — self-play wins/losses, +1/-1 targets
+Draws:    10,000 (21%) — self-play draws, -0.1 target (capped)
+```
+
+## Analysis: why ELO isn't improving
+
+### 1. Value head target conflict (likely primary issue)
+
+The buffer contains three value target populations for similar-looking positions:
+- Seeds: always `+1.0` or `-1.0` (from heuristic/endgame games)
+- Decisive self-play: `+1.0` or `-1.0`
+- Draw self-play: `-0.1`
+
+Early-game positions from different games get different targets depending on eventual outcome. With 50% draw rate, many positions appear in both decisive and draw games with conflicting targets (+1 vs -0.1 for nearly identical boards). The value head can't reconcile this — MSE rises.
+
+### 2. Seed domination (40% of buffer is permanent seeds)
+
+Seeds are never evicted and make up 40% of training data. They were generated by heuristic players (`CommanderHunter`, `HeuristicPlayer`), not MCTS. The policy targets from seeds teach heuristic play patterns, which may conflict with what MCTS search discovers. The network keeps fitting to heuristic play rather than learning from its own search.
+
+### 3. Dynamic value scaling amplifies the problem
+
+```python
+value_scale = (policy_loss / value_loss).detach()
+total_loss = policy_loss + value_scale * value_loss
+```
+
+When raw value loss is small (early training), the scale is large (132x), training the value head aggressively. When value loss rises (later training), the scale drops (18x). This means the value head was over-trained early on seeds, then under-trained as conflicting self-play data arrived. The reported raw value loss increasing doesn't mean total gradient magnitude changed — but the value head quality is clearly degrading based on ELO probes.
+
+### 4. Bootstrap trap
+
+The model needs good self-play to improve, but needs to be good to produce good self-play. At ELO ~150-190, the model can't beat random MCTS, so its self-play games are near-random. Policy targets from these games don't teach meaningful strategy. Value targets are noisy because game outcomes are essentially random.
+
+### 5. Gumbel batched search is shallow
+
+The batched Gumbel search only goes 2 plies deep (root → child → grandchild via subtree lookahead). Standard PUCT MCTS builds a full tree, going many plies deep with 50+ sims. The shallow Gumbel search may not discover tactical sequences, producing weaker policy targets than proper tree search would.
 
 ## Architecture
 
-- 20 ResBlocks, 256 filters (~24M params)
-- Gumbel MCTS with k=16, 50 sims, batched search
+- 20 ResBlocks, 256 filters (~12.4M params)
+- Gumbel MCTS with k=16, 50 sims, batched search (subtree lookahead on re-visits)
 - 20 games/iteration (5 vs random opponent, 15 self-play)
+- ELO probe: standard PUCT MCTS at 64 sims vs MCTSLite at 50 sims
 - 8x8 board, 4288 policy size, 14 input planes
 - Jetson Orin Nano (8GB shared RAM), ~13 min/iteration
 
-## Config highlights
+## Config
 
 ```yaml
+# Network
+num_res_blocks: 20
+num_filters: 256
+
+# MCTS
 num_simulations: 50
+min_selfplay_simulations: 50
+cpuct: 1.5
 dirichlet_alpha: 0.15
 dirichlet_epsilon: 0.4
 temperature_threshold: 60
+
+# Self-play
+games_per_iteration: 20
+random_opponent_fraction: 0.25
 draw_value_target: -0.1
-draw_sample_weight: 0.4
+
+# Training
 learning_rate: 0.001
 batch_size: 256
+steps_per_iteration: 800
+draw_sample_weight: 0.4
+
+# Buffer
 buffer_capacity: 50000
+buffer_seed_size: 20000
+buffer_decisive_size: 20000
+buffer_draw_size: 10000
+
+# Probes
+elo_probe_interval: 5
+elo_probe_games: 10
 ```
 
 ## Questions for reviewers
 
-1. **Is the subtree lookahead implementation correct?** Re-visits pick a stochastic move from child policy, evaluate the grandchild, and use `gc_val` directly (same player as root, 2 plies deep). See `gumbel_mcts.py:391-419` and `543-597`.
+1. **Should we switch self-play from batched Gumbel to standard PUCT MCTS?** The Gumbel batched search only goes 2 plies deep. Standard PUCT builds a full tree. The probe already uses PUCT (and still fails), but the policy targets from self-play would be higher quality with deeper search. Trade-off: PUCT can't batch across games, so self-play would be sequential and slower.
 
-2. **Is the sign convention right?** First-visit: `v = -child_val` (child is opponent). Subtree: `v = gc_val` (grandchild is same player as root). This seems correct but worth double-checking.
+2. **Should we reduce or remove the seed partition?** Seeds are 40% of the buffer and never evicted. They teach heuristic play patterns (not MCTS-discovered patterns). After pre-training, are they helping or hurting? Could try reducing `buffer_seed_size` from 20K to 5K, or clearing seeds after N iterations.
 
-3. **Should we use standard PUCT MCTS instead of Gumbel?** The non-batched `GumbelMCTS.search()` (which uses proper recursive tree search) works correctly. Gumbel's advantage is batching for GPU efficiency, but the depth-1 + subtree-lookahead approach may not give enough search depth.
+3. **Is the value head loss formulation correct?** The dynamic scaling `value_scale = policy_loss / value_loss` makes the raw value loss non-comparable across iterations. Should we use a fixed weight instead? The original AlphaZero paper uses equal weight (1:1) for policy and value loss.
 
-4. **Is the network too large for the iteration speed?** 24M params with 50 sims and 20 games/iter means ~3K new positions per iteration. At ~500 training steps per iteration, the network sees each position multiple times but might not be getting enough diverse signal.
+4. **Is the 3-way value target conflict (+1/-1/-0.1) causing the value head to degrade?** Would it help to use `draw_value_target = 0.0` instead of `-0.1`? Or discard draw game data entirely from the value loss?
 
-5. **Learning rate / optimizer?** Using Adam at 0.001 with no schedule. Standard AlphaZero uses SGD with momentum and a step schedule. Could the optimizer be a factor?
+5. **Should we try SGD with momentum instead of Adam?** Standard AlphaZero uses SGD with momentum (0.9) and a step LR schedule. Adam's adaptive learning rates might be problematic for the value head here.
 
-6. **Is the draw_value_target of -0.1 enough?** Draws are scored at -0.1 (slight penalty), but maybe the penalty needs to be stronger to push the model away from draw-seeking play.
+6. **Is 50 sims enough?** The Gumbel paper showed it works with very few sims, but that was with full tree search. Our batched version with subtree lookahead is much shallower. Maybe we need 100+ sims for the batched approach.
 
-
-## Diagnosis update (code review findings)
-
-Primary issue identified in `gumbel_mcts.py`:
-
-- **Root Gumbel noise was being used to choose the played move at low temperature** (`temperature==0` / `<0.2`).
-  - Search correctly used `gumbel + logits + sigma_q` for **simulation-time exploration**.
-  - But final move selection also used those same gumbel-perturbed scores.
-  - That means even in near-greedy mode, action choice stayed randomly biased by freshly sampled Gumbel noise every turn.
-  - Practical effect: noisy execution policy, weaker self-play trajectories, slower tactical convergence, and elevated turn-limit draw rate.
-
-### Fix applied
-
-- Final action selection now uses the **improved policy logits** (`logits + sigma_q`) instead of gumbel-perturbed scores.
-- Gumbel noise remains active for top-k ranking / sequential-halving exploration only.
-- Added tests for both `GumbelMCTS` and `GumbelBatchedSearch` that force extreme gumbel on action #2 and verify low-temperature play still follows improved-policy argmax.
-
-### Interpretation of your questions
-
-1. **Subtree lookahead sign**: your sign convention is correct for the implemented 2-ply path:
-   - first visit: `v = -child_val`
-   - re-visit via grandchild eval: `v = gc_val`
-2. **Subtree lookahead correctness**: structurally reasonable for a batched approximation, but still shallower/noisier than full recursive search.
-3. **PUCT vs Gumbel**: before swapping algorithms, validate this final-action fix first; it removes a major source of policy noise.
-
-### Next checks to run after this fix
-
-- Track draw reason split (`turn_limit`, `repetition`, `fifty_move`) for iterations 8-15.
-- Compare policy loss trend pre/post fix over equal iteration windows.
-- Run an earlier ELO probe (e.g., every 5 iterations temporarily) to reduce diagnosis latency.
-- If still stalled, reduce `temperature_threshold` and/or increase decisive game fraction (fewer random-opponent games).
+7. **Is the network architecture right for this game?** 12.4M params for an 8x8 game with 4288 actions might be overparameterized given only ~3K new positions per iteration. Could try a smaller network (e.g., 10 blocks, 128 filters) that trains faster.
