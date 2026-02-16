@@ -351,7 +351,7 @@ class GumbelMCTS:
 
         if child_state.done:
             if child_state.winner is not None:
-                return -1.0 if child_state.winner == state.current_player else 1.0
+                return 1.0 if child_state.winner == state.current_player else -1.0
             return 0.0
 
         # Evaluate the grandchild with NN
