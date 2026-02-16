@@ -248,7 +248,7 @@ class Trainer:
         self.network = DaveChessNetwork(
             num_res_blocks=net_cfg.get("num_res_blocks", 5),
             num_filters=net_cfg.get("num_filters", 64),
-            input_planes=net_cfg.get("input_planes", 12),
+            input_planes=net_cfg.get("input_planes", 14),
         )  # CPU initially, moved to GPU in train()
 
         train_cfg = config.get("training", {})
