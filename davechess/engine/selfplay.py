@@ -214,8 +214,16 @@ class StructuredReplayBuffer:
         gc.collect()
         return n
 
-    def sample(self, batch_size: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Uniform random sample across all three partitions."""
+    def sample(self, batch_size: int, seed_weight: float = 1.0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Weighted random sample across all three partitions.
+
+        Args:
+            batch_size: Number of samples to return.
+            seed_weight: Weight for seed partition relative to self-play partitions.
+                1.0 = seeds sampled proportionally to their size (uniform).
+                0.5 = seeds get half the samples they'd get under uniform.
+                0.0 = no seed samples (only decisive + draws).
+        """
         total = len(self)
         if total == 0:
             return (np.empty((0, 14, 8, 8), dtype=np.float32),
@@ -225,21 +233,42 @@ class StructuredReplayBuffer:
         n = min(batch_size, total)
         len_s = len(self._seeds)
         len_d = len(self._decisive)
-        indices = random.sample(range(total), n)
+        len_dr = len(self._draws)
 
+        # Compute per-partition sample counts based on seed_weight
+        seed_weight = max(0.0, min(1.0, seed_weight))
+        if len_s > 0 and (len_d + len_dr) > 0 and seed_weight < 1.0:
+            # Weighted allocation: seeds get reduced share, rest gets proportionally more
+            w_s = len_s * seed_weight
+            w_d = float(len_d)
+            w_dr = float(len_dr)
+            w_total = w_s + w_d + w_dr
+            n_s = min(int(round(n * w_s / w_total)), len_s)
+            n_d = min(int(round(n * w_d / w_total)), len_d)
+            n_dr = min(n - n_s - n_d, len_dr)
+        else:
+            # Uniform fallback (seed_weight=1.0 or only one partition has data)
+            n_s = min(int(round(n * len_s / total)), len_s)
+            n_d = min(int(round(n * len_d / total)), len_d)
+            n_dr = min(n - n_s - n_d, len_dr)
+
+        # Sample from each partition independently
         planes_list = []
         policies_list = []
         values_list = []
-        for idx in indices:
-            if idx < len_s:
-                buf, local_idx = self._seeds, idx
-            elif idx < len_s + len_d:
-                buf, local_idx = self._decisive, idx - len_s
-            else:
-                buf, local_idx = self._draws, idx - len_s - len_d
-            planes_list.append(buf.planes[local_idx])
-            policies_list.append(buf.policies[local_idx])
-            values_list.append(buf.values[local_idx])
+        for buf, count in [(self._seeds, n_s), (self._decisive, n_d), (self._draws, n_dr)]:
+            if count <= 0 or len(buf) == 0:
+                continue
+            idxs = random.sample(range(len(buf)), count)
+            for i in idxs:
+                planes_list.append(buf.planes[i])
+                policies_list.append(buf.policies[i])
+                values_list.append(buf.values[i])
+
+        if not planes_list:
+            return (np.empty((0, 14, 8, 8), dtype=np.float32),
+                    np.empty((0, POLICY_SIZE), dtype=np.float32),
+                    np.empty(0, dtype=np.float32))
 
         return (np.stack(planes_list),
                 np.stack(policies_list),

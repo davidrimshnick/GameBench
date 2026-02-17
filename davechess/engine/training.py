@@ -426,7 +426,15 @@ class Trainer:
         if len(self.replay_buffer) < batch_size:
             return {"total_loss": 0.0, "policy_loss": 0.0, "value_loss": 0.0}
 
-        planes, policies, values = self.replay_buffer.sample(batch_size)
+        # Decay seed sampling weight over iterations so self-play data
+        # gradually dominates over stale heuristic seed positions.
+        seed_cfg = self.config.get("training", {})
+        seed_w_init = float(seed_cfg.get("seed_sample_weight_init", 1.0))
+        seed_w_decay = float(seed_cfg.get("seed_sample_weight_decay", 1.0))
+        seed_w_min = float(seed_cfg.get("seed_sample_weight_min", 0.1))
+        seed_weight = max(seed_w_min, seed_w_init * (seed_w_decay ** self.iteration))
+
+        planes, policies, values = self.replay_buffer.sample(batch_size, seed_weight=seed_weight)
 
         planes_t = torch.from_numpy(planes).to(self.device)
         policies_t = torch.from_numpy(policies).to(self.device)
@@ -963,6 +971,16 @@ class Trainer:
         if steps < max_steps:
             logger.info(f"Scaled training steps {max_steps} -> {steps} for buffer size {buf_size}")
         checkpoint_interval = train_cfg.get("checkpoint_interval", 500)
+
+        # Log seed sampling weight for this iteration
+        seed_cfg = train_cfg
+        seed_w_init = float(seed_cfg.get("seed_sample_weight_init", 1.0))
+        seed_w_decay = float(seed_cfg.get("seed_sample_weight_decay", 1.0))
+        seed_w_min = float(seed_cfg.get("seed_sample_weight_min", 0.1))
+        current_seed_weight = max(seed_w_min, seed_w_init * (seed_w_decay ** self.iteration))
+        if seed_w_decay < 1.0:
+            logger.info(f"Seed sampling weight: {current_seed_weight:.3f} "
+                        f"(init={seed_w_init}, decay={seed_w_decay}, iter={self.iteration})")
 
         total_loss_sum = 0.0
         policy_loss_sum = 0.0
