@@ -1259,13 +1259,20 @@ class Trainer:
                     logger.warning(
                         f"CUDA NVML crash during iteration {self.iteration} "
                         f"(retry {cuda_crash_retries}/{max_cuda_retries}). "
-                        f"Clearing GPU memory and retrying..."
+                        f"Full GPU defrag and retrying..."
                     )
-                    gc.collect()
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-                    # Brief pause to let the driver stabilize
-                    time.sleep(5)
+                    # Full CPU round-trip defrag (not just empty_cache)
+                    if self.device != "cpu":
+                        self.network.cpu()
+                        self.optimizer.zero_grad()
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                        time.sleep(3)
+                        self.network.to(self.device)
+                    else:
+                        gc.collect()
+                    time.sleep(2)
                     continue
                 else:
                     logger.error(f"Error during iteration {self.iteration}: {e}")
