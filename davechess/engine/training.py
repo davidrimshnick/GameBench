@@ -949,7 +949,7 @@ class Trainer:
         # sees the fragmented address space on Jetson's unified memory.
         if self.device != "cpu":
             self.network.cpu()
-            self.optimizer.zero_grad(set_to_none=True)
+            self.optimizer.zero_grad()
             gc.collect()
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
