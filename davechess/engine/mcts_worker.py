@@ -2,6 +2,8 @@
 
 Each worker runs MCTS tree traversal on a subset of games, sending leaf
 evaluation requests to the GPU server via IPC queues.
+
+Supports both standard MCTS and Gumbel MCTS modes.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import logging
 import numpy as np
 from typing import Optional
 
-from davechess.engine.network import POLICY_SIZE
+from davechess.engine.network import POLICY_SIZE, state_to_planes
 from davechess.engine.mcts import MCTS, MCTSNode
 from davechess.engine.selfplay import (
     _ActiveGame, _play_wave, _finalize_game,
@@ -74,6 +76,35 @@ class RemoteBatchedEvaluator:
         return len(self._pending)
 
 
+def _gumbel_remote_evaluator(worker_id, request_queue, response_queue):
+    """Create a batch evaluator callable for GumbelBatchedSearch.
+
+    Returns a function: list[GameState] -> list[(policy, logits, value)]
+    that routes through the GPU server via IPC queues.
+    """
+    def evaluate(states):
+        if not states:
+            return []
+
+        planes_list = [state_to_planes(s) for s in states]
+        request_queue.put(BatchRequest(
+            worker_id=worker_id,
+            planes_list=planes_list,
+        ))
+
+        resp: BatchResponse = response_queue.get(timeout=60)
+
+        results = []
+        for i in range(len(states)):
+            logits = resp.logits[i]
+            policy = np.exp(logits - logits.max())
+            policy = policy / policy.sum()
+            results.append((policy, logits, float(resp.values[i])))
+        return results
+
+    return evaluate
+
+
 def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                  game_assignments: list[dict], mcts_config: dict):
     """Entry point for a worker process.
@@ -89,23 +120,60 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
             - nn_plays_white: Whether NN plays white in random games
         mcts_config: Dict with MCTS parameters (num_simulations, cpuct,
             dirichlet_alpha, dirichlet_epsilon, temperature_threshold).
+            If gumbel_config key is present, uses Gumbel MCTS.
     """
     try:
-        evaluator = RemoteBatchedEvaluator(
-            worker_id=worker_id,
-            request_queue=request_queue,
-            response_queue=response_queue,
-            use_network=True,
-        )
+        gumbel_config = mcts_config.get("gumbel_config")
+        temperature_threshold = mcts_config["temperature_threshold"]
+        draw_value_target = mcts_config.get("draw_value_target", 0.0)
 
-        nn_mcts = MCTS(
-            network=None,  # Not used — evaluator handles NN calls
-            num_simulations=mcts_config["num_simulations"],
-            cpuct=mcts_config.get("cpuct", 1.5),
-            dirichlet_alpha=mcts_config["dirichlet_alpha"],
-            dirichlet_epsilon=mcts_config["dirichlet_epsilon"],
-            device="cpu",
-        )
+        # Set up Gumbel or standard MCTS
+        gumbel_search = None
+        evaluator = None
+        nn_mcts = None
+
+        if gumbel_config:
+            from davechess.engine.gumbel_mcts import GumbelBatchedSearch
+
+            remote_eval = _gumbel_remote_evaluator(
+                worker_id, request_queue, response_queue)
+
+            gumbel_search = GumbelBatchedSearch(
+                network=None,
+                num_simulations=mcts_config["num_simulations"],
+                max_num_considered_actions=gumbel_config.get(
+                    "max_num_considered_actions", 16),
+                gumbel_scale=gumbel_config.get("gumbel_scale", 1.0),
+                maxvisit_init=gumbel_config.get("maxvisit_init", 50.0),
+                value_scale=gumbel_config.get("value_scale", 0.1),
+                device="cpu",
+                evaluator=remote_eval,
+            )
+            # nn_mcts is still needed for _play_wave's interface but won't
+            # be used for search when gumbel_search is provided
+            nn_mcts = MCTS(
+                network=None,
+                num_simulations=mcts_config["num_simulations"],
+                cpuct=mcts_config.get("cpuct", 1.5),
+                dirichlet_alpha=mcts_config.get("dirichlet_alpha", 0.3),
+                dirichlet_epsilon=mcts_config.get("dirichlet_epsilon", 0.25),
+                device="cpu",
+            )
+        else:
+            evaluator = RemoteBatchedEvaluator(
+                worker_id=worker_id,
+                request_queue=request_queue,
+                response_queue=response_queue,
+                use_network=True,
+            )
+            nn_mcts = MCTS(
+                network=None,
+                num_simulations=mcts_config["num_simulations"],
+                cpuct=mcts_config.get("cpuct", 1.5),
+                dirichlet_alpha=mcts_config["dirichlet_alpha"],
+                dirichlet_epsilon=mcts_config["dirichlet_epsilon"],
+                device="cpu",
+            )
 
         # Create per-sim-level random MCTS instances
         random_mcts_by_sims: dict[int, MCTS] = {}
@@ -117,8 +185,6 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                         None, num_simulations=sims, device="cpu",
                     )
         random_mcts = next(iter(random_mcts_by_sims.values()), None)
-
-        temperature_threshold = mcts_config["temperature_threshold"]
 
         wave_games: list[_ActiveGame] = []
         for g in game_assignments:
@@ -137,9 +203,7 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
             ))
 
         _play_wave(wave_games, nn_mcts, random_mcts, evaluator,
-                   temperature_threshold)
-
-        draw_value_target = mcts_config.get("draw_value_target", 0.0)
+                   temperature_threshold, gumbel_search=gumbel_search)
 
         # Finalize games and send results
         worker_results = []

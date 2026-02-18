@@ -23,7 +23,7 @@ gumbel:
   value_scale: 0.1                # Q-transform: Q-value scaling factor
 
 selfplay:
-  num_games_per_iteration: 40  # 2x more games for better data throughput
+  num_games_per_iteration: 20  # Fewer games = faster iters = more policy updates/hour
   replay_buffer_size: 50000    # Total (informational only, actual = seed + decisive + draw)
   buffer_seed_size: 20000      # Permanent seed partition (checkmates, tactical wins)
   buffer_decisive_size: 20000  # Circular: self-play decisive positions (abs(value) > 0.5)
@@ -31,7 +31,7 @@ selfplay:
   num_workers: 4               # CPU worker processes for MCTS tree traversal
   min_buffer_size: 1000        # Train immediately on seed games
   random_opponent_fraction: 0.25  # 25% vs random MCTS — enough diversity without wasting data
-  parallel_games: 40             # All 40 games simultaneously for batched GPU eval
+  parallel_games: 20             # Fallback for single-process mode (multiprocess ignores this)
   draw_value_target: -0.1      # Penalize draw-seeking local minima
 
 training:
@@ -46,8 +46,8 @@ training:
   draw_sample_weight: 0.4      # Downweight draw positions in loss vs decisive outcomes
   steps_per_iteration: 800     # ~2 passes through 50K buffer per iteration
   checkpoint_interval: 100
-  elo_probe_interval: 1        # MCTSLite ELO estimation every iteration (slower iters = probe more often)
-  elo_probe_games: 10          # Balance probe cost (~20min) vs variance
+  elo_probe_interval: 3        # Probe every 3 iters — faster iterations, less monitoring overhead
+  elo_probe_games: 10          # 10 games — noisier but ~30min faster per probe
   elo_probe_mctslite_sims: 50
   elo_probe_nn_sims: 128
   adaptive_elo_smoothing: 0.7  # Smooth probe ELO before mapping to adaptive sims

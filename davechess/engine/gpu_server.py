@@ -34,8 +34,9 @@ class BatchRequest:
 @dataclass
 class BatchResponse:
     """Response to a worker with evaluation results."""
-    policies: np.ndarray  # (N, POLICY_SIZE) float32
+    policies: np.ndarray  # (N, POLICY_SIZE) float32 — softmax'd probabilities
     values: list  # list of float, length N
+    logits: np.ndarray = None  # (N, POLICY_SIZE) float32 — raw logits (for Gumbel MCTS)
 
 
 class WorkerDone:
@@ -48,7 +49,7 @@ class WorkerDone:
 
 def run_gpu_server(network, device: str, request_queue, response_queues: list,
                    num_workers: int, workers: list = None,
-                   drain_timeout_ms: float = 1.0):
+                   drain_timeout_ms: float = 5.0):
     """Run the GPU inference server loop.
 
     Blocks until all workers send WorkerDone. Batches requests from multiple
@@ -68,6 +69,7 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
     drain_timeout_sec = drain_timeout_ms / 1000.0
 
     if HAS_TORCH and network is not None:
+        network.to(device)
         network.eval()
 
     while len(workers_done) < num_workers:
@@ -121,10 +123,12 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
             x = torch.from_numpy(planes_batch).to(device)
             with torch.no_grad():
                 logits, values = network(x)
+            all_logits = logits.cpu().numpy()
             all_policies = torch.softmax(logits, dim=1).cpu().numpy()
             all_values = values.cpu().numpy().flatten()
         else:
             n_total = len(all_planes)
+            all_logits = np.zeros((n_total, POLICY_SIZE), dtype=np.float32)
             all_policies = np.ones((n_total, POLICY_SIZE), dtype=np.float32) / POLICY_SIZE
             all_values = np.zeros(n_total, dtype=np.float32)
 
@@ -133,6 +137,7 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
             resp = BatchResponse(
                 policies=all_policies[start:end],
                 values=[float(v) for v in all_values[start:end]],
+                logits=all_logits[start:end],
             )
             response_queues[worker_id].put(resp)
 

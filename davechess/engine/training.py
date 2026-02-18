@@ -819,8 +819,15 @@ class Trainer:
             draw_value_target=float(sp_cfg.get("draw_value_target", 0.0)),
             device=self.device,
         )
-        if use_gumbel:
-            # Gumbel MCTS handles its own batched evaluation — no multiprocess needed
+        if use_gumbel and num_workers > 1:
+            # Multiprocess Gumbel: workers run Gumbel MCTS on CPU,
+            # main process runs GPU server batching all NN evaluations
+            examples, sp_stats = run_selfplay_multiprocess(
+                **sp_kwargs, num_workers=num_workers,
+                gumbel_config=gumbel_config,
+            )
+        elif use_gumbel:
+            # Single-process Gumbel: batched evaluation in main process
             examples, sp_stats = run_selfplay_batch_parallel(
                 **sp_kwargs, parallel_games=parallel_games,
                 gumbel_config=gumbel_config,

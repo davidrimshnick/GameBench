@@ -371,6 +371,13 @@ class GumbelBatchedSearch:
 
     Runs Sequential Halving across all games, batching NN evaluations
     for GPU efficiency.
+
+    Args:
+        evaluator: Optional callable replacing _batch_evaluate for remote GPU.
+            Signature: (list[GameState]) -> list[tuple[np.ndarray, np.ndarray, float]]
+            Each tuple is (policy_probs, logits, value). When provided, network
+            and device are ignored and all NN calls go through the evaluator
+            (used by multiprocess workers to route through GPU server).
     """
 
     def __init__(self, network, num_simulations: int = 50,
@@ -379,7 +386,8 @@ class GumbelBatchedSearch:
                  maxvisit_init: float = 50.0,
                  value_scale: float = 0.1,
                  temperature: float = 1.0,
-                 device: str = "cpu"):
+                 device: str = "cpu",
+                 evaluator=None):
         self.network = network
         self.num_simulations = num_simulations
         self.max_num_considered_actions = max_num_considered_actions
@@ -388,6 +396,7 @@ class GumbelBatchedSearch:
         self.value_scale = value_scale
         self.temperature = temperature
         self.device = device
+        self._evaluator = evaluator
 
     @staticmethod
     def _subtree_lookahead(child_state: GameState,
@@ -423,6 +432,10 @@ class GumbelBatchedSearch:
         """Batch evaluate states. Returns list of (policy, logits, value)."""
         if not states:
             return []
+
+        # Delegate to external evaluator (used by multiprocess workers)
+        if self._evaluator is not None:
+            return self._evaluator(states)
 
         if not HAS_TORCH or self.network is None:
             return [(np.ones(POLICY_SIZE) / POLICY_SIZE,

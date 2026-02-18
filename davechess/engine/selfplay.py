@@ -936,16 +936,20 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
                                random_opponent_fraction: float = 0.0,
                                draw_value_target: float = 0.0,
                                device: str = "cpu",
-                               num_workers: int = 4) -> tuple[list, dict]:
+                               num_workers: int = 4,
+                               gumbel_config: Optional[dict] = None) -> tuple[list, dict]:
     """Run self-play with multiprocess CPU workers and centralized GPU inference.
 
     Each worker process runs MCTS tree traversal on a subset of games.
     The main process runs the GPU inference server, batching leaf evaluations
     from all workers into single forward passes.
 
+    Supports both standard MCTS and Gumbel MCTS (when gumbel_config is provided).
+
     Args:
         Same as run_selfplay_batch_parallel(), plus:
         num_workers: Number of CPU worker processes.
+        gumbel_config: If provided, workers use Gumbel MCTS instead of standard MCTS.
 
     Returns:
         (all_examples, stats) — same format as run_selfplay_batch().
@@ -953,6 +957,10 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
     import multiprocessing as mp
     from davechess.engine.gpu_server import run_gpu_server
     from davechess.engine.mcts_worker import worker_entry
+
+    if gumbel_config is not None:
+        logger.info(f"Multiprocess Gumbel MCTS (k={gumbel_config.get('max_num_considered_actions', 16)}, "
+                     f"sims={num_simulations})")
 
     num_random_games = int(num_games * random_opponent_fraction)
 
@@ -968,6 +976,8 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
         "draw_value_target": draw_value_target,
         "cpuct": 1.5,
     }
+    if gumbel_config is not None:
+        mcts_config["gumbel_config"] = gumbel_config
 
     # Create IPC queues
     request_queue = mp.Queue()
