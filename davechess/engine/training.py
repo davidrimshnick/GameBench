@@ -608,8 +608,9 @@ class Trainer:
         total = wins + losses + draws
         win_rate = (wins + 0.5 * draws) / total if total > 0 else 0.5
 
-        # Estimate ELO: MCTSLite at 50 sims ≈ 300 ELO baseline
-        mctslite_elo = 300
+        # Estimate ELO: MCTSLite at 50 sims ≈ 650 FIDE
+        # Calibrated via chess experiment (scripts/chess_mctslite_elo.py)
+        mctslite_elo = 650
         elo_diff = win_rate_to_elo_diff(win_rate)
         estimated_elo = mctslite_elo + elo_diff
 
