@@ -46,7 +46,7 @@ training:
   draw_sample_weight: 0.4      # Downweight draw positions in loss vs decisive outcomes
   steps_per_iteration: 800     # ~2 passes through 50K buffer per iteration
   checkpoint_interval: 100
-  elo_probe_interval: 3        # Probe every 3 iters — faster iterations, less monitoring overhead
+  elo_probe_interval: 5        # Probe every 5 iters (~once/hr with 15 min iters)
   elo_probe_games: 10          # 10 games — noisier but ~30min faster per probe
   elo_probe_mctslite_sims: 50
   elo_probe_nn_sims: 128
