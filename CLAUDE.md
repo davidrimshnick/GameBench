@@ -20,7 +20,7 @@ What's done:
 - **Muon optimizer** — Newton-Schulz orthogonalization for conv/hidden weights (99.9% of params), SGD for heads/biases/BN. Single-GPU implementation via `MuonSGD` class in `training.py`.
 - **128 Gumbel MCTS sims** — up from 50, gives meaningful search depth at 30-80 legal moves
 - **40 self-play games per iteration** — doubled from 20 for better data throughput (~5K positions/iter)
-- **MCTSLite ELO probes** — lightweight, non-gating ELO estimation every iteration against MCTSLite at 50 sims. Baseline calibrated to FIDE scale: MCTSLite-50 ≈ 650 FIDE (see `scripts/chess_mctslite_elo.py` for methodology)
+- **MCTSLite ELO probes** — non-gating ELO estimation every 20 iterations against MCTSLite-50, using 800 MCTS sims for the NN (enough depth to find checkmates). Baseline: MCTSLite-50 ≈ 300 ELO. 6 games per probe, 100-move cutoff per game.
 - **Hot-reload config** — `training.yaml` is re-read at the start of each iteration (network architecture preserved). No restart needed to change hyperparameters.
 - **Existing buffer carry-over** — place `existing_buffer.npz` in checkpoints/ to inject old replay data into a fresh run (one-shot, auto-deleted after load)
 - Sandbox setup and `agent_cli.py` working
@@ -180,11 +180,12 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 4. **Adaptive MCTS Simulations**: The `adaptive_simulations()` function in `training.py` scales simulation count based on model ELO. Self-play uses a configurable minimum floor (`mcts.min_selfplay_simulations`, default 128) and a smoothed ELO signal (`training.adaptive_elo_smoothing`) rather than raw probe ELO to avoid search-depth jitter from noisy probes.
 
-5. **MCTSLite ELO Calibration**: The ELO probe plays the NN against MCTSLite-50 (random rollouts, no NN). Baseline anchored to FIDE scale by running the same algorithm in chess and calibrating against Lichess RandomMoverBot (~700 Lichess ≈ 450 FIDE). Bootstrapped ladder via chess experiments (`scripts/chess_mctslite_elo.py`):
-   - MCTSLite-50: **650 FIDE** (+280 vs random)
-   - MCTSLite-100: **841 FIDE** (+191 vs MCTSLite-50)
-   - MCTSLite-200: **1009 FIDE** (+168 vs MCTSLite-100)
+5. **MCTSLite ELO Calibration**: The ELO probe plays the NN (800 sims) against MCTSLite-50 (random rollouts, no NN). Baseline rebased to MCTSLite-50 ≈ 300 ELO (original 650 anchor was overestimated). Relative gaps from chess experiments (`scripts/chess_mctslite_elo.py`):
+   - MCTSLite-50: **300** (baseline)
+   - MCTSLite-100: **~490** (+190 vs MCTSLite-50)
+   - MCTSLite-200: **~660** (+170 vs MCTSLite-100)
    - Each sim doubling ≈ +180 ELO, consistent with chess engine theory.
+   - Probe uses 800 NN sims (AlphaZero-level), 6 games, 100-move cutoff, every 20 iterations.
 
 6. **Seed Sampling Weight Decay**: Heuristic seed data (40% of the 50K buffer) becomes stale as the NN develops its own style. `StructuredReplayBuffer.sample()` accepts a `seed_weight` parameter that decays exponentially per iteration: `weight = max(min, init * decay^iter)`. Default: init=1.0, decay=0.93, min=0.05. Seeds fade from ~40% to ~5% of training batches by iteration 40. Configured in `training.yaml` under `seed_sample_weight_init/decay/min`.
 

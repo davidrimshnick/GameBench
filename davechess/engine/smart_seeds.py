@@ -138,8 +138,10 @@ def generate_smart_seeds(num_games: int = 50, verbose: bool = False) -> ReplayBu
             policy = np.zeros(POLICY_SIZE, dtype=np.float32)
             policy[move_to_policy_index(move)] = 1.0
 
-            # Create value from game outcome: +1 win, -1 loss
-            if winner == state.current_player:
+            # Create value from game outcome: +1 win, -1 loss, 0 draw
+            if winner is None:
+                value = 0.0  # Draw — don't mislabel as loss
+            elif winner == state.current_player:
                 value = 1.0
             else:
                 value = -1.0

@@ -534,7 +534,8 @@ class Trainer:
 
     def estimate_elo_mctslite(self, num_games: int = 4,
                               mctslite_sims: int = 50,
-                              nn_sims: Optional[int] = None) -> dict:
+                              nn_sims: Optional[int] = None,
+                              max_moves: int = 100) -> dict:
         """Estimate ELO by playing the NN against MCTSLite (no neural network).
 
         This is a lightweight, non-gating probe. MCTSLite uses random rollouts
@@ -563,7 +564,7 @@ class Trainer:
             mctslite = MCTSLite(num_simulations=mctslite_sims)
             move_count = 0
 
-            while not state.done:
+            while not state.done and move_count < max_moves:
                 moves = generate_legal_moves(state)
                 if not moves:
                     break
@@ -608,9 +609,9 @@ class Trainer:
         total = wins + losses + draws
         win_rate = (wins + 0.5 * draws) / total if total > 0 else 0.5
 
-        # Estimate ELO: MCTSLite at 50 sims ≈ 650 FIDE
-        # Calibrated via chess experiment (scripts/chess_mctslite_elo.py)
-        mctslite_elo = 650
+        # Estimate ELO: MCTSLite at 50 sims ≈ 300
+        # Rebased from original 650 anchor (was overestimated)
+        mctslite_elo = 300
         elo_diff = win_rate_to_elo_diff(win_rate)
         estimated_elo = mctslite_elo + elo_diff
 
@@ -1047,10 +1048,12 @@ class Trainer:
             probe_num_games = int(train_cfg.get("elo_probe_games", 20))
             probe_mctslite_sims = int(train_cfg.get("elo_probe_mctslite_sims", 50))
             probe_nn_sims = int(train_cfg.get("elo_probe_nn_sims", max(min_sims, probe_mctslite_sims)))
+            probe_max_moves = int(train_cfg.get("elo_probe_max_moves", 100))
             elo_results = self.estimate_elo_mctslite(
                 num_games=probe_num_games,
                 mctslite_sims=probe_mctslite_sims,
                 nn_sims=probe_nn_sims,
+                max_moves=probe_max_moves,
             )
             self.elo_estimate = elo_results["estimated_elo"]
             smoothing = float(train_cfg.get("adaptive_elo_smoothing", 0.7))

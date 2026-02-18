@@ -46,10 +46,10 @@ training:
   draw_sample_weight: 0.4      # Downweight draw positions in loss vs decisive outcomes
   steps_per_iteration: 800     # ~2 passes through 50K buffer per iteration
   checkpoint_interval: 100
-  elo_probe_interval: 5        # Probe every 5 iters (~once/hr with 15 min iters)
-  elo_probe_games: 10          # 10 games — noisier but ~30min faster per probe
+  elo_probe_interval: 20       # Every 20 iters — 800 sims probes are expensive
+  elo_probe_games: 6           # Keep probes under ~1hr at 800 sims
   elo_probe_mctslite_sims: 50
-  elo_probe_nn_sims: 128
+  elo_probe_nn_sims: 800       # AlphaZero-level search for accurate measurement
   adaptive_elo_smoothing: 0.7  # Smooth probe ELO before mapping to adaptive sims
   seed_removal_elo: 1000       # Clear seed partition once ELO exceeds this (self-play is better)
   seed_sample_weight_init: 1.0  # Seed sampling weight at iteration 0 (1.0 = proportional to size)
