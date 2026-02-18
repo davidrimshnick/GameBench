@@ -1274,6 +1274,9 @@ class Trainer:
                     else:
                         gc.collect()
                     time.sleep(2)
+                    # Undo the iteration increment from run_iteration() so we retry
+                    # the same iteration instead of skipping to the next one
+                    self.iteration -= 1
                     continue
                 else:
                     logger.error(f"Error during iteration {self.iteration}: {e}")
