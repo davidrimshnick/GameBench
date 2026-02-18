@@ -742,6 +742,16 @@ class Trainer:
         except Exception as e:
             logger.warning("Config hot-reload failed: %s", e)
 
+    def _gpu_defrag(self):
+        """Full CPU round-trip to defragment Jetson unified memory."""
+        if self.device != "cpu":
+            self.network.cpu()
+            self.optimizer.zero_grad()
+            gc.collect()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            self.network.to(self.device)
+
     def run_iteration(self):
         """Run one training iteration: self-play + training + evaluation."""
         self._hot_reload_config()
@@ -952,17 +962,6 @@ class Trainer:
             return
 
         logger.info("Training phase...")
-        # Aggressively defragment GPU before training:
-        # Move network to CPU, release ALL GPU memory, then move back.
-        # plain empty_cache() only releases cached blocks but NVML still
-        # sees the fragmented address space on Jetson's unified memory.
-        if self.device != "cpu":
-            self.network.cpu()
-            self.optimizer.zero_grad()
-            gc.collect()
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            self.network.to(self.device)
         batch_size = train_cfg.get("batch_size", 256)
         max_steps = train_cfg.get("steps_per_iteration", 1000)
         # Scale steps to buffer size: ~2 passes through the data, capped at max_steps.
@@ -988,15 +987,34 @@ class Trainer:
         value_loss_sum = 0.0
         value_scale_sum = 0.0
 
-        for step in range(steps):
-            losses = self.train_step(batch_size)
-            total_loss_sum += losses["total_loss"]
-            policy_loss_sum += losses["policy_loss"]
-            value_loss_sum += losses["value_loss"]
-            value_scale_sum += losses["value_scale"]
+        # NVML retry: defrag + train, retry up to 3 times without redoing self-play
+        for _train_attempt in range(3):
+            try:
+                self._gpu_defrag()
+                for step in range(steps):
+                    losses = self.train_step(batch_size)
+                    total_loss_sum += losses["total_loss"]
+                    policy_loss_sum += losses["policy_loss"]
+                    value_loss_sum += losses["value_loss"]
+                    value_scale_sum += losses["value_scale"]
 
-            if (self.training_step % checkpoint_interval == 0):
-                self.save_checkpoint()
+                    if (self.training_step % checkpoint_interval == 0):
+                        self.save_checkpoint()
+                break  # Training succeeded
+            except RuntimeError as e:
+                if "NVML_SUCCESS" in str(e) and _train_attempt < 2:
+                    logger.warning(
+                        f"CUDA NVML crash during training (attempt {_train_attempt+1}/3). "
+                        f"Full GPU defrag and retrying training only..."
+                    )
+                    time.sleep(3)
+                    # Reset loss accumulators for clean retry
+                    total_loss_sum = 0.0
+                    policy_loss_sum = 0.0
+                    value_loss_sum = 0.0
+                    value_scale_sum = 0.0
+                else:
+                    raise
 
         avg_losses = {
             "avg_total_loss": total_loss_sum / steps if steps > 0 else 0,
@@ -1262,17 +1280,7 @@ class Trainer:
                         f"(retry {cuda_crash_retries}/{max_cuda_retries}). "
                         f"Full GPU defrag and retrying..."
                     )
-                    # Full CPU round-trip defrag (not just empty_cache)
-                    if self.device != "cpu":
-                        self.network.cpu()
-                        self.optimizer.zero_grad()
-                        gc.collect()
-                        torch.cuda.empty_cache()
-                        torch.cuda.synchronize()
-                        time.sleep(3)
-                        self.network.to(self.device)
-                    else:
-                        gc.collect()
+                    self._gpu_defrag()
                     time.sleep(2)
                     # Undo the iteration increment from run_iteration() so we retry
                     # the same iteration instead of skipping to the next one
