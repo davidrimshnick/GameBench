@@ -175,6 +175,7 @@ def _make_endgame_state(
     state.move_history = []
     state.position_counts = {}
     state.halfmove_clock = 0
+    state.last_move = None
     for r, c, pt in white_pieces:
         state.board[r][c] = Piece(pt, Player.WHITE)
     for r, c, pt in black_pieces:

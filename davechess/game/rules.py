@@ -489,6 +489,7 @@ def apply_move(state: GameState, move: Move) -> GameState:
             state.winner = player
 
     state.move_history.append(move)
+    state.last_move = move
 
     # Update halfmove clock (50-move rule): reset on capture/promote/bombard, else increment
     if isinstance(move, MoveStep) and move.is_capture:
@@ -575,6 +576,8 @@ def apply_move_fast(state: GameState, move: Move) -> GameState:
         if defender is not None and defender.piece_type == PieceType.COMMANDER:
             state.done = True
             state.winner = player
+
+    state.last_move = move
 
     # Update halfmove clock (50-move rule)
     if isinstance(move, MoveStep) and move.is_capture:

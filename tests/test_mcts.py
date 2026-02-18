@@ -208,7 +208,7 @@ class TestBatchedMCTS:
         assert "game_records" in stats
         assert "game_details" in stats
         for planes, policy, value in examples:
-            assert planes.shape == (14, 8, 8)
+            from davechess.engine.network import NUM_INPUT_PLANES; assert planes.shape == (NUM_INPUT_PLANES, 8, 8)
             assert policy.shape == (POLICY_SIZE,)
             assert -1.0 <= value <= 1.0
 
@@ -292,7 +292,7 @@ class TestMultiprocessMCTS:
         assert "game_records" in stats
         assert "game_details" in stats
         for planes, policy, value in examples:
-            assert planes.shape == (14, 8, 8)
+            from davechess.engine.network import NUM_INPUT_PLANES; assert planes.shape == (NUM_INPUT_PLANES, 8, 8)
             assert policy.shape == (POLICY_SIZE,)
             assert -1.0 <= value <= 1.0
 

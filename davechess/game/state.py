@@ -129,6 +129,7 @@ class GameState:
         self.move_history: list[Move] = []
         self.position_counts: dict[tuple, int] = {}
         self.halfmove_clock: int = 0  # Moves since last capture or deploy (50-move rule)
+        self.last_move: Optional[Move] = None  # Last move played (for NN input planes)
         self._setup_starting_position()
         # Record starting position for threefold repetition detection
         self.position_counts[self.get_position_key()] = 1
@@ -152,6 +153,7 @@ class GameState:
         new.move_history = []  # Don't copy history for MCTS clones
         new.position_counts = self.position_counts.copy()
         new.halfmove_clock = self.halfmove_clock
+        new.last_move = self.last_move
         return new
 
     def get_piece_at(self, row: int, col: int) -> Optional[Piece]:
@@ -249,6 +251,7 @@ class GameState:
         state.move_history = []
         state.position_counts = {}
         state.halfmove_clock = 0
+        state.last_move = None
         return state
 
     def to_display_board(self) -> list[list]:

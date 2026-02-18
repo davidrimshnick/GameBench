@@ -3,7 +3,7 @@
 network:
   num_res_blocks: 10
   num_filters: 256
-  input_planes: 14
+  input_planes: 18
   board_size: 8
 
 mcts:

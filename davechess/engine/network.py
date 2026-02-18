@@ -1,12 +1,16 @@
 """ResNet policy+value network for DaveChess AlphaZero.
 
-Input: 14 planes of 8x8
+Input: 18 planes of 8x8
   Planes 0-4: Current player's C/W/R/B/L positions (binary)
   Planes 5-9: Opponent's C/W/R/B/L positions (binary)
   Plane 10: Gold node positions (binary)
   Plane 11: Current player indicator (all 1s or 0s)
   Plane 12: Current player resources (scalar broadcast, normalized)
   Plane 13: Opponent resources (scalar broadcast, normalized)
+  Plane 14: Turn progress (turn/100, broadcast — urgency signal)
+  Plane 15: Position repetition count (0/0.5/1.0 for 1x/2x/3x+)
+  Plane 16: Last move source square (binary one-hot)
+  Plane 17: Last move destination square (binary one-hot)
 
 Output:
   Policy: flat logit vector over all possible moves (4288 logits)
@@ -44,12 +48,15 @@ DIR_TO_IDX = {d: i for i, d in enumerate(ALL_DIRS)}
 RESOURCE_NORM = 50.0
 
 
+NUM_INPUT_PLANES = 18
+
+
 def state_to_planes(state: GameState) -> np.ndarray:
-    """Convert game state to 14x8x8 input planes.
+    """Convert game state to 18x8x8 input planes.
 
     The planes are always from the perspective of the current player.
     """
-    planes = np.zeros((14, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
+    planes = np.zeros((NUM_INPUT_PLANES, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
     current = state.current_player
     opponent = Player(1 - current)
 
@@ -74,6 +81,34 @@ def state_to_planes(state: GameState) -> np.ndarray:
     # Resources (normalized, broadcast)
     planes[12, :, :] = min(state.resources[current] / RESOURCE_NORM, 1.0)
     planes[13, :, :] = min(state.resources[opponent] / RESOURCE_NORM, 1.0)
+
+    # Turn progress: urgency signal (0.0 at turn 1, 1.0 at turn 100)
+    planes[14, :, :] = min(state.turn / 100.0, 1.0)
+
+    # Repetition count for current position
+    pos_key = state.get_position_key()
+    rep_count = state.position_counts.get(pos_key, 1)
+    # Encode: 1x=0.0, 2x=0.5, 3x+=1.0
+    planes[15, :, :] = min((rep_count - 1) * 0.5, 1.0)
+
+    # Last move source and destination squares
+    if state.last_move is not None:
+        move = state.last_move
+        if isinstance(move, MoveStep):
+            fr, fc = move.from_rc
+            tr, tc = move.to_rc
+            planes[16, fr, fc] = 1.0
+            planes[17, tr, tc] = 1.0
+        elif isinstance(move, Promote):
+            # Promotion: piece stays in place, mark the square
+            r, c = move.from_rc
+            planes[16, r, c] = 1.0
+            planes[17, r, c] = 1.0
+        elif isinstance(move, BombardAttack):
+            fr, fc = move.from_rc
+            tr, tc = move.target_rc
+            planes[16, fr, fc] = 1.0
+            planes[17, tr, tc] = 1.0
 
     return planes
 
@@ -184,7 +219,7 @@ if HAS_TORCH:
         """ResNet policy+value network for DaveChess."""
 
         def __init__(self, num_res_blocks: int = 5, num_filters: int = 64,
-                     input_planes: int = 14):
+                     input_planes: int = NUM_INPUT_PLANES):
             super().__init__()
 
             # Initial convolution
@@ -211,7 +246,7 @@ if HAS_TORCH:
             """Forward pass.
 
             Args:
-                x: (batch, 14, 8, 8) tensor.
+                x: (batch, input_planes, 8, 8) tensor.
 
             Returns:
                 (policy_logits, value) where policy is (batch, POLICY_SIZE)
@@ -264,13 +299,16 @@ if HAS_TORCH:
             state_dict = ckpt["network_state"]
 
             # Infer architecture from state dict
-            num_filters = state_dict["conv_input.weight"].shape[0]
+            conv_input_weight = state_dict["conv_input.weight"]
+            num_filters = conv_input_weight.shape[0]
+            input_planes = conv_input_weight.shape[1]
             max_block = max(
                 int(k.split(".")[1]) for k in state_dict if k.startswith("res_blocks.")
             )
             num_res_blocks = max_block + 1
 
-            net = cls(num_res_blocks=num_res_blocks, num_filters=num_filters)
+            net = cls(num_res_blocks=num_res_blocks, num_filters=num_filters,
+                      input_planes=input_planes)
             net.load_state_dict(state_dict)
             net.eval()
             if device != "cpu":

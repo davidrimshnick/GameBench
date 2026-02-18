@@ -6,7 +6,7 @@ import numpy as np
 from davechess.game.state import GameState, Piece, Player, MoveStep, Promote, BombardAttack, PieceType
 from davechess.engine.network import (
     state_to_planes, move_to_policy_index, policy_index_to_move,
-    POLICY_SIZE, BOARD_SIZE,
+    POLICY_SIZE, BOARD_SIZE, NUM_INPUT_PLANES,
 )
 
 
@@ -14,7 +14,7 @@ class TestStateToPlanes:
     def test_output_shape(self):
         state = GameState()
         planes = state_to_planes(state)
-        assert planes.shape == (14, 8, 8)
+        assert planes.shape == (NUM_INPUT_PLANES, 8, 8)
 
     def test_dtype(self):
         state = GameState()
@@ -161,7 +161,7 @@ class TestNetworkForward:
     def test_forward_pass_shapes(self):
         from davechess.engine.network import DaveChessNetwork
         net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
-        x = torch.randn(4, 14, 8, 8)
+        x = torch.randn(4, NUM_INPUT_PLANES, 8, 8)
         policy, value = net(x)
         assert policy.shape == (4, POLICY_SIZE)
         assert value.shape == (4, 1)
@@ -170,7 +170,7 @@ class TestNetworkForward:
         """Value head output should be in [-1, 1] (tanh)."""
         from davechess.engine.network import DaveChessNetwork
         net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
-        x = torch.randn(8, 14, 8, 8)
+        x = torch.randn(8, NUM_INPUT_PLANES, 8, 8)
         _, value = net(x)
         assert (value >= -1.0).all()
         assert (value <= 1.0).all()

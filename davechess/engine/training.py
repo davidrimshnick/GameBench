@@ -40,7 +40,7 @@ try:
 except ImportError:
     HAS_TB = False
 
-from davechess.engine.network import DaveChessNetwork, POLICY_SIZE, state_to_planes, move_to_policy_index
+from davechess.engine.network import DaveChessNetwork, POLICY_SIZE, NUM_INPUT_PLANES, state_to_planes, move_to_policy_index
 from davechess.engine.selfplay import (
     ReplayBuffer, StructuredReplayBuffer, run_selfplay_batch,
     run_selfplay_batch_parallel, run_selfplay_multiprocess,
@@ -248,7 +248,7 @@ class Trainer:
         self.network = DaveChessNetwork(
             num_res_blocks=net_cfg.get("num_res_blocks", 5),
             num_filters=net_cfg.get("num_filters", 64),
-            input_planes=net_cfg.get("input_planes", 14),
+            input_planes=net_cfg.get("input_planes", NUM_INPUT_PLANES),
         )  # CPU initially, moved to GPU in train()
 
         train_cfg = config.get("training", {})

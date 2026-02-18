@@ -21,7 +21,7 @@ except ImportError:
 
 from davechess.game.state import GameState, Player, Move
 from davechess.game.rules import generate_legal_moves, apply_move
-from davechess.engine.network import state_to_planes, move_to_policy_index, POLICY_SIZE
+from davechess.engine.network import state_to_planes, move_to_policy_index, POLICY_SIZE, NUM_INPUT_PLANES
 from davechess.engine.mcts import MCTS, BatchedEvaluator
 from davechess.engine.gumbel_mcts import GumbelMCTS, GumbelBatchedSearch
 
@@ -90,7 +90,7 @@ class ReplayBuffer:
 
         n = len(self)
         if n == 0:
-            np.savez_compressed(path, planes=np.empty((0, 14, 8, 8)),
+            np.savez_compressed(path, planes=np.empty((0, NUM_INPUT_PLANES, 8, 8)),
                                 policies=np.empty((0, POLICY_SIZE)),
                                 values=np.empty(0))
             return
@@ -99,7 +99,7 @@ class ReplayBuffer:
             # Write each array in chunks using memory-mapped files
             planes_path = os.path.join(tmp, "planes.npy")
             planes_mmap = np.lib.format.open_memmap(
-                planes_path, mode="w+", dtype=np.float32, shape=(n, 14, 8, 8))
+                planes_path, mode="w+", dtype=np.float32, shape=(n, NUM_INPUT_PLANES, 8, 8))
             for start in range(0, n, chunk_size):
                 end = min(start + chunk_size, n)
                 chunk = np.stack([self.planes[i] for i in range(start, end)])
@@ -226,7 +226,7 @@ class StructuredReplayBuffer:
         """
         total = len(self)
         if total == 0:
-            return (np.empty((0, 14, 8, 8), dtype=np.float32),
+            return (np.empty((0, NUM_INPUT_PLANES, 8, 8), dtype=np.float32),
                     np.empty((0, POLICY_SIZE), dtype=np.float32),
                     np.empty(0, dtype=np.float32))
 
@@ -266,7 +266,7 @@ class StructuredReplayBuffer:
                 values_list.append(buf.values[i])
 
         if not planes_list:
-            return (np.empty((0, 14, 8, 8), dtype=np.float32),
+            return (np.empty((0, NUM_INPUT_PLANES, 8, 8), dtype=np.float32),
                     np.empty((0, POLICY_SIZE), dtype=np.float32),
                     np.empty(0, dtype=np.float32))
 
@@ -300,7 +300,7 @@ class StructuredReplayBuffer:
         total = len(self)
         if total == 0:
             np.savez_compressed(path,
-                                planes=np.empty((0, 14, 8, 8)),
+                                planes=np.empty((0, NUM_INPUT_PLANES, 8, 8)),
                                 policies=np.empty((0, POLICY_SIZE)),
                                 values=np.empty(0),
                                 partition_offsets=np.array([0, 0, 0, 0]))
@@ -315,7 +315,7 @@ class StructuredReplayBuffer:
         with tempfile.TemporaryDirectory() as tmp:
             planes_path = os.path.join(tmp, "planes.npy")
             planes_mmap = np.lib.format.open_memmap(
-                planes_path, mode="w+", dtype=np.float32, shape=(total, 14, 8, 8))
+                planes_path, mode="w+", dtype=np.float32, shape=(total, NUM_INPUT_PLANES, 8, 8))
             pos = 0
             for buf in all_bufs:
                 n = len(buf)
