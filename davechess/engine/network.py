@@ -262,11 +262,13 @@ if HAS_TORCH:
             p = p.view(p.size(0), -1)
             p = self.policy_fc(p)
 
-            # Value head
-            v = F.relu(self.value_bn(self.value_conv(x)))
-            v = v.view(v.size(0), -1)
-            v = F.relu(self.value_fc1(v))
-            v = torch.tanh(self.value_fc2(v))
+            # Value head — force FP32 to prevent BN overflow in mixed precision
+            with torch.amp.autocast("cuda", enabled=False):
+                v = x.float()
+                v = F.relu(self.value_bn(self.value_conv(v)))
+                v = v.view(v.size(0), -1)
+                v = F.relu(self.value_fc1(v))
+                v = torch.tanh(self.value_fc2(v))
 
             return p, v
 

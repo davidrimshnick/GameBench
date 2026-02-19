@@ -488,6 +488,8 @@ class Trainer:
                     for p in self.optimizer.muon_params:
                         if p.grad is not None:
                             p.grad.mul_(inv_scale)
+                    # Clip gradients before inf/nan check
+                    torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=1.0)
                     # Check for inf/nan in grads (skip step if found)
                     found_inf = any(
                         torch.isinf(p.grad).any() or torch.isnan(p.grad).any()
@@ -504,6 +506,7 @@ class Trainer:
             policy_loss, value_loss, total_loss, value_scale = _compute_losses(policy_logits, value_pred)
 
             total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=1.0)
             self.optimizer.step()
 
         self.training_step += 1
@@ -1180,8 +1183,10 @@ class Trainer:
 
         # Try to resume (everything on CPU at this point)
         warm_started = False
+        resumed = False
         if self.load_checkpoint():
             logger.info(f"Resumed from step {self.training_step}, iteration {self.iteration}")
+            resumed = True
         else:
             logger.info("Starting fresh training")
             # If best.pt already exists (e.g. restored from W&B), warm-start
@@ -1256,7 +1261,7 @@ class Trainer:
         # has learned something before generating its own games.
         # Skip if warm-starting from a trained model — re-pre-training on
         # seeds would overwrite learned features and degrade the model.
-        if self.iteration == 0 and len(self.replay_buffer) > 0 and not warm_started:
+        if self.iteration == 0 and len(self.replay_buffer) > 0 and not warm_started and not resumed:
             batch_size = train_cfg.get("batch_size", 128)
             # ~4 passes through the full seed buffer
             steps = (len(self.replay_buffer) * 4) // batch_size
