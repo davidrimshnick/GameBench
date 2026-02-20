@@ -499,10 +499,10 @@ class Trainer:
                             p.grad.mul_(inv_scale)
                     # Clip gradients before inf/nan check
                     torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=1.0)
-                    # Check for inf/nan in grads (skip step if found)
+                    # Check for inf/nan in ALL grads (Muon + SGD heads)
                     found_inf = any(
                         torch.isinf(p.grad).any() or torch.isnan(p.grad).any()
-                        for p in self.optimizer.muon_params if p.grad is not None
+                        for p in self.network.parameters() if p.grad is not None
                     )
                     if found_inf:
                         # Manually back off scale to prevent infinite overflow loop
@@ -766,6 +766,23 @@ class Trainer:
                 logger.info("Resized buffer: decisive %d->%d, draw %d->%d (total %d->%d)",
                             old_d, new_decisive, old_dr, new_draw,
                             old_size, len(self.replay_buffer))
+            # Hot-apply optimizer hyperparameters
+            train_cfg = new_config.get("training", {})
+            if isinstance(self.optimizer, MuonSGD):
+                new_muon_lr = train_cfg.get("learning_rate", self.optimizer.muon_lr)
+                new_head_lr = train_cfg.get("head_lr", self.optimizer.sgd.param_groups[0]["lr"])
+                if new_muon_lr != self.optimizer.muon_lr:
+                    logger.info("Hot-reload: muon_lr %.4f -> %.4f", self.optimizer.muon_lr, new_muon_lr)
+                    self.optimizer.muon_lr = new_muon_lr
+                if new_head_lr != self.optimizer.sgd.param_groups[0]["lr"]:
+                    logger.info("Hot-reload: head_lr %.4f -> %.4f",
+                                self.optimizer.sgd.param_groups[0]["lr"], new_head_lr)
+                    self.optimizer.sgd.param_groups[0]["lr"] = new_head_lr
+            else:
+                new_lr = train_cfg.get("learning_rate", self.optimizer.param_groups[0]["lr"])
+                if new_lr != self.optimizer.param_groups[0]["lr"]:
+                    logger.info("Hot-reload: lr %.4f -> %.4f", self.optimizer.param_groups[0]["lr"], new_lr)
+                    self.optimizer.param_groups[0]["lr"] = new_lr
             logger.info("Hot-reloaded config from %s", self.config_path)
         except Exception as e:
             logger.warning("Config hot-reload failed: %s", e)
