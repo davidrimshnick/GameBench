@@ -23,11 +23,11 @@ gumbel:
   value_scale: 0.1                # Q-transform: Q-value scaling factor
 
 selfplay:
-  num_games_per_iteration: 20  # Fewer games = faster iters = more policy updates/hour
-  replay_buffer_size: 50000    # Total (informational only, actual = seed + decisive + draw)
-  buffer_seed_size: 20000      # Permanent seed partition (checkmates, tactical wins)
-  buffer_decisive_size: 20000  # Circular: self-play decisive positions (abs(value) > 0.5)
-  buffer_draw_size: 10000      # Circular: self-play draw positions (abs(value) <= 0.5)
+  num_games_per_iteration: 40  # More games = faster buffer turnover = fresher training data
+  replay_buffer_size: 20000    # Total (informational only, actual = seed + decisive + draw)
+  buffer_seed_size: 12000      # Permanent seed partition (checkmates, tactical wins)
+  buffer_decisive_size: 5000   # Circular: self-play decisive positions — small for fast turnover
+  buffer_draw_size: 3000       # Circular: self-play draw positions — small for fast turnover
   num_workers: 4               # CPU worker processes for MCTS tree traversal
   min_buffer_size: 1000        # Train immediately on seed games
   random_opponent_fraction: 0.25  # 25% vs random MCTS — enough diversity without wasting data
@@ -39,7 +39,7 @@ training:
   batch_size: 128
   learning_rate: 0.02           # Muon default LR (higher than SGD since updates are orthogonalized)
   muon_momentum: 0.95           # Muon momentum (default)
-  head_lr: 0.001                # SGD LR for policy/value heads and biases
+  head_lr: 0.005                # SGD LR for policy/value heads and biases
   momentum: 0.9
   weight_decay: 0.0001
   value_loss_weight: 20.0      # Fixed c: balances policy CE (~5-6) vs value MSE (~0.1)

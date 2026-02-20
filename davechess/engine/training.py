@@ -755,6 +755,17 @@ class Trainer:
             # Preserve network config (can't change architecture mid-run)
             new_config["network"] = self.config.get("network", {})
             self.config = new_config
+            # Resize replay buffer partitions if config changed
+            sp_cfg = new_config.get("selfplay", {})
+            new_decisive = sp_cfg.get("buffer_decisive_size", self.replay_buffer.decisive_size)
+            new_draw = sp_cfg.get("buffer_draw_size", self.replay_buffer.draw_size)
+            if new_decisive != self.replay_buffer.decisive_size or new_draw != self.replay_buffer.draw_size:
+                old_d, old_dr = self.replay_buffer.decisive_size, self.replay_buffer.draw_size
+                old_size = len(self.replay_buffer)
+                self.replay_buffer.resize(new_decisive, new_draw)
+                logger.info("Resized buffer: decisive %d->%d, draw %d->%d (total %d->%d)",
+                            old_d, new_decisive, old_dr, new_draw,
+                            old_size, len(self.replay_buffer))
             logger.info("Hot-reloaded config from %s", self.config_path)
         except Exception as e:
             logger.warning("Config hot-reload failed: %s", e)

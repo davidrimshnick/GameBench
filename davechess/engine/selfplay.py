@@ -207,6 +207,27 @@ class StructuredReplayBuffer:
         else:
             self._draws.push(planes, policy, value)
 
+    def resize(self, decisive_size: int, draw_size: int):
+        """Resize decisive and draw partitions, keeping most recent data."""
+        if decisive_size != self.decisive_size:
+            old = self._decisive
+            self.decisive_size = decisive_size
+            self._decisive = ReplayBuffer(max_size=decisive_size)
+            # Copy most recent data (deque keeps oldest at front)
+            start = max(0, len(old) - decisive_size)
+            for i in range(start, len(old)):
+                self._decisive.push(old.planes[i], old.policies[i], old.values[i])
+            del old
+        if draw_size != self.draw_size:
+            old = self._draws
+            self.draw_size = draw_size
+            self._draws = ReplayBuffer(max_size=draw_size)
+            start = max(0, len(old) - draw_size)
+            for i in range(start, len(old)):
+                self._draws.push(old.planes[i], old.policies[i], old.values[i])
+            del old
+        gc.collect()
+
     def clear_seeds(self):
         """Remove all seed positions, freeing the partition for self-play data."""
         n = len(self._seeds)
