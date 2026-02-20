@@ -530,6 +530,7 @@ def play_selfplay_game(mcts_engine: MCTS,
 
 
 def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
+                       cpuct: float = 1.5,
                        temperature_threshold: int = 30,
                        dirichlet_alpha: float = 0.3,
                        dirichlet_epsilon: float = 0.25,
@@ -542,6 +543,7 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
         network: The neural network for evaluation.
         num_games: Number of games to play.
         num_simulations: MCTS simulations per move.
+        cpuct: PUCT exploration constant.
         temperature_threshold: Move number after which temperature drops.
         dirichlet_alpha: Dirichlet noise concentration parameter.
         dirichlet_epsilon: Fraction of Dirichlet noise to blend with policy.
@@ -555,6 +557,7 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
     """
     all_examples = []
     mcts = MCTS(network, num_simulations=num_simulations,
+                cpuct=cpuct,
                 dirichlet_alpha=dirichlet_alpha,
                 dirichlet_epsilon=dirichlet_epsilon,
                 device=device)
@@ -578,7 +581,7 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
     random_mcts_by_sims: dict[int, MCTS] = {}
     if num_random_games > 0:
         for s in sim_levels:
-            random_mcts_by_sims[s] = MCTS(None, num_simulations=s, device=device)
+            random_mcts_by_sims[s] = MCTS(None, num_simulations=s, cpuct=cpuct, device=device)
 
     for game_idx in range(num_games):
         if game_idx < num_random_games:
@@ -811,6 +814,7 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
 
 
 def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 200,
+                                 cpuct: float = 1.5,
                                  temperature_threshold: int = 30,
                                  dirichlet_alpha: float = 0.3,
                                  dirichlet_epsilon: float = 0.25,
@@ -865,6 +869,7 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                      f"sims={num_simulations})")
 
     nn_mcts = MCTS(network, num_simulations=num_simulations,
+                   cpuct=cpuct,
                    dirichlet_alpha=dirichlet_alpha,
                    dirichlet_epsilon=dirichlet_epsilon,
                    device=device)
@@ -873,7 +878,7 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
     random_mcts_by_sims: dict[int, MCTS] = {}
     if num_random_games > 0:
         for s in sim_levels:
-            random_mcts_by_sims[s] = MCTS(None, num_simulations=s, device=device)
+            random_mcts_by_sims[s] = MCTS(None, num_simulations=s, cpuct=cpuct, device=device)
     random_mcts = next(iter(random_mcts_by_sims.values()), None)
 
     games_launched = 0
@@ -951,6 +956,7 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
 
 
 def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 200,
+                               cpuct: float = 1.5,
                                temperature_threshold: int = 30,
                                dirichlet_alpha: float = 0.3,
                                dirichlet_epsilon: float = 0.25,
@@ -995,7 +1001,7 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
         "dirichlet_alpha": dirichlet_alpha,
         "dirichlet_epsilon": dirichlet_epsilon,
         "draw_value_target": draw_value_target,
-        "cpuct": 1.5,
+        "cpuct": cpuct,
     }
     if gumbel_config is not None:
         mcts_config["gumbel_config"] = gumbel_config

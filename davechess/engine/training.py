@@ -110,16 +110,15 @@ def adaptive_simulations(elo: float, min_sims: int = 2, max_sims: int = 200,
     return max(min_sims, min(max_sims, int(round(sims))))
 
 
-def win_rate_to_elo_diff(win_rate: float) -> float:
+def win_rate_to_elo_diff(win_rate: float, max_abs_diff: float = 400.0) -> float:
     """Convert a win rate to an ELO difference.
 
     ELO_diff = -400 * log10(1/win_rate - 1)
     """
-    if win_rate <= 0.0:
-        return -400.0
-    if win_rate >= 1.0:
-        return 400.0
-    return -400.0 * math.log10(1.0 / win_rate - 1.0)
+    # Keep mapping monotonic while avoiding infinities at 0/1.
+    wr = float(max(1e-6, min(1.0 - 1e-6, win_rate)))
+    elo_diff = -400.0 * math.log10(1.0 / wr - 1.0)
+    return max(-max_abs_diff, min(max_abs_diff, elo_diff))
 
 
 class MuonSGD:
@@ -857,6 +856,7 @@ class Trainer:
             network=self.network,
             num_games=sp_cfg.get("num_games_per_iteration", 100),
             num_simulations=num_sims,
+            cpuct=float(mcts_cfg.get("cpuct", 1.5)),
             temperature_threshold=mcts_cfg.get("temperature_threshold", 30),
             dirichlet_alpha=mcts_cfg.get("dirichlet_alpha", 0.3),
             dirichlet_epsilon=mcts_cfg.get("dirichlet_epsilon", 0.25),
@@ -1111,12 +1111,21 @@ class Trainer:
                         f"nn_sims={elo_results['nn_sims']}, mctslite_sims={elo_results['mctslite_sims']})")
 
             # Clear seed partition once model is strong enough to self-improve
-            seed_elo_threshold = float(train_cfg.get("seed_removal_elo", 1000))
+            seed_elo_threshold = float(train_cfg.get("seed_removal_elo", 650))
+            max_reachable_probe_elo = 300.0 + win_rate_to_elo_diff(1.0)
+            effective_seed_elo_threshold = min(seed_elo_threshold, max_reachable_probe_elo)
+            if seed_elo_threshold > max_reachable_probe_elo:
+                logger.warning(
+                    "seed_removal_elo %.0f exceeds probe ceiling %.0f; using %.0f",
+                    seed_elo_threshold,
+                    max_reachable_probe_elo,
+                    effective_seed_elo_threshold,
+                )
             parts = self.replay_buffer.partition_sizes()
-            if self.elo_estimate >= seed_elo_threshold and parts["seeds"] > 0:
+            if self.elo_estimate >= effective_seed_elo_threshold and parts["seeds"] > 0:
                 n_cleared = self.replay_buffer.clear_seeds()
                 logger.info(f"Cleared {n_cleared} seed positions (ELO {self.elo_estimate:.0f} "
-                            f">= threshold {seed_elo_threshold:.0f})")
+                            f">= threshold {effective_seed_elo_threshold:.0f})")
 
             if self.use_wandb:
                 elo_metrics = {

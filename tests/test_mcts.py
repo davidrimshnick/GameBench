@@ -359,3 +359,58 @@ class TestGumbelActionSelection:
 
         assert move == legal_moves[0]
 
+
+class TestTrainingConfigPassThrough:
+    def test_selfplay_batch_forwards_cpuct(self, monkeypatch):
+        """run_selfplay_batch should forward cpuct into MCTS constructor."""
+        from davechess.engine import selfplay as sp
+
+        created = []
+
+        class DummyMCTS:
+            def __init__(self, *args, **kwargs):
+                created.append(kwargs)
+
+        monkeypatch.setattr(sp, "MCTS", DummyMCTS)
+
+        examples, stats = sp.run_selfplay_batch(
+            network=None, num_games=0, num_simulations=5, cpuct=2.75,
+        )
+
+        assert examples == []
+        assert stats["draws"] == 0
+        assert created[0]["cpuct"] == 2.75
+
+    def test_selfplay_batch_parallel_forwards_cpuct(self, monkeypatch):
+        """run_selfplay_batch_parallel should forward cpuct into MCTS constructor."""
+        from davechess.engine import selfplay as sp
+
+        created = []
+
+        class DummyMCTS:
+            def __init__(self, *args, **kwargs):
+                created.append(kwargs)
+
+        monkeypatch.setattr(sp, "MCTS", DummyMCTS)
+
+        examples, stats = sp.run_selfplay_batch_parallel(
+            network=None, num_games=0, num_simulations=5, cpuct=3.25, parallel_games=2,
+        )
+
+        assert examples == []
+        assert stats["draws"] == 0
+        assert created[0]["cpuct"] == 3.25
+
+
+class TestEloMapping:
+    def test_win_rate_to_elo_diff_monotonic_at_top_end(self):
+        """A perfect score should not map below near-perfect scores."""
+        from davechess.engine.training import win_rate_to_elo_diff
+
+        perfect = win_rate_to_elo_diff(1.0)
+        near_perfect = win_rate_to_elo_diff((5.0 + 0.5) / 6.0)
+        even = win_rate_to_elo_diff(0.5)
+        zero = win_rate_to_elo_diff(0.0)
+
+        assert zero <= even <= near_perfect <= perfect
+        assert perfect <= 400.0
