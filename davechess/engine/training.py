@@ -132,17 +132,26 @@ class MuonSGD:
     def __init__(self, network: nn.Module, muon_lr: float = 0.02,
                  muon_momentum: float = 0.95, sgd_lr: float = 0.001,
                  sgd_momentum: float = 0.9, weight_decay: float = 1e-4):
-        # Split parameters: conv weights (ndim >= 2, not BN) → Muon, rest → SGD
+        # Split parameters: ResNet trunk conv weights → Muon, everything else → SGD
+        # Muon's Newton-Schulz orthogonalization is designed for intermediate conv layers.
+        # It MUST NOT be applied to classification heads (policy_fc, value_fc) because
+        # orthogonalizing those gradients destroys the per-class learning signal.
         muon_params = []
         sgd_params = []
         for name, param in network.named_parameters():
             if not param.requires_grad:
                 continue
-            # BatchNorm params, biases, and 1D params → SGD
-            if "bn" in name or "bias" in name or param.ndim < 2:
-                sgd_params.append(param)
-            else:
+            # Only trunk conv weights get Muon — everything else to SGD
+            is_trunk_conv = (param.ndim >= 2
+                             and "bn" not in name
+                             and "bias" not in name
+                             and "fc" not in name
+                             and "policy" not in name
+                             and "value" not in name)
+            if is_trunk_conv:
                 muon_params.append(param)
+            else:
+                sgd_params.append(param)
 
         self.muon_params = muon_params
         self.muon_lr = muon_lr
@@ -495,9 +504,13 @@ class Trainer:
                         torch.isinf(p.grad).any() or torch.isnan(p.grad).any()
                         for p in self.optimizer.muon_params if p.grad is not None
                     )
-                    if not found_inf:
+                    if found_inf:
+                        # Manually back off scale to prevent infinite overflow loop
+                        # (scaler.update() won't detect Muon overflows since we bypass scaler.step())
+                        self.scaler.update(new_scale=self.scaler.get_scale() * self.scaler.get_backoff_factor())
+                    else:
                         self.optimizer.step()
-                self.scaler.update()
+                        self.scaler.update()
             else:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
