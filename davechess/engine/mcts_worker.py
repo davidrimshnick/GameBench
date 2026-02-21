@@ -143,6 +143,7 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                 num_simulations=mcts_config["num_simulations"],
                 max_num_considered_actions=gumbel_config.get(
                     "max_num_considered_actions", 16),
+                cpuct=mcts_config.get("cpuct", 1.5),
                 gumbel_scale=gumbel_config.get("gumbel_scale", 1.0),
                 maxvisit_init=gumbel_config.get("maxvisit_init", 50.0),
                 value_scale=gumbel_config.get("value_scale", 0.1),

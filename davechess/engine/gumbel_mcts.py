@@ -8,6 +8,10 @@ Key differences from standard AlphaZero MCTS:
   - Policy target = softmax(logits + sigma(completed_q)), not visit counts
   - Guaranteed policy improvement even with very few simulations
 
+Each simulation does full MCTS tree traversal (PUCT select → expand →
+evaluate → backpropagate) within the selected action's subtree.
+Sequential Halving only controls which ROOT action gets the next sim.
+
 Reference: https://openreview.net/forum?id=bERaNdoegnO
 Reference impl: https://github.com/google-deepmind/mctx
 """
@@ -23,6 +27,7 @@ from davechess.game.rules import generate_legal_moves, apply_move_fast
 from davechess.engine.network import (
     state_to_planes, move_to_policy_index, POLICY_SIZE,
 )
+from davechess.engine.mcts import MCTSNode
 
 try:
     import torch
@@ -94,20 +99,65 @@ def _qtransform(qvalues: np.ndarray, visit_counts: np.ndarray,
     return scale * normalized_q
 
 
-class GumbelMCTS:
-    """Gumbel AlphaZero MCTS with Sequential Halving.
+def _select_gumbel_action(top_k_indices, visit_counts, gumbel, logits,
+                           sigma_q, considered_visit):
+    """Select root action via Gumbel + Sequential Halving scoring."""
+    best_score = -np.inf
+    best_action = -1
+    for a in top_k_indices:
+        if visit_counts[a] == considered_visit:
+            s = gumbel[a] + logits[a] + sigma_q[a]
+            if s > best_score:
+                best_score = s
+                best_action = a
 
-    Args:
-        network: Neural network for evaluation (policy logits + value).
-        num_simulations: Total simulation budget per move.
-        max_num_considered_actions: Top-k actions to consider (k in paper).
-            Should be <= num_simulations. Paper uses 16 for Go.
-        cpuct: PUCT exploration constant (used for non-root tree traversal).
-        gumbel_scale: Scale for Gumbel noise (default 1.0).
-        maxvisit_init: Q-transform parameter (default 50.0).
-        value_scale: Q-transform parameter (default 0.1).
-        temperature: Temperature for action selection (1.0 = sample, 0 = greedy).
-        device: Torch device string.
+    if best_action == -1:
+        # No action matches — pick least-visited among top-k
+        min_v = visit_counts[top_k_indices].min()
+        for a in top_k_indices:
+            if visit_counts[a] == min_v:
+                s = gumbel[a] + logits[a] + sigma_q[a]
+                if s > best_score:
+                    best_score = s
+                    best_action = a
+
+    if best_action == -1:
+        best_action = top_k_indices[0]
+
+    return best_action
+
+
+def _puct_select_leaf(subtree_root: MCTSNode, cpuct: float) -> MCTSNode:
+    """PUCT tree traversal from subtree root to an unexpanded leaf."""
+    node = subtree_root
+    while node.is_expanded and node.children:
+        node = node.select_child(cpuct)
+    node.ensure_state()
+    return node
+
+
+def _terminal_value(state: GameState, root_player) -> float:
+    """Value of a terminal state from root_player's perspective."""
+    if state.winner is not None:
+        return 1.0 if state.winner == root_player else -1.0
+    return 0.0
+
+
+def _terminal_backprop_value(node: MCTSNode) -> float:
+    """Value for backpropagating a terminal node (from parent's perspective)."""
+    if node.state.winner is not None:
+        parent_player = (node.parent.state.current_player
+                         if node.parent else node.state.current_player)
+        return 1.0 if node.state.winner == parent_player else -1.0
+    return 0.0
+
+
+class GumbelMCTS:
+    """Gumbel AlphaZero MCTS with Sequential Halving and deep tree search.
+
+    Each simulation: Sequential Halving picks root action → full PUCT tree
+    search within that action's subtree → NN evaluation at leaf →
+    backpropagation through subtree.
     """
 
     def __init__(self, network, num_simulations: int = 50,
@@ -161,7 +211,6 @@ class GumbelMCTS:
             raise ValueError("No legal moves")
 
         if len(legal_moves) == 1:
-            # Only one legal move — skip search
             idx = move_to_policy_index(legal_moves[0])
             policy_target = {idx: 1.0}
             return legal_moves[0], {
@@ -173,47 +222,30 @@ class GumbelMCTS:
         root_state = state.clone()
         policy_probs, raw_logits, root_value = self._evaluate(root_state)
 
-        # Extract logits and priors for legal moves only
+        # Extract logits for legal moves only
         num_actions = len(legal_moves)
         move_indices = [move_to_policy_index(m) for m in legal_moves]
         logits = np.array([raw_logits[idx] for idx in move_indices], dtype=np.float64)
-        # Normalize logits (subtract max for numerical stability)
         logits = logits - logits.max()
 
-        # Initialize per-action tracking
+        # Per-action tracking
         visit_counts = np.zeros(num_actions, dtype=np.int32)
         total_values = np.zeros(num_actions, dtype=np.float64)
-        # Children states (lazily created)
-        child_states: list[Optional[GameState]] = [None] * num_actions
-        # Children are expanded (have been evaluated by NN)
-        child_expanded: list[bool] = [False] * num_actions
-        # Child policies and values (filled on expansion)
-        child_policies: list[Optional[np.ndarray]] = [None] * num_actions
-        child_values: list[float] = [0.0] * num_actions
+        subtrees: list[Optional[MCTSNode]] = [None] * num_actions
 
-        # Sample Gumbel noise for root actions
+        # Sample Gumbel noise and select top-k
         gumbel = self.gumbel_scale * np.random.gumbel(size=num_actions)
-
-        # Determine k (number of considered actions)
         k = min(self.max_num_considered_actions, num_actions)
-
-        # Get Sequential Halving schedule
-        seq_schedule = _get_sequence_of_considered_visits(k, self.num_simulations)
-
-        # Phase 1: Select top-k actions using Gumbel-Top-k
-        # Score = gumbel + logits (no Q-values yet, all unvisited)
         scores = gumbel + logits
-        # Get indices of top-k actions
         if k < num_actions:
             top_k_indices = np.argpartition(scores, -k)[-k:]
         else:
             top_k_indices = np.arange(num_actions)
 
-        # Phase 2: Sequential Halving — allocate simulations
+        seq_schedule = _get_sequence_of_considered_visits(k, self.num_simulations)
+
         for sim_idx in range(self.num_simulations):
             considered_visit = seq_schedule[sim_idx]
-
-            # Compute completed Q-values for scoring
             qvalues = np.where(
                 visit_counts > 0,
                 total_values / np.maximum(visit_counts, 1),
@@ -224,63 +256,48 @@ class GumbelMCTS:
                 self.maxvisit_init, self.value_scale,
             )
 
-            # Score considered actions: gumbel + logits + sigma(q)
-            # Only consider actions in top_k whose visit_count == considered_visit
-            best_score = -np.inf
-            best_action = -1
-            for a in top_k_indices:
-                if visit_counts[a] == considered_visit:
-                    s = gumbel[a] + logits[a] + sigma_q[a]
-                    if s > best_score:
-                        best_score = s
-                        best_action = a
+            a = _select_gumbel_action(top_k_indices, visit_counts, gumbel,
+                                       logits, sigma_q, considered_visit)
 
-            if best_action == -1:
-                # No action matches — pick least-visited among top-k
-                min_v = visit_counts[top_k_indices].min()
-                for a in top_k_indices:
-                    if visit_counts[a] == min_v:
-                        s = gumbel[a] + logits[a] + sigma_q[a]
-                        if s > best_score:
-                            best_score = s
-                            best_action = a
+            if subtrees[a] is None:
+                # First visit: create child state
+                child_state = root_state.clone()
+                apply_move_fast(child_state, legal_moves[a])
 
-            if best_action == -1:
-                best_action = top_k_indices[0]
-
-            # Simulate: expand child if needed, then get value
-            a = best_action
-            if child_states[a] is None:
-                child_states[a] = root_state.clone()
-                apply_move_fast(child_states[a], legal_moves[a])
-
-            if child_states[a].done:
-                # Terminal node
-                if child_states[a].winner is not None:
-                    # Value from root's perspective
-                    v = 1.0 if child_states[a].winner == root_state.current_player else -1.0
+                if child_state.done:
+                    v = _terminal_value(child_state, root_state.current_player)
+                    visit_counts[a] += 1
+                    total_values[a] += v
                 else:
-                    v = 0.0  # draw
-            elif not child_expanded[a]:
-                # First visit — evaluate with NN
-                _, child_logits, child_val = self._evaluate(child_states[a])
-                child_expanded[a] = True
-                child_policies[a] = child_logits
-                child_values[a] = child_val
-                # Value is from child's current_player perspective
-                # We need it from root's perspective (opponent), so negate
-                v = -child_val
+                    # Evaluate and create subtree root
+                    policy, _, child_val = self._evaluate(child_state)
+                    subtree_root = MCTSNode(state=child_state)
+                    subtree_root.expand(policy)
+                    subtrees[a] = subtree_root
+                    # child_val from child's perspective; negate for root
+                    visit_counts[a] += 1
+                    total_values[a] += -child_val
             else:
-                # Already expanded — do a deeper PUCT search from this child
-                v = self._subtree_search(child_states[a], child_policies[a],
-                                         child_values[a])
-                v = -v  # Negate to root's perspective
+                # Re-visit: PUCT simulation in subtree
+                subtree = subtrees[a]
+                old_total = subtree.total_value
 
-            # Update stats
-            visit_counts[a] += 1
-            total_values[a] += v
+                leaf = _puct_select_leaf(subtree, self.cpuct)
 
-        # Compute improved policy target: softmax(logits + sigma(completed_q))
+                if leaf.state.done:
+                    v = _terminal_backprop_value(leaf)
+                    leaf.backpropagate(v)
+                else:
+                    policy, _, value = self._evaluate(leaf.state)
+                    leaf.expand(policy)
+                    leaf.backpropagate(-value)
+
+                # Delta at subtree root = value from root's perspective
+                delta = subtree.total_value - old_total
+                visit_counts[a] += 1
+                total_values[a] += delta
+
+        # Compute improved policy target
         qvalues = np.where(
             visit_counts > 0,
             total_values / np.maximum(visit_counts, 1),
@@ -291,23 +308,16 @@ class GumbelMCTS:
             self.maxvisit_init, self.value_scale,
         )
         improved_logits = logits + sigma_q
-        # Softmax
         improved_logits = improved_logits - improved_logits.max()
         improved_policy = np.exp(improved_logits)
         improved_policy = improved_policy / improved_policy.sum()
 
-        # Build policy target dict
         policy_target = {move_indices[i]: float(improved_policy[i])
                          for i in range(num_actions)}
 
-        # Select action to play.
-        # Gumbel noise is only for simulation-time exploration / ranking. The
-        # executed move should come from the improved policy itself.
-        final_scores = improved_logits
         if self.temperature == 0:
-            selected_idx = np.argmax(final_scores)
+            selected_idx = np.argmax(improved_logits)
         else:
-            # Use improved policy for sampling
             selected_idx = np.random.choice(num_actions, p=improved_policy)
 
         root_q = np.sum(total_values) / max(np.sum(visit_counts), 1)
@@ -322,55 +332,13 @@ class GumbelMCTS:
         """Drop-in compatible interface with MCTS.get_move()."""
         return self.search(state)
 
-    def _subtree_search(self, state: GameState, parent_logits: np.ndarray,
-                        parent_value: float) -> float:
-        """Do a single PUCT-style deeper search from an already-expanded child.
-
-        This provides better Q-value estimates for repeatedly-visited children.
-        Returns value from the state's current_player perspective.
-        """
-        legal_moves = generate_legal_moves(state)
-        if not legal_moves or state.done:
-            if state.winner is not None:
-                return 1.0 if state.winner == state.current_player else -1.0
-            return 0.0
-
-        # Use the child's policy to pick the most promising move via PUCT
-        move_indices = [move_to_policy_index(m) for m in legal_moves]
-        priors = np.array([max(parent_logits[idx], 0.0) for idx in move_indices])
-        prior_sum = priors.sum()
-        if prior_sum > 0:
-            priors = priors / prior_sum
-        else:
-            priors = np.ones(len(legal_moves)) / len(legal_moves)
-
-        # Pick the highest-prior action (simple one-step lookahead)
-        best = np.argmax(priors)
-        child_state = state.clone()
-        apply_move_fast(child_state, legal_moves[best])
-
-        if child_state.done:
-            if child_state.winner is not None:
-                return 1.0 if child_state.winner == state.current_player else -1.0
-            return 0.0
-
-        # Evaluate the grandchild with NN
-        _, _, value = self._evaluate(child_state)
-        # value is from grandchild's current_player perspective
-        # grandchild's current_player = state.current_player (same as parent of this fn)
-        # so we negate to get value from state.current_player's perspective... wait
-        # Actually: child_state has current_player = opponent of state.current_player
-        # After apply_move_fast, it's the opponent's turn
-        # value is from child_state.current_player (opponent) perspective
-        # We want it from state.current_player perspective, so negate
-        return -value
-
 
 class GumbelBatchedSearch:
     """Batched Gumbel MCTS for multiple simultaneous games.
 
     Runs Sequential Halving across all games, batching NN evaluations
-    for GPU efficiency.
+    for GPU efficiency. Each simulation does full PUCT tree search within
+    the selected action's subtree (not shallow 1-2 ply evaluation).
 
     Args:
         evaluator: Optional callable replacing _batch_evaluate for remote GPU.
@@ -382,6 +350,7 @@ class GumbelBatchedSearch:
 
     def __init__(self, network, num_simulations: int = 50,
                  max_num_considered_actions: int = 16,
+                 cpuct: float = 1.5,
                  gumbel_scale: float = 1.0,
                  maxvisit_init: float = 50.0,
                  value_scale: float = 0.1,
@@ -391,42 +360,13 @@ class GumbelBatchedSearch:
         self.network = network
         self.num_simulations = num_simulations
         self.max_num_considered_actions = max_num_considered_actions
+        self.cpuct = cpuct
         self.gumbel_scale = gumbel_scale
         self.maxvisit_init = maxvisit_init
         self.value_scale = value_scale
         self.temperature = temperature
         self.device = device
         self._evaluator = evaluator
-
-    @staticmethod
-    def _subtree_lookahead(child_state: GameState,
-                           child_logits: np.ndarray) -> Optional[GameState]:
-        """Pick the best-policy move from child_state and return the grandchild.
-
-        Returns None if child_state is terminal or has no legal moves.
-        The grandchild state will be batch-evaluated by the caller.
-        """
-        if child_state.done:
-            return None
-        legal_moves = generate_legal_moves(child_state)
-        if not legal_moves:
-            return None
-
-        # Use child's policy logits to pick the most promising move
-        move_indices = [move_to_policy_index(m) for m in legal_moves]
-        priors = np.array([child_logits[idx] for idx in move_indices],
-                          dtype=np.float64)
-        # Softmax to get probabilities
-        priors = priors - priors.max()
-        priors = np.exp(priors)
-        priors = priors / priors.sum()
-
-        # Stochastic selection weighted by policy (not pure argmax) to add
-        # variety across re-visits to the same child
-        best = np.random.choice(len(legal_moves), p=priors)
-        grandchild = child_state.clone()
-        apply_move_fast(grandchild, legal_moves[best])
-        return grandchild
 
     def _batch_evaluate(self, states: list[GameState]) -> list[tuple[np.ndarray, np.ndarray, float]]:
         """Batch evaluate states. Returns list of (policy, logits, value)."""
@@ -463,6 +403,10 @@ class GumbelBatchedSearch:
     def batched_search(self, states: list[GameState],
                        temperatures: list[float]) -> list[tuple[Move, dict]]:
         """Run Gumbel MCTS on multiple states with batched NN evaluation.
+
+        Uses proper deep tree search: Sequential Halving selects which root
+        action gets the next simulation, then each simulation does full PUCT
+        tree traversal within that action's MCTSNode subtree.
 
         Args:
             states: List of game states to search from.
@@ -515,24 +459,22 @@ class GumbelBatchedSearch:
                 "seq_schedule": seq_schedule,
                 "visit_counts": np.zeros(num_actions, dtype=np.int32),
                 "total_values": np.zeros(num_actions, dtype=np.float64),
-                "child_states": [None] * num_actions,
-                "child_expanded": [False] * num_actions,
-                "child_values": [0.0] * num_actions,
-                "child_logits": [None] * num_actions,  # Store child policy for subtree search
+                "subtrees": [None] * num_actions,
                 "temperature": temperatures[i],
             })
 
         # Run simulations in lockstep across all games
         for sim_idx in range(self.num_simulations):
-            # For each game, select action to simulate
-            to_evaluate: list[tuple[int, int, GameState]] = []  # (game_idx, action_idx, child_state)
-            to_evaluate_subtree: list[tuple[int, int, GameState]] = []  # (game_idx, action_idx, grandchild_state)
+            # Phase A: select actions and traverse subtrees to find leaves
+            new_roots = []     # (gi, a, child_state) — first visit
+            tree_leaves = []   # (gi, a, old_total, leaf_node) — PUCT leaf
 
             for gi in range(n):
                 g = games[gi]
                 if g is None:
                     continue
 
+                # Sequential Halving: select root action
                 considered_visit = g["seq_schedule"][sim_idx]
                 qvalues = np.where(
                     g["visit_counts"] > 0,
@@ -543,104 +485,75 @@ class GumbelBatchedSearch:
                     qvalues, g["visit_counts"], g["root_value"],
                     self.maxvisit_init, self.value_scale,
                 )
+                a = _select_gumbel_action(
+                    g["top_k"], g["visit_counts"], g["gumbel"],
+                    g["logits"], sigma_q, considered_visit,
+                )
 
-                # Select action
-                best_score = -np.inf
-                best_action = -1
-                for a in g["top_k"]:
-                    if g["visit_counts"][a] == considered_visit:
-                        s = g["gumbel"][a] + g["logits"][a] + sigma_q[a]
-                        if s > best_score:
-                            best_score = s
-                            best_action = a
+                if g["subtrees"][a] is None:
+                    # First visit: create child state
+                    child_state = g["state"].clone()
+                    apply_move_fast(child_state, g["legal_moves"][a])
 
-                if best_action == -1:
-                    min_v = g["visit_counts"][g["top_k"]].min()
-                    for a in g["top_k"]:
-                        if g["visit_counts"][a] == min_v:
-                            s = g["gumbel"][a] + g["logits"][a] + sigma_q[a]
-                            if s > best_score:
-                                best_score = s
-                                best_action = a
-
-                if best_action == -1:
-                    best_action = g["top_k"][0]
-
-                a = best_action
-
-                # Create child state if needed
-                if g["child_states"][a] is None:
-                    g["child_states"][a] = g["state"].clone()
-                    apply_move_fast(g["child_states"][a], g["legal_moves"][a])
-
-                child_state = g["child_states"][a]
-
-                if child_state.done:
-                    # Terminal — update immediately
-                    if child_state.winner is not None:
-                        v = 1.0 if child_state.winner == g["state"].current_player else -1.0
+                    if child_state.done:
+                        v = _terminal_value(child_state, g["state"].current_player)
+                        g["visit_counts"][a] += 1
+                        g["total_values"][a] += v
                     else:
-                        v = 0.0
-                    g["visit_counts"][a] += 1
-                    g["total_values"][a] += v
-                elif not g["child_expanded"][a]:
-                    # First visit — need NN evaluation
-                    to_evaluate.append((gi, a, child_state))
+                        new_roots.append((gi, a, child_state))
                 else:
-                    # Re-visit: do 1-ply subtree search from this child.
-                    # Pick a move by child policy, get grandchild state.
-                    grandchild = self._subtree_lookahead(
-                        child_state, g["child_logits"][a])
-                    if grandchild is None:
-                        # Child is terminal or has no legal moves — reuse stored value
-                        v = -g["child_values"][a]
+                    # Re-visit: PUCT simulation in existing subtree
+                    subtree = g["subtrees"][a]
+                    old_total = subtree.total_value
+
+                    leaf = _puct_select_leaf(subtree, self.cpuct)
+
+                    if leaf.state.done:
+                        v = _terminal_backprop_value(leaf)
+                        leaf.backpropagate(v)
+                        delta = subtree.total_value - old_total
                         g["visit_counts"][a] += 1
-                        g["total_values"][a] += v
-                    elif grandchild.done:
-                        # Grandchild is terminal — resolve immediately
-                        if grandchild.winner is not None:
-                            v = 1.0 if grandchild.winner == g["state"].current_player else -1.0
-                        else:
-                            v = 0.0
+                        g["total_values"][a] += delta
+                    elif leaf.is_expanded and not leaf.children:
+                        # Stalemate: no legal moves
+                        leaf.backpropagate(0.0)
+                        delta = subtree.total_value - old_total
                         g["visit_counts"][a] += 1
-                        g["total_values"][a] += v
+                        g["total_values"][a] += delta
                     else:
-                        # Queue grandchild for batched NN eval
-                        to_evaluate_subtree.append((gi, a, grandchild))
+                        tree_leaves.append((gi, a, old_total, leaf))
 
-            # Batch evaluate all pending states (first visits + subtree grandchildren)
-            all_eval_states = []
-            first_visit_count = 0
-            if to_evaluate:
-                all_eval_states.extend(s for _, _, s in to_evaluate)
-                first_visit_count = len(to_evaluate)
-            if to_evaluate_subtree:
-                all_eval_states.extend(s for _, _, s in to_evaluate_subtree)
+            # Phase B: batch evaluate all pending states
+            eval_states = []
+            for gi, a, child_state in new_roots:
+                eval_states.append(child_state)
+            n_new = len(new_roots)
+            for gi, a, old_total, leaf in tree_leaves:
+                eval_states.append(leaf.state)
 
-            if all_eval_states:
-                all_results = self._batch_evaluate(all_eval_states)
+            if eval_states:
+                all_results = self._batch_evaluate(eval_states)
 
-                # Process first-visit expansions
-                for idx, (gi, a, _) in enumerate(to_evaluate):
-                    _, child_logits, child_val = all_results[idx]
+                # Process new subtree roots (first visits)
+                for idx, (gi, a, child_state) in enumerate(new_roots):
+                    policy, _, value = all_results[idx]
                     g = games[gi]
-                    g["child_expanded"][a] = True
-                    g["child_values"][a] = child_val
-                    g["child_logits"][a] = child_logits
-                    v = -child_val  # Negate to root's perspective
+                    subtree_root = MCTSNode(state=child_state)
+                    subtree_root.expand(policy)
+                    g["subtrees"][a] = subtree_root
+                    # value from child's perspective → negate for root
                     g["visit_counts"][a] += 1
-                    g["total_values"][a] += v
+                    g["total_values"][a] += -value
 
-                # Process subtree re-visit evaluations
-                for idx, (gi, a, grandchild) in enumerate(to_evaluate_subtree):
-                    _, _, gc_val = all_results[first_visit_count + idx]
+                # Process subtree PUCT leaves (re-visits)
+                for idx, (gi, a, old_total, leaf) in enumerate(tree_leaves):
+                    policy, _, value = all_results[n_new + idx]
                     g = games[gi]
-                    # gc_val is from grandchild.current_player's perspective.
-                    # Path: root -> child (opponent) -> grandchild (root's turn).
-                    # grandchild.current_player == root.current_player.
-                    # gc_val is already from root's perspective.
+                    leaf.expand(policy)
+                    leaf.backpropagate(-value)
+                    delta = g["subtrees"][a].total_value - old_total
                     g["visit_counts"][a] += 1
-                    g["total_values"][a] += gc_val
+                    g["total_values"][a] += delta
 
         # Collect results
         results = []
@@ -668,10 +581,9 @@ class GumbelBatchedSearch:
             policy_target = {g["move_indices"][i]: float(improved_policy[i])
                              for i in range(g["num_actions"])}
 
-            # Select action from improved policy (not gumbel-perturbed scores).
-            final_scores = improved_logits
+            # Select action from improved policy
             if g["temperature"] == 0 or g["temperature"] < 0.2:
-                selected_idx = np.argmax(final_scores)
+                selected_idx = np.argmax(improved_logits)
             else:
                 selected_idx = np.random.choice(g["num_actions"], p=improved_policy)
 

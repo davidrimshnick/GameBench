@@ -16,7 +16,7 @@ mcts:
   temperature_threshold: 30    # Exploit in middlegame/endgame where tactics matter
 
 gumbel:
-  enabled: true
+  enabled: true                    # Fixed: now does proper deep tree search via MCTSNode subtrees
   max_num_considered_actions: 16   # Top-k actions for Sequential Halving
   gumbel_scale: 1.0               # Scale of Gumbel noise
   maxvisit_init: 50.0             # Q-transform: baseline visit scale

@@ -864,6 +864,7 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
             network=network,
             num_simulations=num_simulations,
             max_num_considered_actions=gumbel_config.get("max_num_considered_actions", 16),
+            cpuct=cpuct,
             gumbel_scale=gumbel_config.get("gumbel_scale", 1.0),
             maxvisit_init=gumbel_config.get("maxvisit_init", 50.0),
             value_scale=gumbel_config.get("value_scale", 0.1),
