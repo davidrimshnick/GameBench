@@ -496,8 +496,12 @@ class Trainer:
                     for p in self.optimizer.muon_params:
                         if p.grad is not None:
                             p.grad.mul_(inv_scale)
-                    # Clip gradients before inf/nan check
-                    torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=1.0)
+                    # Only clip SGD params — Muon params get orthogonalized by
+                    # Newton-Schulz anyway, and including them inflates the norm
+                    # which crushes the SGD head gradients (4x-10x reduction).
+                    sgd_params = [p for pg in self.optimizer.sgd.param_groups
+                                  for p in pg['params'] if p.grad is not None]
+                    torch.nn.utils.clip_grad_norm_(sgd_params, max_norm=1.0)
                     # Check for inf/nan in ALL grads (Muon + SGD heads)
                     found_inf = any(
                         torch.isinf(p.grad).any() or torch.isnan(p.grad).any()

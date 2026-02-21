@@ -603,7 +603,11 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
             game_type = "selfplay"
 
         game_len = game_record["length"]
-        all_examples.extend(examples)
+        # Only add self-play examples to buffer — vs-random data is heavily
+        # loss-biased (NN loses most games) which creates pessimistic value head.
+        # vs-random games are still tracked in game_details for monitoring.
+        if game_type != "vs_random":
+            all_examples.extend(examples)
         game_lengths.append(game_len)
 
         winner = game_record["winner"]
@@ -912,7 +916,10 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
             training_data, game_record = _finalize_game(
                 g, draw_value_target=draw_value_target
             )
-            all_examples.extend(training_data)
+            # Only add self-play examples to buffer — vs-random data is heavily
+            # loss-biased (NN loses most games) which creates pessimistic value head.
+            if g.game_type != "vs_random":
+                all_examples.extend(training_data)
             game_lengths.append(game_record["length"])
 
             winner = game_record["winner"]
@@ -1115,7 +1122,10 @@ def _aggregate_multiprocess_results(all_worker_results: dict, num_games: int,
     all_game_results.sort(key=lambda r: r["game_idx"])
 
     for r in all_game_results:
-        all_examples.extend(r["training_data"])
+        # Only add self-play examples to buffer — vs-random data is heavily
+        # loss-biased (NN loses most games) which creates pessimistic value head.
+        if r["game_type"] != "vs_random":
+            all_examples.extend(r["training_data"])
         game_lengths.append(r["game_record"]["length"])
 
         winner = r["game_record"]["winner"]
