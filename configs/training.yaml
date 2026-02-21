@@ -52,9 +52,9 @@ training:
   elo_probe_nn_sims: 800       # AlphaZero-level search for accurate measurement
   adaptive_elo_smoothing: 0.7  # Smooth probe ELO before mapping to adaptive sims
   seed_removal_elo: 650        # Clear seed partition once ELO exceeds this (reachable with current 6-game probes)
-  seed_sample_weight_init: 1.0  # Seed sampling weight at iteration 0 (1.0 = proportional to size)
-  seed_sample_weight_decay: 0.93 # Multiply per iteration (~0.11 by iter 30, seeds fade as self-play improves)
-  seed_sample_weight_min: 0.05  # Floor: seeds never fully vanish (keep checkmate pattern signal)
+  seed_sample_weight_init: 0.0  # DISABLED: seeds have 4:1 White win bias that poisons value head
+  seed_sample_weight_decay: 0.93 # (unused while init=0)
+  seed_sample_weight_min: 0.0   # (unused while init=0)
   max_iterations: 200
 
 paths:

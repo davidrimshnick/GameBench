@@ -1284,9 +1284,13 @@ class Trainer:
                     self.save_best()
             else:
                 self.save_best()  # Save initial model as best
-            # Seed the replay buffer with heuristic games
-            logger.info("Seeding replay buffer with heuristic games")
-            self.seed_buffer(num_games=100)
+            # Seed the replay buffer with heuristic games (skip if seed weight is 0)
+            seed_w_init = float(self.config.get("training", {}).get("seed_sample_weight_init", 1.0))
+            if seed_w_init > 0:
+                logger.info("Seeding replay buffer with heuristic games")
+                self.seed_buffer(num_games=100)
+            else:
+                logger.info("Skipping seed buffer (seed_sample_weight_init=0)")
             # Check for existing buffer to carry over self-play data
             existing_buf = self.checkpoint_dir / "existing_buffer.npz"
             if existing_buf.exists():
