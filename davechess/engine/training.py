@@ -918,6 +918,27 @@ class Trainer:
                 f"other={draw_reason_counts.get('stalemate_or_other', 0)}"
             )
 
+        # Compute vs-random win rate as a cheap per-iteration health metric
+        game_details = sp_stats.get("game_details", [])
+        vr_wins = vr_losses = vr_draws = 0
+        for g in game_details:
+            if g.get("type") != "vs_random":
+                continue
+            w = g["winner"]
+            # NN alternates white/black; determine if NN won
+            nn_white = (g["game"] - 1) % 2 == 0  # game_idx 0,2,4...=white
+            if w == "draw":
+                vr_draws += 1
+            elif (w == "white" and nn_white) or (w == "black" and not nn_white):
+                vr_wins += 1
+            else:
+                vr_losses += 1
+        vr_total = vr_wins + vr_losses + vr_draws
+        if vr_total > 0:
+            vr_score = (vr_wins + 0.5 * vr_draws) / vr_total
+            logger.info(f"Vs-random: W:{vr_wins} L:{vr_losses} D:{vr_draws} "
+                        f"score={vr_score:.1%} ({vr_total} games)")
+
         total_selfplay_games = (
             sp_stats["white_wins"] + sp_stats["black_wins"] + sp_stats["draws"]
         )
@@ -951,6 +972,11 @@ class Trainer:
             "selfplay/white_win_pct": sp_stats["white_win_pct"],
             "selfplay/num_simulations": num_sims,
         }
+        if vr_total > 0:
+            sp_metrics["selfplay/vs_random_wins"] = vr_wins
+            sp_metrics["selfplay/vs_random_losses"] = vr_losses
+            sp_metrics["selfplay/vs_random_draws"] = vr_draws
+            sp_metrics["selfplay/vs_random_score"] = vr_score
         if self.use_wandb:
             _safe_wandb_log(sp_metrics, step=self.training_step)
             # Log per-game details as a table
