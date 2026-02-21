@@ -12,16 +12,19 @@ GameBench is a benchmark measuring how efficiently LLMs learn novel strategic re
 
 ## Current Status (Feb 2026)
 
-**Training in progress on Jetson with Muon optimizer, 128 Gumbel sims, 40 games/iteration. Monitoring on W&B (run: comfy-capybara-84).**
+**Fresh training run started 2026-02-20 on Jetson. W&B run: `smart-microwave-90`. Previous runs were corrupted by Muon optimizer bug (see Known Issues #20).**
 
 What's done:
-- Training pipeline bugs fixed (see Known Issues #15-19)
+- Training pipeline bugs fixed (see Known Issues #15-20)
 - **Switched to pure AlphaZero** — single continuously-updated network, no best/training split, no eval gatekeeper (see Known Issue #19)
-- **Muon optimizer** — Newton-Schulz orthogonalization for conv/hidden weights (99.9% of params), SGD for heads/biases/BN. Single-GPU implementation via `MuonSGD` class in `training.py`.
+- **Muon optimizer (fixed)** — Newton-Schulz orthogonalization for trunk conv weights ONLY (21 params), SGD for all heads/FC/biases/BN (54 params). See Known Issue #20 for the critical bug that was corrupting heads. Single-GPU implementation via `MuonSGD` class in `training.py`.
 - **128 Gumbel MCTS sims** — up from 50, gives meaningful search depth at 30-80 legal moves
-- **40 self-play games per iteration** — doubled from 20 for better data throughput (~5K positions/iter)
+- **40 self-play games per iteration** — doubled from 20 for better data throughput (~4K positions/iter)
 - **MCTSLite ELO probes** — non-gating ELO estimation every 20 iterations against MCTSLite-50, using 800 MCTS sims for the NN (enough depth to find checkmates). Baseline: MCTSLite-50 ≈ 300 ELO. 6 games per probe, 100-move cutoff per game.
-- **Hot-reload config** — `training.yaml` is re-read at the start of each iteration (network architecture preserved). No restart needed to change hyperparameters.
+- **Hot-reload config** — `training.yaml` is re-read at the start of each iteration (network architecture preserved). No restart needed to change hyperparameters, buffer sizes, or optimizer LR.
+- **AMP overflow guard** — checks ALL param grads (Muon + SGD heads) for inf/nan before stepping, with manual GradScaler backoff on Muon overflow
+- **Hot-reload buffer resizing** — `StructuredReplayBuffer.resize()` allows changing decisive/draw partition sizes via config without restart
+- **Hot-reload optimizer LR** — `learning_rate` and `head_lr` changes in training.yaml take effect immediately
 - **Existing buffer carry-over** — place `existing_buffer.npz` in checkpoints/ to inject old replay data into a fresh run (one-shot, auto-deleted after load)
 - Sandbox setup and `agent_cli.py` working
 - GitHub Pages leaderboard at `docs/index.html` (currently has mockup data)
@@ -31,7 +34,7 @@ What's done:
 - `DaveChessNetwork.from_checkpoint()` classmethod auto-infers architecture from weights (no more hardcoded num_res_blocks/num_filters)
 
 What's needed:
-1. **Training in progress** — monitoring on W&B for ELO progression. Early results: policy loss dropping (3.1 → 2.99 over 2 iterations), draw rate decreasing. ~50 min/iteration with 128 sims × 40 games.
+1. **Monitor fresh training run** — W&B run `smart-microwave-90`, started from random init with all fixes. Key question: does policy loss keep declining past 2.0, or does it plateau there too? If it plateaus, the issue is deeper than Muon corruption. First ELO probe at iteration 20 (~5-6 hours in). ~16 min/iteration.
 2. **Run NN-MCTS calibration on Jetson** once training produces a model that consistently beats random MCTS. Run `python scripts/calibrate_opponents.py --checkpoint checkpoints/best.pt`.
 3. **Copy calibration.json to sandbox** and run real agent benchmarks (Claude Code, Codex CLI, Gemini CLI) with NN-MCTS opponents on Jetson GPU using `run_overnight_benchmark.sh`
 4. **Update leaderboard** with real agent results (replace placeholder heuristic-player data)
@@ -189,7 +192,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 6. **Seed Sampling Weight Decay**: Heuristic seed data (40% of the 50K buffer) becomes stale as the NN develops its own style. `StructuredReplayBuffer.sample()` accepts a `seed_weight` parameter that decays exponentially per iteration: `weight = max(min, init * decay^iter)`. Default: init=1.0, decay=0.93, min=0.05. Seeds fade from ~40% to ~5% of training batches by iteration 40. Configured in `training.yaml` under `seed_sample_weight_init/decay/min`.
 
-7. **Muon Optimizer**: `MuonSGD` class splits parameters: conv/hidden weights (ndim >= 2, not BN) use Muon (Newton-Schulz orthogonalization via `zeropower_via_newtonschulz5`), while BN params, biases, and FC heads use standard SGD. Muon LR (0.02) is higher than SGD because orthogonalized updates have unit spectral norm. Requires `pip install muon-optimizer`. Falls back to SGD if not installed.
+7. **Muon Optimizer**: `MuonSGD` class splits parameters into two groups: (1) **Muon group** — trunk conv weights only (21 params, `ndim >= 2` and not BN/bias/FC/policy/value), using Newton-Schulz orthogonalization via `zeropower_via_newtonschulz5`; (2) **SGD group** — all heads (policy_fc, value_fc1/fc2, policy_conv, value_conv), biases, and BN params (54 params). Muon LR (0.02) is higher than SGD head_lr (0.003) because orthogonalized updates have unit spectral norm. **Critical**: Muon must NEVER be applied to classification heads — see Known Issue #20. AMP overflow is checked across ALL param grads before stepping, with manual GradScaler backoff when Muon params overflow.
 
 8. **Hot-Reload Config**: `training.yaml` is re-read at the top of each iteration via `_hot_reload_config()`. Network architecture is preserved (unsafe to change mid-run), all other settings update live. No restart needed to change learning rate, sim count, ELO probe interval, etc.
 
@@ -271,6 +274,9 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 19. **Best/Training Network Split Was AlphaGo Zero, Not AlphaZero**: The codebase used an AlphaGo Zero-style architecture with separate best and training networks, an eval gatekeeper, and promotion logic. Real AlphaZero uses a single continuously-updated network — DeepMind dropped the best/training split because it wastes ~50% of compute on eval games that produce zero training data. The eval gatekeeper also created perverse dynamics: ELO was measured relative to best (not absolute), and combined with draw-counting bugs (#15) and crash inheritance (#16), ELO ratcheted up without real improvement.
    - Solution: Removed `best_network` entirely. Single network self-plays and continuously trains. No eval gatekeeper, no consecutive rejection logic, no promotion. ELO is estimated via periodic MCTSLite probes (every iteration, non-gating). `best.pt` is saved every iteration for benchmark use.
+
+20. **Muon Optimizer Applied to Classification Heads (CRITICAL)**: The original `MuonSGD` param split used `param.ndim >= 2 and "bn" not in name` to select Muon params, which included policy_fc (4288×128), value_fc1 (64×64), value_fc2 (1×64), policy_conv, and value_conv. Newton-Schulz orthogonalization iteratively pushes a matrix's singular values toward 1.0, making gradient rows approximately orthogonal. For trunk conv filters (spatial feature extraction), this acts as a beneficial regularizer. But for classification heads like policy_fc (4288 move logits from 128 features), orthogonalizing means forcing the 128-dim gradient rows for each of 4288 moves to be mutually orthogonal — which is impossible (128 dimensions can't support 4288 orthogonal directions) and destroys the per-move/per-class learning signal. The network appeared to learn (policy loss dropped to ~1.7) but the head weights were incoherent, producing a model that couldn't beat MCTSLite-50 (ELO ≈ 300). Training ran for ~40 iterations with this bug, contaminating the weights to a degree that incremental fixes couldn't recover.
+   - Solution: Restrict Muon to trunk conv weights only via explicit name filtering (`"fc" not in name and "policy" not in name and "value" not in name`). This produces 21 Muon params (trunk convs) and 54 SGD params (everything else). Additional fixes: AMP overflow guard checks all param grads, GradScaler manual backoff on Muon overflow, optimizer LR hot-reload. Required a fresh training restart since old weights were irrecoverably corrupted.
 
 ### Hardware Constraints (Jetson Orin Nano)
 
