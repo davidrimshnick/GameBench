@@ -360,6 +360,22 @@ class TestGumbelActionSelection:
         assert move == legal_moves[0]
 
 
+class TestGumbelConsideredActions:
+    def test_effective_considered_actions_expands_with_budget(self):
+        from davechess.engine.gumbel_mcts import _effective_considered_actions
+
+        # If we can afford one root visit per action, don't hard-prune to max_k.
+        assert _effective_considered_actions(50, 16, 128) == 50
+
+    def test_effective_considered_actions_respects_sim_budget(self):
+        from davechess.engine.gumbel_mcts import _effective_considered_actions
+
+        # Can't cover more actions than total simulations.
+        assert _effective_considered_actions(200, 16, 128) == 128
+        assert _effective_considered_actions(10, 16, 128) == 10
+        assert _effective_considered_actions(200, 0, 32) == 32
+
+
 class TestTrainingConfigPassThrough:
     def test_selfplay_batch_forwards_cpuct(self, monkeypatch):
         """run_selfplay_batch should forward cpuct into MCTS constructor."""

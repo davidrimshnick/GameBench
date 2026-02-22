@@ -70,6 +70,23 @@ def _get_sequence_of_considered_visits(max_k: int, num_simulations: int) -> list
     return sequence[:num_simulations]
 
 
+def _effective_considered_actions(num_actions: int,
+                                  max_num_considered_actions: int,
+                                  num_simulations: int) -> int:
+    """Choose how many root actions Sequential Halving may consider.
+
+    In high-branching games, a fixed small k (e.g., 16) can permanently
+    hide tactical actions as soon as priors become slightly biased. When
+    the simulation budget can cover more actions, expand k accordingly.
+    """
+    if num_actions <= 0:
+        return 0
+
+    sims_cap = min(num_actions, max(1, int(num_simulations)))
+    base_k = max(1, int(max_num_considered_actions))
+    return min(num_actions, max(base_k, sims_cap))
+
+
 def _qtransform(qvalues: np.ndarray, visit_counts: np.ndarray,
                 value_score: float,
                 maxvisit_init: float = 50.0,
@@ -235,7 +252,11 @@ class GumbelMCTS:
 
         # Sample Gumbel noise and select top-k
         gumbel = self.gumbel_scale * np.random.gumbel(size=num_actions)
-        k = min(self.max_num_considered_actions, num_actions)
+        k = _effective_considered_actions(
+            num_actions=num_actions,
+            max_num_considered_actions=self.max_num_considered_actions,
+            num_simulations=self.num_simulations,
+        )
         scores = gumbel + logits
         if k < num_actions:
             top_k_indices = np.argpartition(scores, -k)[-k:]
@@ -437,7 +458,11 @@ class GumbelBatchedSearch:
             logits = np.array([raw_logits[idx] for idx in move_indices], dtype=np.float64)
             logits = logits - logits.max()
 
-            k = min(self.max_num_considered_actions, num_actions)
+            k = _effective_considered_actions(
+                num_actions=num_actions,
+                max_num_considered_actions=self.max_num_considered_actions,
+                num_simulations=self.num_simulations,
+            )
             gumbel = self.gumbel_scale * np.random.gumbel(size=num_actions)
             scores = gumbel + logits
             if k < num_actions:
