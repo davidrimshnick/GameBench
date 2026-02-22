@@ -150,8 +150,13 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                 device="cpu",
                 evaluator=remote_eval,
             )
-            # nn_mcts is still needed for _play_wave's interface but won't
-            # be used for search when gumbel_search is provided
+            # Standard MCTS + evaluator for vs-random games (Gumbel only for training)
+            evaluator = RemoteBatchedEvaluator(
+                worker_id=worker_id,
+                request_queue=request_queue,
+                response_queue=response_queue,
+                use_network=True,
+            )
             nn_mcts = MCTS(
                 network=None,
                 num_simulations=mcts_config["num_simulations"],

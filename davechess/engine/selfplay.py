@@ -776,23 +776,36 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
 
         # Batched search for NN games
         if nn_games:
+            # Split: Gumbel for self-play (training), standard MCTS for vs-random (inference)
+            gumbel_games = []
+            standard_games = []
             if gumbel_search is not None:
-                # Gumbel MCTS — batched Sequential Halving
-                states = [g.state for g in nn_games]
+                for g in nn_games:
+                    if g.game_type == "selfplay":
+                        gumbel_games.append(g)
+                    else:
+                        standard_games.append(g)
+            else:
+                standard_games = nn_games
+
+            if gumbel_games:
+                # Gumbel MCTS — batched Sequential Halving (self-play only)
+                states = [g.state for g in gumbel_games]
                 temps = [1.0 if g.move_count < temperature_threshold else 0.1
-                         for g in nn_games]
+                         for g in gumbel_games]
                 results = gumbel_search.batched_search(states, temps)
 
-                for g, (move, info) in zip(nn_games, results):
+                for g, (move, info) in zip(gumbel_games, results):
                     if move is not None:
                         _apply_game_move(g, move, info, is_nn_turn=True)
                     else:
                         g.finished = True
                         _record_winner(g)
-            else:
-                # Standard MCTS — batched PUCT search
+
+            if standard_games:
+                # Standard MCTS — batched PUCT search (vs-random + non-gumbel)
                 engines: list[MCTS] = []
-                for g in nn_games:
+                for g in standard_games:
                     temp = 1.0 if g.move_count < temperature_threshold else 0.1
                     eng = MCTS(nn_mcts.network, num_simulations=nn_mcts.num_simulations,
                                cpuct=nn_mcts.cpuct, dirichlet_alpha=nn_mcts.dirichlet_alpha,
@@ -800,12 +813,12 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
                                temperature=temp, device=nn_mcts.device)
                     engines.append(eng)
 
-                states = [g.state for g in nn_games]
-                noise_flags = [True] * len(nn_games)
+                states = [g.state for g in standard_games]
+                noise_flags = [True] * len(standard_games)
 
                 roots = MCTS.batched_search(engines, states, evaluator, noise_flags)
 
-                for g, eng, root in zip(nn_games, engines, roots):
+                for g, eng, root in zip(standard_games, engines, roots):
                     move, info = eng.get_move_from_root(root, g.state)
                     _apply_game_move(g, move, info, is_nn_turn=True)
 

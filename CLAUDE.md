@@ -12,13 +12,15 @@ GameBench is a benchmark measuring how efficiently LLMs learn novel strategic re
 
 ## Current Status (Feb 2026)
 
-**Fresh training run started 2026-02-20 on Jetson. W&B run: `smart-microwave-90`. Previous runs were corrupted by Muon optimizer bug (see Known Issues #20).**
+**Starting fresh training run 2026-02-22 on Jetson with all fixes from issue #5. Previous runs: `smart-microwave-90` (Muon fix), `earnest-blaze-91` (seed-free), `revived-wave-93` (Gumbel deep search) — all stalled due to cascading bugs now resolved (see Known Issues #20-23).**
 
 What's done:
-- Training pipeline bugs fixed (see Known Issues #15-20)
+- Training pipeline bugs fixed (see Known Issues #15-23)
 - **Switched to pure AlphaZero** — single continuously-updated network, no best/training split, no eval gatekeeper (see Known Issue #19)
 - **Muon optimizer (fixed)** — Newton-Schulz orthogonalization for trunk conv weights ONLY (21 params), SGD for all heads/FC/biases/BN (54 params). See Known Issue #20 for the critical bug that was corrupting heads. Single-GPU implementation via `MuonSGD` class in `training.py`.
 - **128 Gumbel MCTS sims** — up from 50, gives meaningful search depth at 30-80 legal moves
+- **Dynamic Gumbel root action sizing** — `_effective_considered_actions()` scales root k with sim budget instead of hard cap at 16 (see Known Issue #23)
+- **Gumbel for training only** — self-play uses Gumbel MCTS for improved policy targets; vs-random monitoring games use standard MCTS for fair comparison
 - **40 self-play games per iteration** — doubled from 20 for better data throughput (~4K positions/iter)
 - **MCTSLite ELO probes** — non-gating ELO estimation every 20 iterations against MCTSLite-50, using 800 MCTS sims for the NN (enough depth to find checkmates). Baseline: MCTSLite-50 ≈ 300 ELO. 6 games per probe, 100-move cutoff per game.
 - **Hot-reload config** — `training.yaml` is re-read at the start of each iteration (network architecture preserved). No restart needed to change hyperparameters, buffer sizes, or optimizer LR.
@@ -26,6 +28,9 @@ What's done:
 - **Hot-reload buffer resizing** — `StructuredReplayBuffer.resize()` allows changing decisive/draw partition sizes via config without restart
 - **Hot-reload optimizer LR** — `learning_rate` and `head_lr` changes in training.yaml take effect immediately
 - **Existing buffer carry-over** — place `existing_buffer.npz` in checkpoints/ to inject old replay data into a fresh run (one-shot, auto-deleted after load)
+- **Seed data disabled** — heuristic seeds had 4:1 White win bias poisoning value head (see Known Issue #21). Pure self-play from random init.
+- **vs-random excluded from buffer** — prevents loss-biased feedback loop (see Known Issue #22)
+- **Grad clipping scoped to SGD heads only** — Muon trunk norm was crushing head LR by 4-10x
 - Sandbox setup and `agent_cli.py` working
 - GitHub Pages leaderboard at `docs/index.html` (currently has mockup data)
 - Benchmark automation scripts: `run_overnight_benchmark.sh` (runs all 3 agents sequentially), per-agent launchers (`_launch_codex_benchmark.py`, `_launch_gemini_benchmark.py`), and a heuristic baseline player (`_play_benchmark.py`)
@@ -34,7 +39,7 @@ What's done:
 - `DaveChessNetwork.from_checkpoint()` classmethod auto-infers architecture from weights (no more hardcoded num_res_blocks/num_filters)
 
 What's needed:
-1. **Monitor fresh training run** — W&B run `smart-microwave-90`, started from random init with all fixes. Key question: does policy loss keep declining past 2.0, or does it plateau there too? If it plateaus, the issue is deeper than Muon corruption. First ELO probe at iteration 20 (~5-6 hours in). ~16 min/iteration.
+1. **Monitor fresh training run** — started from random init with all fixes (Muon split, Gumbel dynamic k, no seeds, vs-random excluded, grad clip scoped). Key question: does vs-random win rate climb above 60% within 20 iterations? First ELO probe at iteration 20. ~16 min/iteration.
 2. **Run NN-MCTS calibration on Jetson** once training produces a model that consistently beats random MCTS. Run `python scripts/calibrate_opponents.py --checkpoint checkpoints/best.pt`.
 3. **Copy calibration.json to sandbox** and run real agent benchmarks (Claude Code, Codex CLI, Gemini CLI) with NN-MCTS opponents on Jetson GPU using `run_overnight_benchmark.sh`
 4. **Update leaderboard** with real agent results (replace placeholder heuristic-player data)
@@ -190,7 +195,7 @@ The AlphaZero implementation has several critical modifications for DaveChess:
    - Each sim doubling ≈ +180 ELO, consistent with chess engine theory.
    - Probe uses 800 NN sims (AlphaZero-level), 6 games, 100-move cutoff, every 20 iterations.
 
-6. **Seed Sampling Weight Decay**: Heuristic seed data (40% of the 50K buffer) becomes stale as the NN develops its own style. `StructuredReplayBuffer.sample()` accepts a `seed_weight` parameter that decays exponentially per iteration: `weight = max(min, init * decay^iter)`. Default: init=1.0, decay=0.93, min=0.05. Seeds fade from ~40% to ~5% of training batches by iteration 40. Configured in `training.yaml` under `seed_sample_weight_init/decay/min`.
+6. **Seed Sampling Weight Decay**: Heuristic seed data has a `seed_weight` parameter that decays exponentially per iteration: `weight = max(min, init * decay^iter)`. **Currently disabled** (`seed_sample_weight_init: 0.0`) due to White-bias in seed data poisoning the value head (see Known Issue #21). When init=0, seeds are never loaded or sampled. Configured in `training.yaml` under `seed_sample_weight_init/decay/min`.
 
 7. **Muon Optimizer**: `MuonSGD` class splits parameters into two groups: (1) **Muon group** — trunk conv weights only (21 params, `ndim >= 2` and not BN/bias/FC/policy/value), using Newton-Schulz orthogonalization via `zeropower_via_newtonschulz5`; (2) **SGD group** — all heads (policy_fc, value_fc1/fc2, policy_conv, value_conv), biases, and BN params (54 params). Muon LR (0.02) is higher than SGD head_lr (0.003) because orthogonalized updates have unit spectral norm. **Critical**: Muon must NEVER be applied to classification heads — see Known Issue #20. AMP overflow is checked across ALL param grads before stepping, with manual GradScaler backoff when Muon params overflow.
 
@@ -277,6 +282,15 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 20. **Muon Optimizer Applied to Classification Heads (CRITICAL)**: The original `MuonSGD` param split used `param.ndim >= 2 and "bn" not in name` to select Muon params, which included policy_fc (4288×128), value_fc1 (64×64), value_fc2 (1×64), policy_conv, and value_conv. Newton-Schulz orthogonalization iteratively pushes a matrix's singular values toward 1.0, making gradient rows approximately orthogonal. For trunk conv filters (spatial feature extraction), this acts as a beneficial regularizer. But for classification heads like policy_fc (4288 move logits from 128 features), orthogonalizing means forcing the 128-dim gradient rows for each of 4288 moves to be mutually orthogonal — which is impossible (128 dimensions can't support 4288 orthogonal directions) and destroys the per-move/per-class learning signal. The network appeared to learn (policy loss dropped to ~1.7) but the head weights were incoherent, producing a model that couldn't beat MCTSLite-50 (ELO ≈ 300). Training ran for ~40 iterations with this bug, contaminating the weights to a degree that incremental fixes couldn't recover.
    - Solution: Restrict Muon to trunk conv weights only via explicit name filtering (`"fc" not in name and "policy" not in name and "value" not in name`). This produces 21 Muon params (trunk convs) and 54 SGD params (everything else). Additional fixes: AMP overflow guard checks all param grads, GradScaler manual backoff on Muon overflow, optimizer LR hot-reload. Required a fresh training restart since old weights were irrecoverably corrupted.
+
+21. **White-Biased Seed Data Poisoning Value Head**: Heuristic seed games (`CommanderHunter`, `HeuristicPlayer`) had a 4:1 White win ratio. Endgame curriculum also over-represented White-winning positions. Even with decaying seed weight (0.93^iter), seeds contributed ~27% of training distribution at iteration 18. This taught the value head "White usually wins," creating systematic pessimism on Black-to-move positions (mean value -0.43). MCTS search degenerated to policy-only because all leaf evaluations returned similar pessimistic values.
+   - Solution: Disabled seed data entirely (`seed_sample_weight_init: 0.0`). Skip seed loading when weight is 0. Pure self-play from random init. Future fix: balance seeds by playing both sides, or data-augment with color-swapped positions.
+
+22. **vs-Random Data Creating Pessimistic Feedback Loop**: The NN loses 7-8 of 10 vs-random games per iteration, pumping ~500 loss-labeled positions into the decisive buffer each iteration. This created a 42% wins / 58% losses imbalance in the buffer, making the starting position predict -0.30 (should be ~0). Additionally, `clip_grad_norm_` was computed across ALL params including 11.8M Muon trunk params, inflating the norm and reducing effective head LR by 4-10x.
+   - Solution: (1) Exclude vs-random examples from training buffer — games still played and tracked in W&B for monitoring. Changed in all 3 selfplay code paths. (2) Only apply `clip_grad_norm_` to SGD param group — Muon params are orthogonalized by Newton-Schulz anyway.
+
+23. **Gumbel Root Action Truncation in High-Branching States (CRITICAL)**: With `max_num_considered_actions=16`, Gumbel Sequential Halving only considered 16 of the ~50 legal moves at each root. In 90.9% of positions, >16 moves were available, meaning 58-70% of legal moves were permanently hidden from search. This created a feedback loop: (1) repetition-draw lines dominate policy targets, (2) policy sharpens on those lines, (3) top-k pruning gets more selective, (4) repetition collapse hardens. Controlled test: with k=16 and 25 legal moves, Gumbel found a winning capture only 14/20 times vs 20/20 for standard MCTS. Self-play was 75% repetition draws by iteration 5.
+   - Solution: `_effective_considered_actions()` scales root k with simulation budget: `k = min(num_actions, max(base_k, num_simulations))`. With 128 sims, k can be up to 128 (covering all legal moves in most positions). Also split Gumbel (self-play training) from standard MCTS (vs-random monitoring) since Gumbel's improved policy targets are only useful for training data.
 
 ### Hardware Constraints (Jetson Orin Nano)
 
