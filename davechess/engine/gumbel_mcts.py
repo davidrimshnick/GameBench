@@ -220,7 +220,7 @@ class GumbelMCTS:
         """Run Gumbel MCTS search from state.
 
         Returns (selected_move, info_dict) where info_dict contains:
-        - policy_target: improved policy from completed Q-values
+        - policy_target: visit count proportions (not Gumbel improved policy)
         - root_value: value estimate at root
         """
         legal_moves = generate_legal_moves(state)
@@ -318,7 +318,24 @@ class GumbelMCTS:
                 visit_counts[a] += 1
                 total_values[a] += delta
 
-        # Compute improved policy target
+        # Policy target from visit count proportions (standard AlphaZero).
+        # The Gumbel "improved policy" (logits + sigma_q) produces near-one-hot
+        # targets when sigma_q overwhelms the logit range — which happens at low
+        # branching factors (10-50 legal moves) where visits concentrate heavily.
+        # This creates a sharpening death spiral: peaked targets → peaked prior →
+        # concentrated visits → even more peaked targets. Visit count proportions
+        # avoid this by reflecting actual search effort distribution.
+        total_visit = max(visit_counts.sum(), 1)
+        if self.temperature > 0.2:
+            visit_probs = visit_counts / total_visit
+        else:
+            visit_probs = np.zeros(num_actions)
+            visit_probs[np.argmax(visit_counts)] = 1.0
+
+        policy_target = {move_indices[i]: float(visit_probs[i])
+                         for i in range(num_actions)}
+
+        # Move selection still uses improved policy (Gumbel's strength)
         qvalues = np.where(
             visit_counts > 0,
             total_values / np.maximum(visit_counts, 1),
@@ -329,16 +346,12 @@ class GumbelMCTS:
             self.maxvisit_init, self.value_scale,
         )
         improved_logits = logits + sigma_q
-        improved_logits = improved_logits - improved_logits.max()
-        improved_policy = np.exp(improved_logits)
-        improved_policy = improved_policy / improved_policy.sum()
-
-        policy_target = {move_indices[i]: float(improved_policy[i])
-                         for i in range(num_actions)}
-
         if self.temperature == 0:
             selected_idx = np.argmax(improved_logits)
         else:
+            improved_logits = improved_logits - improved_logits.max()
+            improved_policy = np.exp(improved_logits)
+            improved_policy = improved_policy / improved_policy.sum()
             selected_idx = np.random.choice(num_actions, p=improved_policy)
 
         root_q = np.sum(total_values) / max(np.sum(visit_counts), 1)
@@ -588,7 +601,18 @@ class GumbelBatchedSearch:
                 results.append((None, {"policy_target": {}, "root_value": 0.0}))
                 continue
 
-            # Compute improved policy
+            # Policy target from visit count proportions (see single-search comment)
+            total_visit = max(g["visit_counts"].sum(), 1)
+            if g["temperature"] > 0.2:
+                visit_probs = g["visit_counts"] / total_visit
+            else:
+                visit_probs = np.zeros(g["num_actions"])
+                visit_probs[np.argmax(g["visit_counts"])] = 1.0
+
+            policy_target = {g["move_indices"][i]: float(visit_probs[i])
+                             for i in range(g["num_actions"])}
+
+            # Move selection still uses improved policy
             qvalues = np.where(
                 g["visit_counts"] > 0,
                 g["total_values"] / np.maximum(g["visit_counts"], 1),
@@ -599,17 +623,12 @@ class GumbelBatchedSearch:
                 self.maxvisit_init, self.value_scale,
             )
             improved_logits = g["logits"] + sigma_q
-            improved_logits = improved_logits - improved_logits.max()
-            improved_policy = np.exp(improved_logits)
-            improved_policy = improved_policy / improved_policy.sum()
-
-            policy_target = {g["move_indices"][i]: float(improved_policy[i])
-                             for i in range(g["num_actions"])}
-
-            # Select action from improved policy
             if g["temperature"] == 0 or g["temperature"] < 0.2:
                 selected_idx = np.argmax(improved_logits)
             else:
+                improved_logits = improved_logits - improved_logits.max()
+                improved_policy = np.exp(improved_logits)
+                improved_policy = improved_policy / improved_policy.sum()
                 selected_idx = np.random.choice(g["num_actions"], p=improved_policy)
 
             root_q = (np.sum(g["total_values"]) /
