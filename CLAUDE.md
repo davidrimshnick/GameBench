@@ -12,7 +12,7 @@ GameBench is a benchmark measuring how efficiently LLMs learn novel strategic re
 
 ## Current Status (Feb 2026)
 
-**Starting fresh training run 2026-02-22 on Jetson with all fixes from issue #5. Previous runs: `smart-microwave-90` (Muon fix), `earnest-blaze-91` (seed-free), `revived-wave-93` (Gumbel deep search) — all stalled due to cascading bugs now resolved (see Known Issues #20-23).**
+**Fresh training run `golden-meadow-95` started 2026-02-22 on Jetson. Previous runs all stalled due to cascading bugs now resolved (see Known Issues #20-24). Key fix: Gumbel improved policy targets were near-one-hot (99.97% on one move), causing policy collapse death spiral — now using visit count proportions.**
 
 What's done:
 - Training pipeline bugs fixed (see Known Issues #15-23)
@@ -20,7 +20,7 @@ What's done:
 - **Muon optimizer (fixed)** — Newton-Schulz orthogonalization for trunk conv weights ONLY (21 params), SGD for all heads/FC/biases/BN (54 params). See Known Issue #20 for the critical bug that was corrupting heads. Single-GPU implementation via `MuonSGD` class in `training.py`.
 - **128 Gumbel MCTS sims** — up from 50, gives meaningful search depth at 30-80 legal moves
 - **Dynamic Gumbel root action sizing** — `_effective_considered_actions()` scales root k with sim budget instead of hard cap at 16 (see Known Issue #23)
-- **Gumbel for training only** — self-play uses Gumbel MCTS for improved policy targets; vs-random monitoring games use standard MCTS for fair comparison
+- **Gumbel for move selection only** — self-play uses Gumbel Sequential Halving for move selection but visit count proportions for policy targets (see Known Issue #24); vs-random monitoring games use standard MCTS
 - **40 self-play games per iteration** — doubled from 20 for better data throughput (~4K positions/iter)
 - **MCTSLite ELO probes** — non-gating ELO estimation every 20 iterations against MCTSLite-50, using 800 MCTS sims for the NN (enough depth to find checkmates). Baseline: MCTSLite-50 ≈ 300 ELO. 6 games per probe, 100-move cutoff per game.
 - **Hot-reload config** — `training.yaml` is re-read at the start of each iteration (network architecture preserved). No restart needed to change hyperparameters, buffer sizes, or optimizer LR.
@@ -291,6 +291,9 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 23. **Gumbel Root Action Truncation in High-Branching States (CRITICAL)**: With `max_num_considered_actions=16`, Gumbel Sequential Halving only considered 16 of the ~50 legal moves at each root. In 90.9% of positions, >16 moves were available, meaning 58-70% of legal moves were permanently hidden from search. This created a feedback loop: (1) repetition-draw lines dominate policy targets, (2) policy sharpens on those lines, (3) top-k pruning gets more selective, (4) repetition collapse hardens. Controlled test: with k=16 and 25 legal moves, Gumbel found a winning capture only 14/20 times vs 20/20 for standard MCTS. Self-play was 75% repetition draws by iteration 5.
    - Solution: `_effective_considered_actions()` scales root k with simulation budget: `k = min(num_actions, max(base_k, num_simulations))`. With 128 sims, k can be up to 128 (covering all legal moves in most positions). Also split Gumbel (self-play training) from standard MCTS (vs-random monitoring) since Gumbel's improved policy targets are only useful for training data.
+
+24. **Gumbel Improved Policy Targets Cause Policy Collapse (CRITICAL)**: The Gumbel "improved policy" (`softmax(logits + sigma_q)`) was used as the training target. `sigma_q` is scaled by `(maxvisit_init + max_visits) * value_scale = (50 + 62) * 0.1 = 11.2`, but the legal logit range was only ~8. sigma_q completely overwhelmed the logits, producing targets that were 99.97% on one move — a near-delta function. This created a sharpening death spiral: peaked target → peaked prior → concentrated visits → larger sigma_q → harder delta. By iteration 4-5, the policy was locked onto arbitrary moves and the network fell into repetition draws. This is an inherent issue with Gumbel's improved policy at low branching factors — the paper tuned sigma_q scaling for Go (branching ~250, 800 sims). At DaveChess branching (10-50 legal moves, 128 sims), visits concentrate too heavily.
+   - Solution: Use visit count proportions as policy targets (standard AlphaZero) instead of the Gumbel improved policy. Visit counts can't amplify beyond the actual visit distribution. Gumbel Sequential Halving is still used for move selection (efficient with 128 sims). Also set `draw_value_target` to 0.0 (the -0.1 penalty biased mean value targets slightly negative when 75%+ of data is draws, though this was secondary to the policy collapse).
 
 ### Hardware Constraints (Jetson Orin Nano)
 
