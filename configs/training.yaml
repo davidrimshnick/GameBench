@@ -32,7 +32,7 @@ selfplay:
   min_buffer_size: 1000        # Train immediately on seed games
   random_opponent_fraction: 0.25  # 25% vs random MCTS — enough diversity without wasting data
   parallel_games: 20             # Fallback for single-process mode (multiprocess ignores this)
-  draw_value_target: -0.1      # Penalize draw-seeking local minima
+  draw_value_target: 0.0       # Neutral — -0.1 caused systematic pessimism (75%+ of data is draws)
 
 training:
   optimizer: muon               # muon = Muon for conv/hidden + SGD for heads/biases/BN
