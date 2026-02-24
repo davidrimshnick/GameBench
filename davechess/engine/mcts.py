@@ -50,7 +50,7 @@ class MCTSNode:
         return self.total_value / self.visit_count
 
     def puct_score(self, cpuct: float) -> float:
-        parent_visits = self.parent.visit_count if self.parent else 1
+        parent_visits = max(1, self.parent.visit_count if self.parent else 1)
         u = cpuct * self.prior * math.sqrt(parent_visits) / (1 + self.visit_count)
         return self.q_value + u
 
