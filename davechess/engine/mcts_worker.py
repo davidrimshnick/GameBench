@@ -126,6 +126,7 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
         gumbel_config = mcts_config.get("gumbel_config")
         temperature_threshold = mcts_config["temperature_threshold"]
         draw_value_target = mcts_config.get("draw_value_target", 0.0)
+        policy_target_smoothing = mcts_config.get("policy_target_smoothing", 0.0)
 
         # Set up Gumbel or standard MCTS
         gumbel_search = None
@@ -215,7 +216,8 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
         worker_results = []
         for g in wave_games:
             training_data, game_record = _finalize_game(
-                g, draw_value_target=draw_value_target
+                g, draw_value_target=draw_value_target,
+                policy_target_smoothing=policy_target_smoothing,
             )
             worker_results.append({
                 "game_idx": g.game_idx,

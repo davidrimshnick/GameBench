@@ -51,10 +51,19 @@ RESOURCE_NORM = 50.0
 NUM_INPUT_PLANES = 18
 
 
+def _flip_row(r: int) -> int:
+    """Flip a row index vertically: 0↔7, 1↔6, etc."""
+    return BOARD_SIZE - 1 - r
+
+
 def state_to_planes(state: GameState) -> np.ndarray:
     """Convert game state to 18x8x8 input planes.
 
     The planes are always from the perspective of the current player.
+    When Black is playing, the board is flipped vertically so the CNN
+    always sees the current player's pieces "moving up" — standard
+    AlphaZero technique that doubles effective network capacity for
+    spatial patterns.
     """
     planes = np.zeros((NUM_INPUT_PLANES, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
     current = state.current_player
@@ -110,14 +119,30 @@ def state_to_planes(state: GameState) -> np.ndarray:
             planes[16, fr, fc] = 1.0
             planes[17, tr, tc] = 1.0
 
+    # Board flipping: when Black plays, flip all spatial planes vertically.
+    # This makes the CNN always see the current player's pieces at the bottom
+    # and "moving up," doubling effective capacity for spatial patterns.
+    # Scalar-broadcast planes (11-15) are unaffected by the flip.
+    if current == Player.BLACK:
+        planes = planes[:, ::-1, :].copy()
+
     return planes
 
 
-def move_to_policy_index(move: Move) -> int:
-    """Encode a move as an index into the flat policy vector."""
+def move_to_policy_index(move: Move, flip: bool = False) -> int:
+    """Encode a move as an index into the flat policy vector.
+
+    Args:
+        move: The move to encode.
+        flip: If True (Black's turn), flip coordinates vertically to match
+            the flipped board encoding from state_to_planes().
+    """
     if isinstance(move, MoveStep):
         fr, fc = move.from_rc
         tr, tc = move.to_rc
+        if flip:
+            fr = _flip_row(fr)
+            tr = _flip_row(tr)
         dr = tr - fr
         dc = tc - fc
         # Determine direction and distance
@@ -136,6 +161,9 @@ def move_to_policy_index(move: Move) -> int:
     elif isinstance(move, BombardAttack):
         fr, fc = move.from_rc
         tr, tc = move.target_rc
+        if flip:
+            fr = _flip_row(fr)
+            tr = _flip_row(tr)
         dr = tr - fr
         dc = tc - fc
         dist = max(abs(dr), abs(dc))
@@ -147,6 +175,8 @@ def move_to_policy_index(move: Move) -> int:
 
     elif isinstance(move, Promote):
         r, c = move.from_rc
+        if flip:
+            r = _flip_row(r)
         promote_map = {
             PieceType.RIDER: 0, PieceType.BOMBARD: 1,
             PieceType.LANCER: 2,
@@ -159,11 +189,16 @@ def move_to_policy_index(move: Move) -> int:
 
 
 def policy_index_to_move(index: int, state: GameState) -> Move | None:
-    """Decode a policy index back to a move (best effort, may not be legal)."""
+    """Decode a policy index back to a move (best effort, may not be legal).
+
+    Automatically un-flips coordinates when state.current_player is BLACK
+    to match the board flipping in state_to_planes().
+    """
     sq_idx = index // MOVES_PER_SQUARE
     slot = index % MOVES_PER_SQUARE
     row = sq_idx // BOARD_SIZE
     col = sq_idx % BOARD_SIZE
+    flip = state.current_player == Player.BLACK
 
     if slot < 56:
         # Direction move
@@ -172,9 +207,11 @@ def policy_index_to_move(index: int, state: GameState) -> Move | None:
         dr, dc = ALL_DIRS[dir_idx]
         tr, tc = row + dr * dist, col + dc * dist
         if 0 <= tr < BOARD_SIZE and 0 <= tc < BOARD_SIZE:
-            target = state.board[tr][tc]
+            # Un-flip coordinates for Black
+            out_row, out_tr = (_flip_row(row), _flip_row(tr)) if flip else (row, tr)
+            target = state.board[out_tr][tc]
             is_capture = target is not None and target.player != state.current_player
-            return MoveStep((row, col), (tr, tc), is_capture=is_capture)
+            return MoveStep((out_row, col), (out_tr, tc), is_capture=is_capture)
 
     elif slot < 64:
         # Bombard ranged attack
@@ -182,7 +219,8 @@ def policy_index_to_move(index: int, state: GameState) -> Move | None:
         dr, dc = ALL_DIRS[dir_idx]
         tr, tc = row + dr * 2, col + dc * 2
         if 0 <= tr < BOARD_SIZE and 0 <= tc < BOARD_SIZE:
-            return BombardAttack((row, col), (tr, tc))
+            out_row, out_tr = (_flip_row(row), _flip_row(tr)) if flip else (row, tr)
+            return BombardAttack((out_row, col), (out_tr, tc))
 
     elif slot < 67:
         # Promotion
@@ -191,7 +229,8 @@ def policy_index_to_move(index: int, state: GameState) -> Move | None:
             2: PieceType.LANCER,
         }
         to_type = promote_map[slot - 64]
-        return Promote((row, col), to_type)
+        out_row = _flip_row(row) if flip else row
+        return Promote((out_row, col), to_type)
 
     return None
 

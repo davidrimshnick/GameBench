@@ -26,6 +26,28 @@ from davechess.engine.mcts import MCTS, BatchedEvaluator
 from davechess.engine.gumbel_mcts import GumbelMCTS, GumbelBatchedSearch
 
 
+def _build_policy_target(policy_dict: dict, smoothing: float = 0.0) -> np.ndarray:
+    """Build dense policy target from sparse visit proportions.
+
+    Args:
+        policy_dict: {policy_index: visit_proportion} from MCTS
+        smoothing: Mix with uniform over legal moves. 0.0 = raw visits,
+            0.5 = 50% visits + 50% uniform. Prevents policy from becoming
+            too peaked, breaking the PUCT feedback loop where peaked priors
+            concentrate visits which produce even more peaked targets.
+    """
+    policy = np.zeros(POLICY_SIZE, dtype=np.float32)
+    n_legal = len(policy_dict)
+    if n_legal == 0:
+        return policy
+    for idx, prob in policy_dict.items():
+        if smoothing > 0 and n_legal > 1:
+            policy[idx] = (1.0 - smoothing) * prob + smoothing / n_legal
+        else:
+            policy[idx] = prob
+    return policy
+
+
 def classify_draw_reason(state: GameState) -> str:
     """Classify why a finished game ended in a draw."""
     if state.winner is not None:
@@ -511,10 +533,7 @@ def play_selfplay_game(mcts_engine: MCTS,
     # Assign value targets based on outcome
     training_data = []
     for planes, policy_dict, player in examples:
-        # Build full policy vector
-        policy = np.zeros(POLICY_SIZE, dtype=np.float32)
-        for idx, prob in policy_dict.items():
-            policy[idx] = prob
+        policy = _build_policy_target(policy_dict)
 
         # Value from this player's perspective: +1 win, -1 loss, draw_value_target draw
         if winner == -1:
@@ -536,7 +555,8 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
                        dirichlet_epsilon: float = 0.25,
                        random_opponent_fraction: float = 0.0,
                        draw_value_target: float = 0.0,
-                       device: str = "cpu") -> tuple[list, dict]:
+                       device: str = "cpu",
+                       policy_target_smoothing: float = 0.0) -> tuple[list, dict]:
     """Run a batch of self-play games sequentially.
 
     Args:
@@ -686,7 +706,8 @@ def _record_winner(g: _ActiveGame):
 
 
 def _finalize_game(g: _ActiveGame,
-                   draw_value_target: float = 0.0) -> tuple[list, dict]:
+                   draw_value_target: float = 0.0,
+                   policy_target_smoothing: float = 0.0) -> tuple[list, dict]:
     """Convert a finished game into training data and game record.
 
     Returns (training_data, game_record) in same format as play_selfplay_game().
@@ -701,9 +722,7 @@ def _finalize_game(g: _ActiveGame,
 
     training_data = []
     for planes, policy_dict, player in g.examples:
-        policy = np.zeros(POLICY_SIZE, dtype=np.float32)
-        for idx, prob in policy_dict.items():
-            policy[idx] = prob
+        policy = _build_policy_target(policy_dict, smoothing=policy_target_smoothing)
         if winner == -1:
             value = draw_value_target
         elif winner == player:
@@ -839,7 +858,8 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                                  draw_value_target: float = 0.0,
                                  device: str = "cpu",
                                  parallel_games: int = 10,
-                                 gumbel_config: Optional[dict] = None) -> tuple[list, dict]:
+                                 gumbel_config: Optional[dict] = None,
+                                 policy_target_smoothing: float = 0.0) -> tuple[list, dict]:
     """Run self-play games with batched NN evaluation for GPU efficiency.
 
     Plays multiple games simultaneously, collecting leaf evaluations from
@@ -928,7 +948,8 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
 
         for g in wave_games:
             training_data, game_record = _finalize_game(
-                g, draw_value_target=draw_value_target
+                g, draw_value_target=draw_value_target,
+                policy_target_smoothing=policy_target_smoothing,
             )
             # Only add self-play examples to buffer — vs-random data is heavily
             # loss-biased (NN loses most games) which creates pessimistic value head.
@@ -985,7 +1006,8 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
                                draw_value_target: float = 0.0,
                                device: str = "cpu",
                                num_workers: int = 4,
-                               gumbel_config: Optional[dict] = None) -> tuple[list, dict]:
+                               gumbel_config: Optional[dict] = None,
+                               policy_target_smoothing: float = 0.0) -> tuple[list, dict]:
     """Run self-play with multiprocess CPU workers and centralized GPU inference.
 
     Each worker process runs MCTS tree traversal on a subset of games.
@@ -1023,6 +1045,7 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
         "dirichlet_epsilon": dirichlet_epsilon,
         "draw_value_target": draw_value_target,
         "cpuct": cpuct,
+        "policy_target_smoothing": policy_target_smoothing,
     }
     if gumbel_config is not None:
         mcts_config["gumbel_config"] = gumbel_config

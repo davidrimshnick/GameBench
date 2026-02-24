@@ -227,8 +227,9 @@ class GumbelMCTS:
         if not legal_moves:
             raise ValueError("No legal moves")
 
+        flip = state.current_player == Player.BLACK
         if len(legal_moves) == 1:
-            idx = move_to_policy_index(legal_moves[0])
+            idx = move_to_policy_index(legal_moves[0], flip=flip)
             policy_target = {idx: 1.0}
             return legal_moves[0], {
                 "policy_target": policy_target,
@@ -241,7 +242,7 @@ class GumbelMCTS:
 
         # Extract logits for legal moves only
         num_actions = len(legal_moves)
-        move_indices = [move_to_policy_index(m) for m in legal_moves]
+        move_indices = [move_to_policy_index(m, flip=flip) for m in legal_moves]
         logits = np.array([raw_logits[idx] for idx in move_indices], dtype=np.float64)
         logits = logits - logits.max()
 
@@ -454,7 +455,8 @@ class GumbelBatchedSearch:
 
             policy, raw_logits, root_value = root_results[i]
             num_actions = len(legal_moves)
-            move_indices = [move_to_policy_index(m) for m in legal_moves]
+            flip = state.current_player == Player.BLACK
+            move_indices = [move_to_policy_index(m, flip=flip) for m in legal_moves]
             logits = np.array([raw_logits[idx] for idx in move_indices], dtype=np.float64)
             logits = logits - logits.max()
 

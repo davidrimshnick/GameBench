@@ -76,7 +76,8 @@ class MCTSNode:
             self.is_expanded = True
             return
 
-        move_indices = [move_to_policy_index(m) for m in legal_moves]
+        flip = self.state.current_player == Player.BLACK
+        move_indices = [move_to_policy_index(m, flip=flip) for m in legal_moves]
         priors = np.array([policy[idx] for idx in move_indices])
         prior_sum = priors.sum()
         if prior_sum > 0:
@@ -258,7 +259,8 @@ class MCTS:
             probs = visits_temp / visits_temp.sum()
             best_idx = np.random.choice(len(moves), p=probs)
             policy_target = visits / total_visits
-        move_policies = {move_to_policy_index(m): p
+        flip = state.current_player == Player.BLACK
+        move_policies = {move_to_policy_index(m, flip=flip): p
                          for m, p in zip(moves, policy_target)}
 
         return moves[best_idx], {
@@ -297,7 +299,8 @@ class MCTS:
             probs = visits_temp / visits_temp.sum()
             best_idx = np.random.choice(len(moves), p=probs)
             policy_target = visits / total_visits
-        move_policies = {move_to_policy_index(m): p
+        flip = state.current_player == Player.BLACK
+        move_policies = {move_to_policy_index(m, flip=flip): p
                          for m, p in zip(moves, policy_target)}
 
         return moves[best_idx], {

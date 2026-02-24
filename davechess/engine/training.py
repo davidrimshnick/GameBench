@@ -449,6 +449,14 @@ class Trainer:
         values_t = torch.from_numpy(values).unsqueeze(1).to(self.device)
 
         self.network.train()
+
+        # Policy head freezing: during early iterations, zero out policy head
+        # gradients so only the value head + trunk learn. This breaks the
+        # sharpening death spiral by letting the value head develop meaningful
+        # signal before the policy starts learning from MCTS visit targets.
+        policy_freeze_iters = int(self.config.get("training", {}).get("policy_freeze_iterations", 0))
+        policy_frozen = policy_freeze_iters > 0 and self.iteration <= policy_freeze_iters
+
         self.optimizer.zero_grad()
         draw_sample_weight = float(self.config.get("training", {}).get("draw_sample_weight", 1.0))
 
@@ -475,17 +483,42 @@ class Trainer:
             value_loss = torch.mean(per_example_value_loss * sample_weights)
             # Fixed weight to balance policy CE (~5-6) vs value MSE (~0.1)
             value_weight = float(self.config.get("training", {}).get("value_loss_weight", 20.0))
-            total_loss = policy_loss + value_weight * value_loss
-            return policy_loss, value_loss, total_loss, value_weight
+
+            # Policy entropy regularization: prevent premature policy sharpening
+            # during bootstrapping when the value head provides weak signal.
+            # Without this, noisy MCTS visit targets create a sharpening death spiral:
+            # peaked targets → peaked prior → concentrated visits → more peaked targets.
+            entropy_weight = float(self.config.get("training", {}).get("policy_entropy_weight", 0.0))
+            entropy_bonus = torch.tensor(0.0, device=policy_logits.device)
+            if entropy_weight > 0:
+                log_probs = torch.log_softmax(policy_logits, dim=1)
+                probs = torch.softmax(policy_logits, dim=1)
+                per_example_entropy = -torch.sum(probs * log_probs, dim=1)
+                entropy_bonus = torch.mean(per_example_entropy * sample_weights.squeeze(1))
+
+            if policy_frozen:
+                # When policy is frozen, exclude policy loss from backward pass.
+                # Otherwise the trunk receives dominant gradient from policy CE (~7.6)
+                # vs value MSE (~1.6), pulling features toward fitting noisy MCTS
+                # targets rather than learning useful value representations.
+                total_loss = value_weight * value_loss
+            else:
+                total_loss = policy_loss + value_weight * value_loss - entropy_weight * entropy_bonus
+            return policy_loss, value_loss, total_loss, value_weight, entropy_bonus
 
         is_muon = isinstance(self.optimizer, MuonSGD)
 
         if self.scaler is not None:
             with autocast("cuda"):
                 policy_logits, value_pred = self.network(planes_t)
-                policy_loss, value_loss, total_loss, value_scale = _compute_losses(policy_logits, value_pred)
+                policy_loss, value_loss, total_loss, value_scale, entropy_bonus = _compute_losses(policy_logits, value_pred)
 
             self.scaler.scale(total_loss).backward()
+            # Zero policy head gradients if frozen (value head + trunk still learn)
+            if policy_frozen:
+                for name, param in self.network.named_parameters():
+                    if ("policy" in name) and param.grad is not None:
+                        param.grad.zero_()
             if is_muon:
                 # MuonSGD: manually unscale grads then step
                 self.scaler.unscale_(self.optimizer.sgd)
@@ -519,9 +552,14 @@ class Trainer:
                 self.scaler.update()
         else:
             policy_logits, value_pred = self.network(planes_t)
-            policy_loss, value_loss, total_loss, value_scale = _compute_losses(policy_logits, value_pred)
+            policy_loss, value_loss, total_loss, value_scale, entropy_bonus = _compute_losses(policy_logits, value_pred)
 
             total_loss.backward()
+            # Zero policy head gradients if frozen (value head + trunk still learn)
+            if policy_frozen:
+                for name, param in self.network.named_parameters():
+                    if ("policy" in name) and param.grad is not None:
+                        param.grad.zero_()
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=1.0)
             self.optimizer.step()
 
@@ -532,6 +570,8 @@ class Trainer:
             "policy_loss": policy_loss.item(),
             "value_loss": value_loss.item(),
             "value_scale": float(value_scale),
+            "policy_entropy": entropy_bonus.item(),
+            "policy_frozen": 1.0 if policy_frozen else 0.0,
         }
 
         if self.training_step % 10 == 0:
@@ -541,6 +581,8 @@ class Trainer:
                 "train/policy_loss": losses["policy_loss"],
                 "train/value_loss": losses["value_loss"],
                 "train/value_scale": losses["value_scale"],
+                "train/policy_entropy": losses["policy_entropy"],
+                "train/policy_frozen": losses["policy_frozen"],
                 "train/learning_rate": lr,
             }
             if self.use_wandb:
@@ -728,7 +770,8 @@ class Trainer:
                 for move in moves:
                     planes = state_to_planes(state)
                     policy = np.zeros(POLICY_SIZE, dtype=np.float32)
-                    policy[move_to_policy_index(move)] = 1.0
+                    flip = state.current_player == Player.BLACK
+                    policy[move_to_policy_index(move, flip=flip)] = 1.0
 
                     # Value from current player's perspective: +1 win, -1 loss
                     if int(winner) == int(state.current_player):
@@ -866,6 +909,7 @@ class Trainer:
             dirichlet_epsilon=mcts_cfg.get("dirichlet_epsilon", 0.25),
             random_opponent_fraction=sp_cfg.get("random_opponent_fraction", 0.0),
             draw_value_target=float(sp_cfg.get("draw_value_target", 0.0)),
+            policy_target_smoothing=float(sp_cfg.get("policy_target_smoothing", 0.0)),
             device=self.device,
         )
         if use_gumbel and num_workers > 1:
@@ -1043,7 +1087,11 @@ class Trainer:
             self.save_checkpoint(save_buffer=True)
             return
 
-        logger.info("Training phase...")
+        policy_freeze_iters = int(train_cfg.get("policy_freeze_iterations", 0))
+        if policy_freeze_iters > 0 and self.iteration <= policy_freeze_iters:
+            logger.info(f"Training phase... (POLICY HEAD FROZEN, iter {self.iteration}/{policy_freeze_iters})")
+        else:
+            logger.info("Training phase...")
         batch_size = train_cfg.get("batch_size", 256)
         max_steps = train_cfg.get("steps_per_iteration", 1000)
         # Scale steps to buffer size: ~2 passes through the data, capped at max_steps.

@@ -12,23 +12,28 @@ GameBench is a benchmark measuring how efficiently LLMs learn novel strategic re
 
 ## Current Status (Feb 2026)
 
-**Fresh training run `golden-meadow-95` started 2026-02-22 on Jetson. Previous runs all stalled due to cascading bugs now resolved (see Known Issues #20-24). Key fix: Gumbel improved policy targets were near-one-hot (99.97% on one move), causing policy collapse death spiral — now using visit count proportions.**
+**Fresh restart (2026-02-24). Previous run stalled: 39 iterations, vs-random flat at ~44%, ELO ~300-358. Diagnostic revealed value head producing noisy near-zero outputs that override correct policy priors via MCTS Q-values (Bombard corner shuffles at Q=+0.22 beating 43% prior Warrior pushes at Q=-0.27). Three major fixes: (1) board flipping, (2) cpuct 1.5→4.0, (3) value_loss_weight 20→3. Seeds disabled (White bias). See Known Issue #26.**
 
 What's done:
-- Training pipeline bugs fixed (see Known Issues #15-23)
+- Training pipeline bugs fixed (see Known Issues #15-26)
 - **Switched to pure AlphaZero** — single continuously-updated network, no best/training split, no eval gatekeeper (see Known Issue #19)
 - **Muon optimizer (fixed)** — Newton-Schulz orthogonalization for trunk conv weights ONLY (21 params), SGD for all heads/FC/biases/BN (54 params). See Known Issue #20 for the critical bug that was corrupting heads. Single-GPU implementation via `MuonSGD` class in `training.py`.
-- **128 Gumbel MCTS sims** — up from 50, gives meaningful search depth at 30-80 legal moves
-- **Dynamic Gumbel root action sizing** — `_effective_considered_actions()` scales root k with sim budget instead of hard cap at 16 (see Known Issue #23)
-- **Gumbel for move selection only** — self-play uses Gumbel Sequential Halving for move selection but visit count proportions for policy targets (see Known Issue #24); vs-random monitoring games use standard MCTS
-- **40 self-play games per iteration** — doubled from 20 for better data throughput (~4K positions/iter)
-- **MCTSLite ELO probes** — non-gating ELO estimation every 20 iterations against MCTSLite-50, using 800 MCTS sims for the NN (enough depth to find checkmates). Baseline: MCTSLite-50 ≈ 300 ELO. 6 games per probe, 100-move cutoff per game.
+- **Board flipping (NEW)** — When Black plays, board is flipped vertically so the CNN always sees current player's pieces "moving up." Standard AlphaZero technique that doubles effective network capacity. Requires `flip=True` on `move_to_policy_index()` for Black moves. Incompatible with old checkpoints.
+- **128 standard MCTS sims** — Gumbel disabled (see Known Issue #25), standard PUCT distributes visits more broadly
+- **High cpuct=4.0 (NEW)** — Trust policy prior over noisy value head. At cpuct=1.5, tiny Q-value noise (±0.2) overrode 40%+ policy priors, teaching the policy to unlearn correct preferences. Reduce toward 2.0 once value head is reliable.
+- **value_loss_weight=3.0 (NEW)** — Reduced from 20.0. Was giving 28% of gradient to noisy value targets, pulling trunk features toward noise. Now ~7%, letting policy head lead training.
+- **Policy entropy regularization** — `policy_entropy_weight: 0.1` prevents premature policy sharpening during bootstrapping
+- **Policy head freezing** — configurable `policy_freeze_iterations` (default 0) zeroes policy head gradients and excludes policy loss from backward pass during early iterations
+- **Policy target smoothing** — configurable `policy_target_smoothing` (default 0) mixes MCTS visit targets with uniform distribution over legal moves
+- **Reduced training intensity** — 200 steps/iter (was 800) + Muon LR 0.01 (was 0.02) + head LR 0.001 (was 0.003) to prevent value head overfitting to noisy self-play data
+- **Seeds disabled** — heuristic seeds have 4:1 White win bias poisoning value head (see Known Issue #21). Pure self-play from random init.
+- **40 self-play games per iteration** — ~4K positions/iter for better data throughput
+- **MCTSLite ELO probes** — non-gating ELO estimation every 5 iterations against MCTSLite-50, using 800 MCTS sims for the NN. Baseline: MCTSLite-50 ≈ 300 ELO. 6 games per probe, 200-move cutoff per game.
 - **Hot-reload config** — `training.yaml` is re-read at the start of each iteration (network architecture preserved). No restart needed to change hyperparameters, buffer sizes, or optimizer LR.
 - **AMP overflow guard** — checks ALL param grads (Muon + SGD heads) for inf/nan before stepping, with manual GradScaler backoff on Muon overflow
 - **Hot-reload buffer resizing** — `StructuredReplayBuffer.resize()` allows changing decisive/draw partition sizes via config without restart
 - **Hot-reload optimizer LR** — `learning_rate` and `head_lr` changes in training.yaml take effect immediately
 - **Existing buffer carry-over** — place `existing_buffer.npz` in checkpoints/ to inject old replay data into a fresh run (one-shot, auto-deleted after load)
-- **Seed data disabled** — heuristic seeds had 4:1 White win bias poisoning value head (see Known Issue #21). Pure self-play from random init.
 - **vs-random excluded from buffer** — prevents loss-biased feedback loop (see Known Issue #22)
 - **Grad clipping scoped to SGD heads only** — Muon trunk norm was crushing head LR by 4-10x
 - Sandbox setup and `agent_cli.py` working
@@ -39,7 +44,7 @@ What's done:
 - `DaveChessNetwork.from_checkpoint()` classmethod auto-infers architecture from weights (no more hardcoded num_res_blocks/num_filters)
 
 What's needed:
-1. **Monitor fresh training run** — started from random init with all fixes (Muon split, Gumbel dynamic k, no seeds, vs-random excluded, grad clip scoped). Key question: does vs-random win rate climb above 60% within 20 iterations? First ELO probe at iteration 20. ~16 min/iteration.
+1. **Wait for ELO probe at iteration 20** — will reveal true network strength with 800-sim search (no noise). If ELO > 300 (MCTSLite-50 baseline), network is improving and needs more iterations. If ELO ≈ 300 or below, consider: (a) increasing value_loss_weight, (b) separate grad clipping for policy/value heads, (c) smaller network for faster bootstrapping.
 2. **Run NN-MCTS calibration on Jetson** once training produces a model that consistently beats random MCTS. Run `python scripts/calibrate_opponents.py --checkpoint checkpoints/best.pt`.
 3. **Copy calibration.json to sandbox** and run real agent benchmarks (Claude Code, Codex CLI, Gemini CLI) with NN-MCTS opponents on Jetson GPU using `run_overnight_benchmark.sh`
 4. **Update leaderboard** with real agent results (replace placeholder heuristic-player data)
@@ -294,6 +299,12 @@ The AlphaZero implementation has several critical modifications for DaveChess:
 
 24. **Gumbel Improved Policy Targets Cause Policy Collapse (CRITICAL)**: The Gumbel "improved policy" (`softmax(logits + sigma_q)`) was used as the training target. `sigma_q` is scaled by `(maxvisit_init + max_visits) * value_scale = (50 + 62) * 0.1 = 11.2`, but the legal logit range was only ~8. sigma_q completely overwhelmed the logits, producing targets that were 99.97% on one move — a near-delta function. This created a sharpening death spiral: peaked target → peaked prior → concentrated visits → larger sigma_q → harder delta. By iteration 4-5, the policy was locked onto arbitrary moves and the network fell into repetition draws. This is an inherent issue with Gumbel's improved policy at low branching factors — the paper tuned sigma_q scaling for Go (branching ~250, 800 sims). At DaveChess branching (10-50 legal moves, 128 sims), visits concentrate too heavily.
    - Solution: Use visit count proportions as policy targets (standard AlphaZero) instead of the Gumbel improved policy. Visit counts can't amplify beyond the actual visit distribution. Gumbel Sequential Halving is still used for move selection (efficient with 128 sims). Also set `draw_value_target` to 0.0 (the -0.1 penalty biased mean value targets slightly negative when 75%+ of data is draws, though this was secondary to the policy collapse).
+
+25. **Policy Sharpening Death Spiral — Training Makes Network Worse Than Random (CRITICAL)**: After 5 iterations of training, the network performed WORSE than a random-init network: trained scored 50% vs random MCTS (0W 0L 8D), while random-init scored 62% (2W 0L 6D). Head-to-head, trained lost to random-init 38% (0W 2L 6D). Root cause: 75% of self-play games are draws, so the value head learns to predict ~0 for everything (no useful signal). Without value signal, MCTS visits are driven by policy prior + PUCT/Gumbel noise. Training on noisy visit distributions teaches the network peaked-but-wrong policies (e.g., Rider retreats to corners at 20% prior). The peaked wrong policy then concentrates visits further in the next iteration, creating a self-reinforcing spiral. The network learns confidently wrong habits. This is fundamentally a bootstrapping problem: AlphaZero needs 800 sims + millions of games, while we have 128 sims + 40 games/iter. Gumbel's Sequential Halving exacerbated this by concentrating visits more aggressively than standard MCTS's PUCT exploration.
+   - Solution: Three fixes, all required: (1) Disable Gumbel — standard MCTS distributes visits more broadly via PUCT exploration. (2) Policy entropy regularization (`policy_entropy_weight: 0.1`) — prevents premature policy sharpening. (3) **Reduce training intensity** (the real fix): 200 steps/iter (was 800, which was ~8 passes through buffer causing massive value head overfitting), Muon LR 0.01 (was 0.02), head LR 0.001 (was 0.003). The root cause was value head overfitting to noisy self-play data in ~1 pass, then confidently wrong value evaluations driving MCTS toward bad moves. Policy head freezing and target smoothing were also tried but weren't sufficient alone. Additionally: exclude vs-random data from replay buffer (loss-biased outcomes train pessimistic value head), and re-enable seed data with decaying weight (provides decisive value signal for bootstrapping).
+
+26. **Value Head Noise Overrides Correct Policy Priors (CRITICAL)**: After 39 iterations with all prior fixes (Gumbel disabled, entropy reg, reduced LR, vs-random excluded), training stalled: vs-random flat at ~44%, ELO ~300-358. Diagnostic revealed the value head producing near-zero noisy outputs (+0.06, -0.16, +0.17) for all positions, but tiny Q-value differences completely overrode strong policy priors via MCTS. Example: policy correctly preferred Warrior pushes (43% prior) but value head assigned Q=-0.27 to them and Q=+0.22 to Bombard corner shuffle (3.6% prior), causing 63% of visits to go to the corner shuffle. Training on these corrupted visit distributions taught the policy to unlearn correct preferences. Three contributing factors: (a) cpuct=1.5 was too low — exploration bonus ~0.3 couldn't overcome Q-noise of ±0.2; (b) value_loss_weight=20 meant 28% of gradient pulled trunk features toward fitting noisy value targets; (c) no board flipping meant the network wasted capacity learning separate spatial filters for each color.
+   - Solution: Three fixes: (1) **Board flipping** — flip board vertically for Black so CNN always sees current player moving "up." Standard AlphaZero technique, doubles effective spatial capacity. Applied in `state_to_planes()` and `move_to_policy_index(flip=True)`. (2) **cpuct: 1.5→4.0** — makes MCTS trust policy prior over noisy Q-values during bootstrapping. (3) **value_loss_weight: 20→3.0** — reduces value gradient to ~7% of total, letting policy head lead. Seeds also disabled (White bias). Requires fresh restart (board flipping changes NN encoding).
 
 ### Hardware Constraints (Jetson Orin Nano)
 

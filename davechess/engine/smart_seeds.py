@@ -136,7 +136,8 @@ def generate_smart_seeds(num_games: int = 50, verbose: bool = False) -> ReplayBu
 
             # Create policy (one-hot for actual move)
             policy = np.zeros(POLICY_SIZE, dtype=np.float32)
-            policy[move_to_policy_index(move)] = 1.0
+            flip = state.current_player == Player.BLACK
+            policy[move_to_policy_index(move, flip=flip)] = 1.0
 
             # Create value from game outcome: +1 win, -1 loss, 0 draw
             if winner is None:
@@ -465,10 +466,11 @@ def generate_endgame_seeds(
             game_moves.append(best_move)
 
             # Convert visit policy to policy vector
+            flip = state.current_player == Player.BLACK
             policy = np.zeros(POLICY_SIZE, dtype=np.float32)
             for m, prob in visit_policy.items():
                 try:
-                    idx = move_to_policy_index(m)
+                    idx = move_to_policy_index(m, flip=flip)
                     policy[idx] = prob
                 except (ValueError, IndexError):
                     pass
@@ -687,10 +689,11 @@ def generate_middlegame_checkmate_seeds(
             game_states.append(state.clone())
             game_moves.append(best_move)
 
+            flip = state.current_player == Player.BLACK
             policy = np.zeros(POLICY_SIZE, dtype=np.float32)
             for m, prob in visit_policy.items():
                 try:
-                    idx = move_to_policy_index(m)
+                    idx = move_to_policy_index(m, flip=flip)
                     policy[idx] = prob
                 except (ValueError, IndexError):
                     pass
