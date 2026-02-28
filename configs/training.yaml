@@ -14,10 +14,10 @@ mcts:
   num_simulations: 128         # 128 sims with ~37 legal moves = ~3.5 visits/move.
   min_selfplay_simulations: 128 # Match base sims — adaptive scaling starts from here
   # fixed_selfplay_simulations: 64  # Uncomment to disable adaptive sims entirely
-  cpuct: 2.5                   # Balanced: lets Q-values contribute while still trusting prior.
-                                # Was 4.0 which deadlocked learning from random init (Q never
-                                # broke symmetry). Was 1.5 which let noisy Q override prior.
-                                # With value_scale=0.5 dampening hallucinations, 2.5 is safe.
+  cpuct: 4.0                   # High cpuct trusts policy prior over noisy Q-values.
+                                # At 2.5, self-play games were 100% draws (repetition/turn-limit)
+                                # because low exploration led to cyclic play. 4.0 produces decisive
+                                # games needed for value head learning signal.
   value_scale: 0.5             # Scale NN value predictions before MCTS backprop.
                                 # Raw value head hallucinates ±0.9 on unseen positions;
                                 # scaling to ±0.45 keeps Q within exploration term range.
@@ -65,9 +65,9 @@ training:
                                 # concentrates on legal moves. Entropy reg pushed it back to
                                 # uniform, counteracting the little signal that existed.
   draw_sample_weight: 0.4      # Downweight draw positions in loss vs decisive outcomes
-  steps_per_iteration: 200     # ~1 pass through buffer per iteration.
-                                # Was 800 (~8 passes) which caused massive overfitting
-                                # to noisy self-play data, making value head confidently wrong.
+  steps_per_iteration: 400     # ~2 passes through buffer. Was 200 (1 pass) which was too few
+                                # to learn. Was 800 (~5 passes) which overfit without dropout.
+                                # Dropout (0.3) now prevents value head memorization.
   checkpoint_interval: 100
   elo_probe_interval: 5        # Every 5 iters — watch for improvement with fixed max_moves
   elo_probe_games: 6           # Keep probes under ~1hr at 800 sims
