@@ -321,7 +321,18 @@ class GumbelMCTS:
                 visit_counts[a] += 1
                 total_values[a] += delta
 
-        # Move selection and policy target use improved policy (Gumbel's strength)
+        # Policy target: visit count proportions (Known Issue #24 — improved policy
+        # creates peaked targets from noisy Q-values, causing policy collapse)
+        total_v = visit_counts.sum()
+        if total_v > 0:
+            visit_probs = visit_counts.astype(np.float64) / total_v
+        else:
+            visit_probs = np.ones(num_actions, dtype=np.float64) / num_actions
+
+        policy_target = {move_indices[i]: float(visit_probs[i])
+                         for i in range(num_actions)}
+
+        # Move selection still uses improved policy for better play
         qvalues = np.where(
             visit_counts > 0,
             total_values / np.maximum(visit_counts, 1),
@@ -335,9 +346,6 @@ class GumbelMCTS:
         improved_logits = improved_logits - improved_logits.max()
         improved_policy = np.exp(improved_logits)
         improved_policy = improved_policy / improved_policy.sum()
-
-        policy_target = {move_indices[i]: float(improved_policy[i])
-                         for i in range(num_actions)}
 
         if self.temperature == 0:
             selected_idx = np.argmax(improved_logits)
@@ -592,7 +600,17 @@ class GumbelBatchedSearch:
                 results.append((None, {"policy_target": {}, "root_value": 0.0}))
                 continue
 
-            # Move selection and policy target use improved policy
+            # Policy target: visit count proportions (Known Issue #24)
+            total_v = g["visit_counts"].sum()
+            if total_v > 0:
+                visit_probs = g["visit_counts"].astype(np.float64) / total_v
+            else:
+                visit_probs = np.ones(g["num_actions"], dtype=np.float64) / g["num_actions"]
+
+            policy_target = {g["move_indices"][i]: float(visit_probs[i])
+                             for i in range(g["num_actions"])}
+
+            # Move selection uses improved policy for better play
             qvalues = np.where(
                 g["visit_counts"] > 0,
                 g["total_values"] / np.maximum(g["visit_counts"], 1),
@@ -606,9 +624,6 @@ class GumbelBatchedSearch:
             improved_logits = improved_logits - improved_logits.max()
             improved_policy = np.exp(improved_logits)
             improved_policy = improved_policy / improved_policy.sum()
-
-            policy_target = {g["move_indices"][i]: float(improved_policy[i])
-                             for i in range(g["num_actions"])}
 
             if g["temperature"] == 0 or g["temperature"] < 0.2:
                 selected_idx = np.argmax(improved_logits)
