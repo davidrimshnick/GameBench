@@ -26,9 +26,9 @@ mcts:
   temperature_threshold: 30    # Exploit in middlegame/endgame where tactics matter
 
 gumbel:
-  enabled: true                    # RE-ENABLED: with value head dropout + value_scale,
-                                   # the death spiral (Issue #25) is mitigated. Gumbel produces
-                                   # better policy targets from fewer sims. Issues #23/#24 fixed.
+  enabled: false                   # DISABLED: Gumbel self-play produces 100% draws at random init.
+                                   # Standard MCTS with Dirichlet noise produces decisive games.
+                                   # Re-enable once network learns basic tactics (ELO > 500).
   max_num_considered_actions: 16   # Top-k actions for Sequential Halving
   gumbel_scale: 1.0               # Scale of Gumbel noise
   maxvisit_init: 50.0             # Q-transform: baseline visit scale
