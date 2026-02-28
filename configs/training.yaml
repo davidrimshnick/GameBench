@@ -5,26 +5,30 @@ network:
   num_filters: 256
   input_planes: 18
   board_size: 8
+  value_head_dropout: 0.3          # Prevent value head memorization (Known Issue #27).
+                                    # Without dropout, value head memorizes 15K training positions
+                                    # (loss 0.1) but hallucinates ±0.9 on unseen positions,
+                                    # hijacking MCTS Q-values during self-play.
 
 mcts:
-  num_simulations: 128         # 128 sims with ~50 legal moves = ~2.5 visits/move.
+  num_simulations: 128         # 128 sims with ~37 legal moves = ~3.5 visits/move.
   min_selfplay_simulations: 128 # Match base sims — adaptive scaling starts from here
   # fixed_selfplay_simulations: 64  # Uncomment to disable adaptive sims entirely
-  cpuct: 4.0                   # High cpuct: trust policy prior over noisy value head.
-                                # At cpuct=1.5, tiny Q-value noise (±0.2) overrode 40%+
-                                # policy priors, teaching the policy to unlearn correct
-                                # preferences (e.g., Warrior pushes → Bombard corner shuffles).
-                                # Reduce toward 2.0 once value head produces reliable signal.
+  cpuct: 2.5                   # Balanced: lets Q-values contribute while still trusting prior.
+                                # Was 4.0 which deadlocked learning from random init (Q never
+                                # broke symmetry). Was 1.5 which let noisy Q override prior.
+                                # With value_scale=0.5 dampening hallucinations, 2.5 is safe.
+  value_scale: 0.5             # Scale NN value predictions before MCTS backprop.
+                                # Raw value head hallucinates ±0.9 on unseen positions;
+                                # scaling to ±0.45 keeps Q within exploration term range.
   dirichlet_alpha: 0.15            # Spikier noise for fewer legal moves than Go
   dirichlet_epsilon: 0.4            # 40% noise to break self-play overfitting
   temperature_threshold: 30    # Exploit in middlegame/endgame where tactics matter
 
 gumbel:
-  enabled: false                   # DISABLED: Gumbel Sequential Halving concentrates visits,
-                                   # creating policy sharpening death spiral when value head is
-                                   # weak (75% draws → near-zero values → MCTS driven by prior
-                                   # noise → peaked wrong targets → worse policy → repeat).
-                                   # Standard MCTS distributes visits more broadly via PUCT.
+  enabled: true                    # RE-ENABLED: with value head dropout + value_scale,
+                                   # the death spiral (Issue #25) is mitigated. Gumbel produces
+                                   # better policy targets from fewer sims. Issues #23/#24 fixed.
   max_num_considered_actions: 16   # Top-k actions for Sequential Halving
   gumbel_scale: 1.0               # Scale of Gumbel noise
   maxvisit_init: 50.0             # Q-transform: baseline visit scale
@@ -51,15 +55,15 @@ training:
   head_lr: 0.001                # SGD LR for policy/value heads and biases (reduced from 0.003)
   momentum: 0.9
   weight_decay: 0.0001
-  value_loss_weight: 3.0       # Reduced from 20.0. With 20, value gradient was 28% of total,
-                                # pulling trunk features toward fitting noisy value targets.
-                                # With 3.0, value is ~7% of total — policy head leads training.
+  value_loss_weight: 10.0      # Restored to give value head ~14.5% of gradient.
+                                # With dropout preventing memorization, the value head needs
+                                # enough gradient to learn from decisive game outcomes.
+                                # Raw value loss (~0.1) is ~60x smaller than policy loss (~5.9).
   policy_freeze_iterations: 0  # Disabled
-  policy_entropy_weight: 0.1   # Entropy regularization during bootstrapping phase.
-                                # Keeps policy near-uniform while value head learns from decisive
-                                # games. Without this, noisy MCTS visit targets sharpen the policy
-                                # on wrong moves faster than the value head can correct them.
-                                # Reduce to 0.01 once vs-random consistently > 60%.
+  policy_entropy_weight: 0.0   # DISABLED: was actively fighting learning from random init.
+                                # With legal-move masking in MCTS, the policy head naturally
+                                # concentrates on legal moves. Entropy reg pushed it back to
+                                # uniform, counteracting the little signal that existed.
   draw_sample_weight: 0.4      # Downweight draw positions in loss vs decisive outcomes
   steps_per_iteration: 200     # ~1 pass through buffer per iteration.
                                 # Was 800 (~8 passes) which caused massive overfitting

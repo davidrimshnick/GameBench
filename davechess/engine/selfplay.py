@@ -556,7 +556,8 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
                        random_opponent_fraction: float = 0.0,
                        draw_value_target: float = 0.0,
                        device: str = "cpu",
-                       policy_target_smoothing: float = 0.0) -> tuple[list, dict]:
+                       policy_target_smoothing: float = 0.0,
+                       value_scale: float = 1.0) -> tuple[list, dict]:
     """Run a batch of self-play games sequentially.
 
     Args:
@@ -571,6 +572,7 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
             (no neural network) to prevent self-play overfitting.
         draw_value_target: Value target assigned to drawn positions.
         device: Torch device string.
+        value_scale: Scale factor for NN value predictions in MCTS (0-1).
 
     Returns:
         (all_examples, stats) where stats has game-level statistics.
@@ -580,7 +582,8 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
                 cpuct=cpuct,
                 dirichlet_alpha=dirichlet_alpha,
                 dirichlet_epsilon=dirichlet_epsilon,
-                device=device)
+                device=device,
+                value_scale=value_scale)
     white_wins = 0
     black_wins = 0
     draws = 0
@@ -829,7 +832,8 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
                     eng = MCTS(nn_mcts.network, num_simulations=nn_mcts.num_simulations,
                                cpuct=nn_mcts.cpuct, dirichlet_alpha=nn_mcts.dirichlet_alpha,
                                dirichlet_epsilon=nn_mcts.dirichlet_epsilon,
-                               temperature=temp, device=nn_mcts.device)
+                               temperature=temp, device=nn_mcts.device,
+                               value_scale=nn_mcts.value_scale)
                     engines.append(eng)
 
                 states = [g.state for g in standard_games]
@@ -859,7 +863,8 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                                  device: str = "cpu",
                                  parallel_games: int = 10,
                                  gumbel_config: Optional[dict] = None,
-                                 policy_target_smoothing: float = 0.0) -> tuple[list, dict]:
+                                 policy_target_smoothing: float = 0.0,
+                                 value_scale: float = 1.0) -> tuple[list, dict]:
     """Run self-play games with batched NN evaluation for GPU efficiency.
 
     Plays multiple games simultaneously, collecting leaf evaluations from
@@ -910,7 +915,8 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                    cpuct=cpuct,
                    dirichlet_alpha=dirichlet_alpha,
                    dirichlet_epsilon=dirichlet_epsilon,
-                   device=device)
+                   device=device,
+                   value_scale=value_scale)
     num_random_games = int(num_games * random_opponent_fraction)
     sim_levels = _random_sim_levels(num_simulations)
     random_mcts_by_sims: dict[int, MCTS] = {}
@@ -1007,7 +1013,8 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
                                device: str = "cpu",
                                num_workers: int = 4,
                                gumbel_config: Optional[dict] = None,
-                               policy_target_smoothing: float = 0.0) -> tuple[list, dict]:
+                               policy_target_smoothing: float = 0.0,
+                               value_scale: float = 1.0) -> tuple[list, dict]:
     """Run self-play with multiprocess CPU workers and centralized GPU inference.
 
     Each worker process runs MCTS tree traversal on a subset of games.
@@ -1046,6 +1053,7 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
         "draw_value_target": draw_value_target,
         "cpuct": cpuct,
         "policy_target_smoothing": policy_target_smoothing,
+        "value_scale": value_scale,
     }
     if gumbel_config is not None:
         mcts_config["gumbel_config"] = gumbel_config

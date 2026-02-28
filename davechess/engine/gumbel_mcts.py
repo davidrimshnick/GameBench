@@ -202,7 +202,7 @@ class GumbelMCTS:
         """
         if not HAS_TORCH or self.network is None:
             logits = np.zeros(POLICY_SIZE, dtype=np.float32)
-            return np.ones(POLICY_SIZE) / POLICY_SIZE, logits, 0.0
+            return logits, logits, 0.0
 
         planes = state_to_planes(state)
         x = torch.from_numpy(planes).unsqueeze(0).to(self.device)
@@ -212,6 +212,8 @@ class GumbelMCTS:
             logits_t, value_t = self.network(x)
 
         logits = logits_t[0].cpu().numpy()
+        # Full softmax for Gumbel's own use (action scoring),
+        # but expand() now does legal-move-masked softmax internally
         policy = np.exp(logits - logits.max())
         policy = policy / policy.sum()
         return policy, logits, value_t.item()
@@ -292,9 +294,9 @@ class GumbelMCTS:
                     total_values[a] += v
                 else:
                     # Evaluate and create subtree root
-                    policy, _, child_val = self._evaluate(child_state)
+                    _, child_logits, child_val = self._evaluate(child_state)
                     subtree_root = MCTSNode(state=child_state)
-                    subtree_root.expand(policy)
+                    subtree_root.expand(child_logits)
                     subtrees[a] = subtree_root
                     # child_val from child's perspective; negate for root
                     visit_counts[a] += 1
@@ -310,8 +312,8 @@ class GumbelMCTS:
                     v = _terminal_backprop_value(leaf)
                     leaf.backpropagate(v)
                 else:
-                    policy, _, value = self._evaluate(leaf.state)
-                    leaf.expand(policy)
+                    _, leaf_logits, value = self._evaluate(leaf.state)
+                    leaf.expand(leaf_logits)
                     leaf.backpropagate(-value)
 
                 # Delta at subtree root = value from root's perspective
@@ -563,10 +565,10 @@ class GumbelBatchedSearch:
 
                 # Process new subtree roots (first visits)
                 for idx, (gi, a, child_state) in enumerate(new_roots):
-                    policy, _, value = all_results[idx]
+                    _, logits, value = all_results[idx]
                     g = games[gi]
                     subtree_root = MCTSNode(state=child_state)
-                    subtree_root.expand(policy)
+                    subtree_root.expand(logits)
                     g["subtrees"][a] = subtree_root
                     # value from child's perspective → negate for root
                     g["visit_counts"][a] += 1
@@ -574,9 +576,9 @@ class GumbelBatchedSearch:
 
                 # Process subtree PUCT leaves (re-visits)
                 for idx, (gi, a, old_total, leaf) in enumerate(tree_leaves):
-                    policy, _, value = all_results[n_new + idx]
+                    _, logits, value = all_results[n_new + idx]
                     g = games[gi]
-                    leaf.expand(policy)
+                    leaf.expand(logits)
                     leaf.backpropagate(-value)
                     delta = g["subtrees"][a].total_value - old_total
                     g["visit_counts"][a] += 1

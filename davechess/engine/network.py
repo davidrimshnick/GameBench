@@ -258,7 +258,8 @@ if HAS_TORCH:
         """ResNet policy+value network for DaveChess."""
 
         def __init__(self, num_res_blocks: int = 5, num_filters: int = 64,
-                     input_planes: int = NUM_INPUT_PLANES):
+                     input_planes: int = NUM_INPUT_PLANES,
+                     value_head_dropout: float = 0.0):
             super().__init__()
 
             # Initial convolution
@@ -275,9 +276,10 @@ if HAS_TORCH:
             self.policy_bn = nn.BatchNorm2d(2)
             self.policy_fc = nn.Linear(2 * BOARD_SIZE * BOARD_SIZE, POLICY_SIZE)
 
-            # Value head
+            # Value head — dropout prevents memorization of position values
             self.value_conv = nn.Conv2d(num_filters, 1, 1, bias=False)
             self.value_bn = nn.BatchNorm2d(1)
+            self.value_dropout = nn.Dropout(p=value_head_dropout)
             self.value_fc1 = nn.Linear(BOARD_SIZE * BOARD_SIZE, 64)
             self.value_fc2 = nn.Linear(64, 1)
 
@@ -306,7 +308,9 @@ if HAS_TORCH:
                 v = x.float()
                 v = F.relu(self.value_bn(self.value_conv(v)))
                 v = v.view(v.size(0), -1)
+                v = self.value_dropout(v)
                 v = F.relu(self.value_fc1(v))
+                v = self.value_dropout(v)
                 v = torch.tanh(self.value_fc2(v))
 
             return p, v
@@ -349,8 +353,9 @@ if HAS_TORCH:
             num_res_blocks = max_block + 1
 
             net = cls(num_res_blocks=num_res_blocks, num_filters=num_filters,
-                      input_planes=input_planes)
-            net.load_state_dict(state_dict)
+                      input_planes=input_planes,
+                      value_head_dropout=ckpt.get("value_head_dropout", 0.0))
+            net.load_state_dict(state_dict, strict=False)
             net.eval()
             if device != "cpu":
                 net = net.to(device)

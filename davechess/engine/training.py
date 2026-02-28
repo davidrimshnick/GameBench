@@ -253,10 +253,12 @@ class Trainer:
 
         # Create networks on CPU first — moved to GPU after checkpoint loading
         net_cfg = config.get("network", {})
+        self.value_head_dropout = float(net_cfg.get("value_head_dropout", 0.3))
         self.network = DaveChessNetwork(
             num_res_blocks=net_cfg.get("num_res_blocks", 5),
             num_filters=net_cfg.get("num_filters", 64),
             input_planes=net_cfg.get("input_planes", NUM_INPUT_PLANES),
+            value_head_dropout=self.value_head_dropout,
         )  # CPU initially, moved to GPU in train()
 
         train_cfg = config.get("training", {})
@@ -327,6 +329,7 @@ class Trainer:
             "iteration": self.iteration,
             "elo_estimate": self.elo_estimate,
             "elo_for_sims": self.elo_for_sims,
+            "value_head_dropout": self.value_head_dropout,
         }
         if self.scaler is not None:
             checkpoint["scaler_state"] = self.scaler.state_dict()
@@ -363,6 +366,7 @@ class Trainer:
             "training_step": self.training_step,
             "iteration": self.iteration,
             "elo_estimate": self.elo_estimate,
+            "value_head_dropout": self.value_head_dropout,
         }, path)
         logger.info(f"Saved best model: {path}")
 
@@ -914,6 +918,7 @@ class Trainer:
             draw_value_target=float(sp_cfg.get("draw_value_target", 0.0)),
             policy_target_smoothing=float(sp_cfg.get("policy_target_smoothing", 0.0)),
             device=self.device,
+            value_scale=float(mcts_cfg.get("value_scale", 1.0)),
         )
         if use_gumbel and num_workers > 1:
             # Multiprocess Gumbel: workers run Gumbel MCTS on CPU,

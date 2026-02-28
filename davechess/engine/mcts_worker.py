@@ -52,8 +52,8 @@ class RemoteBatchedEvaluator:
             return []
 
         if not self.use_network:
-            # Random opponent: uniform policy, zero value (no GPU needed)
-            results = [(np.ones(POLICY_SIZE, dtype=np.float32) / POLICY_SIZE, 0.0)
+            # Random opponent: uniform logits, zero value (no GPU needed)
+            results = [(np.zeros(POLICY_SIZE, dtype=np.float32), 0.0)
                        for _ in self._pending]
             self._pending.clear()
             return results
@@ -66,7 +66,9 @@ class RemoteBatchedEvaluator:
 
         resp: BatchResponse = self.response_queue.get(timeout=60)
 
-        results = [(resp.policies[i], float(resp.values[i]))
+        # Return raw logits so expand() can do legal-move-masked softmax
+        logits_source = resp.logits if resp.logits is not None else resp.policies
+        results = [(logits_source[i], float(resp.values[i]))
                    for i in range(len(self._pending))]
         self._pending.clear()
         return results
@@ -165,6 +167,7 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                 dirichlet_alpha=mcts_config.get("dirichlet_alpha", 0.3),
                 dirichlet_epsilon=mcts_config.get("dirichlet_epsilon", 0.25),
                 device="cpu",
+                value_scale=mcts_config.get("value_scale", 1.0),
             )
         else:
             evaluator = RemoteBatchedEvaluator(
@@ -180,6 +183,7 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                 dirichlet_alpha=mcts_config["dirichlet_alpha"],
                 dirichlet_epsilon=mcts_config["dirichlet_epsilon"],
                 device="cpu",
+                value_scale=mcts_config.get("value_scale", 1.0),
             )
 
         # Create per-sim-level random MCTS instances

@@ -138,7 +138,7 @@ class TestBatchedMCTS:
             assert -1.0 <= value <= 1.0
 
     def test_batched_evaluator_no_network(self):
-        """Without a network, should return uniform policy and zero value."""
+        """Without a network, should return uniform logits and zero value."""
         from davechess.engine.mcts import BatchedEvaluator, MCTSNode
         from davechess.engine.network import state_to_planes, POLICY_SIZE
 
@@ -148,10 +148,11 @@ class TestBatchedMCTS:
         evaluator.submit(node, state_to_planes(state))
         results = evaluator.evaluate_batch()
         assert len(results) == 1
-        policy, value = results[0]
+        logits, value = results[0]
         assert abs(value) < 1e-6
-        assert abs(policy.sum() - 1.0) < 1e-5
-        assert policy.shape == (POLICY_SIZE,)
+        # Now returns uniform logits (all zeros), not softmax probs
+        assert abs(logits.sum()) < 1e-5
+        assert logits.shape == (POLICY_SIZE,)
 
     def test_batched_evaluator_empty(self):
         """Empty evaluator should return empty results."""
@@ -230,7 +231,7 @@ class TestBatchedMCTS:
 
 class TestMultiprocessMCTS:
     def test_remote_batched_evaluator_no_network(self):
-        """RemoteBatchedEvaluator with use_network=False returns uniform policy."""
+        """RemoteBatchedEvaluator with use_network=False returns uniform logits."""
         import multiprocessing as mp
         from davechess.engine.mcts_worker import RemoteBatchedEvaluator
         from davechess.engine.mcts import MCTSNode
@@ -247,10 +248,11 @@ class TestMultiprocessMCTS:
         results = evaluator.evaluate_batch()
 
         assert len(results) == 1
-        policy, value = results[0]
+        logits, value = results[0]
         assert abs(value) < 1e-6
-        assert abs(policy.sum() - 1.0) < 1e-5
-        assert policy.shape == (POLICY_SIZE,)
+        # Now returns uniform logits (all zeros), not softmax probs
+        assert abs(logits.sum()) < 1e-5
+        assert logits.shape == (POLICY_SIZE,)
 
     def test_distribute_games(self):
         """Games should be distributed evenly across workers."""

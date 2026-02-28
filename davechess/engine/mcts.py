@@ -63,8 +63,13 @@ class MCTSNode:
             self.state = self.parent.state.clone()
             apply_move_fast(self.state, self.move)
 
-    def expand(self, policy: np.ndarray):
+    def expand(self, policy_logits: np.ndarray):
         """Expand node: create children with moves and priors but NO states.
+
+        Args:
+            policy_logits: Raw logits (not softmax) from the network.
+                Legal-move-masked softmax is applied here so ALL probability
+                mass goes to legal moves (no leakage to illegal moves).
 
         States are materialized lazily on first visit via ensure_state().
         """
@@ -78,12 +83,11 @@ class MCTSNode:
 
         flip = self.state.current_player == Player.BLACK
         move_indices = [move_to_policy_index(m, flip=flip) for m in legal_moves]
-        priors = np.array([policy[idx] for idx in move_indices])
-        prior_sum = priors.sum()
-        if prior_sum > 0:
-            priors = priors / prior_sum
-        else:
-            priors = np.ones(len(legal_moves)) / len(legal_moves)
+        legal_logits = np.array([policy_logits[idx] for idx in move_indices])
+        # Stable softmax over legal moves only — all mass on legal moves
+        legal_logits -= legal_logits.max()
+        exp_logits = np.exp(legal_logits)
+        priors = exp_logits / exp_logits.sum()
 
         for move, prior in zip(legal_moves, priors):
             child = MCTSNode(state=None, parent=self, move=move, prior=prior)
@@ -121,13 +125,13 @@ class BatchedEvaluator:
     def evaluate_batch(self) -> list[tuple[np.ndarray, float]]:
         """Evaluate all pending leaves in a single forward pass.
 
-        Returns list of (policy, value) tuples in submission order.
+        Returns list of (logits, value) tuples in submission order.
         """
         if not self._pending:
             return []
 
         if not HAS_TORCH or self.network is None:
-            results = [(np.ones(POLICY_SIZE) / POLICY_SIZE, 0.0)
+            results = [(np.zeros(POLICY_SIZE), 0.0)
                        for _ in self._pending]
             self._pending.clear()
             return results
@@ -139,10 +143,10 @@ class BatchedEvaluator:
         with torch.no_grad():
             logits, values = self.network(x)
 
-        policies = torch.softmax(logits, dim=1).cpu().numpy()
+        logits_np = logits.cpu().numpy()
         values_np = values.cpu().numpy().flatten()
 
-        results = [(policies[i], float(values_np[i]))
+        results = [(logits_np[i], float(values_np[i]))
                     for i in range(len(self._pending))]
         self._pending.clear()
         return results
@@ -157,7 +161,8 @@ class MCTS:
 
     def __init__(self, network, num_simulations: int = 200, cpuct: float = 1.5,
                  dirichlet_alpha: float = 0.3, dirichlet_epsilon: float = 0.25,
-                 temperature: float = 1.0, device: str = "cpu"):
+                 temperature: float = 1.0, device: str = "cpu",
+                 value_scale: float = 1.0):
         self.network = network
         self.num_simulations = num_simulations
         self.cpuct = cpuct
@@ -165,11 +170,12 @@ class MCTS:
         self.dirichlet_epsilon = dirichlet_epsilon
         self.temperature = temperature
         self.device = device
+        self.value_scale = value_scale
 
     def _evaluate(self, state: GameState) -> tuple[np.ndarray, float]:
-        """Evaluate state with neural network."""
+        """Evaluate state with neural network. Returns raw logits (not softmax)."""
         if not HAS_TORCH or self.network is None:
-            return np.ones(POLICY_SIZE) / POLICY_SIZE, 0.0
+            return np.zeros(POLICY_SIZE), 0.0
 
         planes = state_to_planes(state)
         x = torch.from_numpy(planes).unsqueeze(0).to(self.device)
@@ -178,8 +184,7 @@ class MCTS:
         with torch.no_grad():
             logits, value = self.network(x)
 
-        policy = torch.softmax(logits[0], dim=0).cpu().numpy()
-        return policy, value.item()
+        return logits[0].cpu().numpy(), value.item()
 
     def search(self, state: GameState, add_noise: bool = True) -> MCTSNode:
         """Run MCTS search from state. Returns root node."""
@@ -234,8 +239,8 @@ class MCTS:
                 # value is from current_player's perspective
                 # backpropagate expects value from parent's perspective
                 # parent's current_player is the opponent of node's current_player
-                # so we negate
-                node.backpropagate(-value)
+                # so we negate. Scale to reduce impact of hallucinated values.
+                node.backpropagate(-value * self.value_scale)
 
         return root
 
@@ -386,17 +391,19 @@ class MCTS:
         num_sims = engines[0].num_simulations
         for _ in range(num_sims):
             pending_nodes: list[MCTSNode] = []
+            pending_engines: list[MCTS] = []
 
             for i in range(n):
                 leaf = engines[i].search_one_iteration_batched(roots[i], evaluator)
                 if leaf is not None:
                     pending_nodes.append(leaf)
+                    pending_engines.append(engines[i])
 
             if pending_nodes:
                 results = evaluator.evaluate_batch()
-                for node, (policy, value) in zip(pending_nodes, results):
+                for node, eng, (policy, value) in zip(pending_nodes, pending_engines, results):
                     node.expand(policy)
-                    
+
                     if node.state.done:
                         if node.state.winner is not None:
                             parent_player = node.parent.state.current_player if node.parent else node.state.current_player
@@ -405,6 +412,6 @@ class MCTS:
                             v = 0.0
                         node.backpropagate(v)
                     else:
-                        node.backpropagate(-value)
+                        node.backpropagate(-value * eng.value_scale)
 
         return roots
