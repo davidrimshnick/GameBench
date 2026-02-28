@@ -221,11 +221,21 @@ class MCTS:
             policy, value = self._evaluate(node.state)
             node.expand(policy)
 
-            # value is from current_player's perspective
-            # backpropagate expects value from parent's perspective
-            # parent's current_player is the opponent of node's current_player
-            # so we negate
-            node.backpropagate(-value)
+            # If state became done during expand (checkmate/stalemate without capture),
+            # we must backpropagate the true terminal value, not the NN's value estimate!
+            if node.state.done:
+                if node.state.winner is not None:
+                    parent_player = node.parent.state.current_player if node.parent else node.state.current_player
+                    v = 1.0 if node.state.winner == parent_player else -1.0
+                else:
+                    v = 0.0
+                node.backpropagate(v)
+            else:
+                # value is from current_player's perspective
+                # backpropagate expects value from parent's perspective
+                # parent's current_player is the opponent of node's current_player
+                # so we negate
+                node.backpropagate(-value)
 
         return root
 
@@ -386,6 +396,15 @@ class MCTS:
                 results = evaluator.evaluate_batch()
                 for node, (policy, value) in zip(pending_nodes, results):
                     node.expand(policy)
-                    node.backpropagate(-value)
+                    
+                    if node.state.done:
+                        if node.state.winner is not None:
+                            parent_player = node.parent.state.current_player if node.parent else node.state.current_player
+                            v = 1.0 if node.state.winner == parent_player else -1.0
+                        else:
+                            v = 0.0
+                        node.backpropagate(v)
+                    else:
+                        node.backpropagate(-value)
 
         return roots

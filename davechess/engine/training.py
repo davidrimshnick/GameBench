@@ -493,7 +493,10 @@ class Trainer:
             if entropy_weight > 0:
                 log_probs = torch.log_softmax(policy_logits, dim=1)
                 probs = torch.softmax(policy_logits, dim=1)
-                per_example_entropy = -torch.sum(probs * log_probs, dim=1)
+                # Only compute entropy over legal moves (identified by non-zero targets)
+                # to prevent the network from being rewarded for predicting illegal moves.
+                legal_mask = (policies_t > 0).float()
+                per_example_entropy = -torch.sum(probs * log_probs * legal_mask, dim=1)
                 entropy_bonus = torch.mean(per_example_entropy * sample_weights.squeeze(1))
 
             if policy_frozen:
@@ -1087,21 +1090,6 @@ class Trainer:
             self.save_checkpoint(save_buffer=True)
             return
 
-        policy_freeze_iters = int(train_cfg.get("policy_freeze_iterations", 0))
-        if policy_freeze_iters > 0 and self.iteration <= policy_freeze_iters:
-            logger.info(f"Training phase... (POLICY HEAD FROZEN, iter {self.iteration}/{policy_freeze_iters})")
-        else:
-            logger.info("Training phase...")
-        batch_size = train_cfg.get("batch_size", 256)
-        max_steps = train_cfg.get("steps_per_iteration", 1000)
-        # Scale steps to buffer size: ~2 passes through the data, capped at max_steps.
-        # Prevents overfitting when buffer is small (e.g. 2K positions × 300 steps = 16x overfit).
-        buf_size = len(self.replay_buffer)
-        steps = min(max_steps, max(1, (buf_size * 2) // batch_size))
-        if steps < max_steps:
-            logger.info(f"Scaled training steps {max_steps} -> {steps} for buffer size {buf_size}")
-        checkpoint_interval = train_cfg.get("checkpoint_interval", 500)
-
         # Log seed sampling weight for this iteration
         seed_cfg = train_cfg
         seed_w_init = float(seed_cfg.get("seed_sample_weight_init", 1.0))
@@ -1111,6 +1099,28 @@ class Trainer:
         if seed_w_decay < 1.0:
             logger.info(f"Seed sampling weight: {current_seed_weight:.3f} "
                         f"(init={seed_w_init}, decay={seed_w_decay}, iter={self.iteration})")
+
+        policy_freeze_iters = int(train_cfg.get("policy_freeze_iterations", 0))
+        if policy_freeze_iters > 0 and self.iteration <= policy_freeze_iters:
+            logger.info(f"Training phase... (POLICY HEAD FROZEN, iter {self.iteration}/{policy_freeze_iters})")
+        else:
+            logger.info("Training phase...")
+        batch_size = train_cfg.get("batch_size", 256)
+        max_steps = train_cfg.get("steps_per_iteration", 1000)
+        
+        # Scale steps to EFFECTIVE buffer size: ~2 passes through the data, capped at max_steps.
+        # If seed_weight is 0, we only sample from decisive+draws. We must not use the full
+        # buffer size for step scaling, otherwise we overfit massively to the tiny self-play partitions.
+        parts = self.replay_buffer.partition_sizes()
+        if current_seed_weight < 1e-5 and (parts["decisive"] + parts["draws"]) > 0:
+            effective_buf_size = parts["decisive"] + parts["draws"]
+        else:
+            effective_buf_size = len(self.replay_buffer)
+            
+        steps = min(max_steps, max(1, (effective_buf_size * 2) // batch_size))
+        if steps < max_steps:
+            logger.info(f"Scaled training steps {max_steps} -> {steps} for effective buffer size {effective_buf_size}")
+        checkpoint_interval = train_cfg.get("checkpoint_interval", 500)
 
         total_loss_sum = 0.0
         policy_loss_sum = 0.0
