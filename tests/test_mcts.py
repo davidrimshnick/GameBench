@@ -312,6 +312,29 @@ class TestMultiprocessMCTS:
         assert len(examples) > 0
         assert stats["num_random_games"] == 2
 
+    def test_aggregate_multiprocess_results_requires_complete_game_set(self):
+        """Aggregation should fail loudly if any game result is missing."""
+        from davechess.engine.selfplay import _aggregate_multiprocess_results
+
+        partial_results = {
+            0: [{
+                "game_idx": 0,
+                "game_type": "selfplay",
+                "training_data": [],
+                "game_record": {
+                    "winner": "draw",
+                    "length": 1,
+                    "draw_reason": "turn_limit",
+                    "moves": [],
+                },
+            }],
+        }
+
+        with pytest.raises(RuntimeError, match="incomplete game results"):
+            _aggregate_multiprocess_results(
+                partial_results, num_games=2, num_random_games=0
+            )
+
 
 class TestGumbelActionSelection:
     def test_gumbel_search_temp0_ignores_root_gumbel_for_played_move(self, monkeypatch):

@@ -12,8 +12,10 @@ GameBench measures how efficiently LLMs learn novel strategic reasoning from exa
 
 **Fresh restart (2026-02-24).** Previous run stalled at 39 iterations (vs-random ~44%, ELO ~300-358). Value head noise overrode correct policy priors via MCTS Q-values. Three fixes: (1) board flipping, (2) cpuct 1.5→4.0, (3) value_loss_weight 20→3. Seeds disabled. See Known Issue #26.
 
+**Update (2026-03-01).** Added fail-closed guards for self-play/training so worker failures or non-finite losses cannot silently continue and overwrite `best.pt` (Known Issue #28).
+
 ### What's done
-- All training pipeline bugs fixed (Known Issues #15-26)
+- All training pipeline bugs fixed (Known Issues #15-28)
 - **Pure AlphaZero** — single continuously-updated network, no best/training split, no eval gatekeeper
 - **Muon optimizer** — Newton-Schulz for trunk conv weights ONLY (21 params), SGD for heads/FC/biases/BN (54 params). **Never apply Muon to classification heads** (Known Issue #20).
 - **Board flipping** — Black board flipped vertically so CNN always sees current player "moving up." Requires `flip=True` on `move_to_policy_index()` for Black. Incompatible with old checkpoints.
@@ -26,6 +28,7 @@ GameBench measures how efficiently LLMs learn novel strategic reasoning from exa
 - **40 games/iter**, MCTSLite ELO probes every 5 iters (800 NN sims vs MCTSLite-50 baseline ≈ 300 ELO)
 - **Hot-reload config** — `training.yaml` re-read each iteration (architecture preserved)
 - AMP overflow guard, hot-reload buffer resizing/LR, existing buffer carry-over, vs-random excluded from buffer, grad clipping scoped to SGD heads only
+- Fail-closed training guards: abort on incomplete multiprocess self-play results, zero-example self-play batches, or non-finite losses (prevents silent checkpoint poisoning)
 - Benchmark: sandbox + `agent_cli.py`, leaderboard at `docs/index.html`, automation scripts, integrity rules
 - `DaveChessNetwork.from_checkpoint()` auto-infers architecture from weights
 
@@ -161,7 +164,7 @@ Issues #1-14 are historical fixes from v1/v2 game design and early training. Key
 | 13 | Threefold repetition loops | Position key includes resource affordability buckets | Fixed |
 | 14 | Self-play overfitting | Dirichlet α=0.15, ε=0.4, 25% random opponent games | Fixed |
 
-### Critical Training Bugs (#15-26)
+### Critical Training Bugs (#15-28)
 
 **#15 Eval excluded draws**: `wins/(wins+losses)` inflated ELO. Fix: `(wins + 0.5*draws) / total`.
 
@@ -186,6 +189,10 @@ Issues #1-14 are historical fixes from v1/v2 game design and early training. Key
 **#25 Policy sharpening death spiral**: Training made network worse than random init. Root cause: value head overfitting to noisy data in 800 steps/iter → confidently wrong Q-values → peaked wrong policies. Fix: disable Gumbel, entropy reg, reduce to 200 steps/iter + lower LR.
 
 **#26 Value noise overrides policy (CRITICAL)**: At cpuct=1.5, Q-noise of ±0.2 overrode 40%+ policy priors. value_loss_weight=20 gave 28% gradient to noisy targets. No board flipping wasted capacity. Fix: board flipping + cpuct=4.0 + value_loss_weight=3.0. **Required fresh restart.**
+
+**#27 Value-head memorization/regression**: Value head fit replay targets too aggressively and produced brittle out-of-distribution estimates, destabilizing search over time. Fix: value-head dropout + reduced training intensity and tuned loss weighting to improve generalization.
+
+**#28 Fail-open training pipeline after self-play/NaN failures (CRITICAL)**: Multiprocess self-play worker failures and non-finite losses could still allow training/checkpointing to proceed, including `best.pt` updates, silently poisoning model history. Fix: hard-fail on missing worker/game results, zero-example self-play batches, and non-finite per-step/average losses so bad iterations stop immediately.
 
 ## File Structure
 

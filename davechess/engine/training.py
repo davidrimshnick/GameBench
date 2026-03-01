@@ -515,10 +515,19 @@ class Trainer:
 
         is_muon = isinstance(self.optimizer, MuonSGD)
 
+        def _assert_finite_losses(policy_loss, value_loss, total_loss):
+            if not torch.isfinite(policy_loss).item():
+                raise RuntimeError(f"Non-finite policy loss at step {self.training_step}")
+            if not torch.isfinite(value_loss).item():
+                raise RuntimeError(f"Non-finite value loss at step {self.training_step}")
+            if not torch.isfinite(total_loss).item():
+                raise RuntimeError(f"Non-finite total loss at step {self.training_step}")
+
         if self.scaler is not None:
             with autocast("cuda"):
                 policy_logits, value_pred = self.network(planes_t)
                 policy_loss, value_loss, total_loss, value_scale, entropy_bonus = _compute_losses(policy_logits, value_pred)
+            _assert_finite_losses(policy_loss, value_loss, total_loss)
 
             self.scaler.scale(total_loss).backward()
             # Zero policy head gradients if frozen (value head + trunk still learn)
@@ -560,6 +569,7 @@ class Trainer:
         else:
             policy_logits, value_pred = self.network(planes_t)
             policy_loss, value_loss, total_loss, value_scale, entropy_bonus = _compute_losses(policy_logits, value_pred)
+            _assert_finite_losses(policy_loss, value_loss, total_loss)
 
             total_loss.backward()
             # Zero policy head gradients if frozen (value head + trunk still learn)
@@ -998,6 +1008,21 @@ class Trainer:
         total_selfplay_games = (
             sp_stats["white_wins"] + sp_stats["black_wins"] + sp_stats["draws"]
         )
+        expected_games = int(sp_cfg.get("num_games_per_iteration", 100))
+        if total_selfplay_games != expected_games:
+            raise RuntimeError(
+                "Self-play produced incomplete game batch: "
+                f"got {total_selfplay_games}, expected {expected_games}"
+            )
+        expected_random_games = int(
+            expected_games * float(sp_cfg.get("random_opponent_fraction", 0.0))
+        )
+        expected_training_games = expected_games - expected_random_games
+        if expected_training_games > 0 and num_new_examples == 0:
+            raise RuntimeError(
+                "Self-play produced zero training examples despite non-random "
+                f"games (expected {expected_training_games} self-play games)"
+            )
         draw_rate = sp_stats["draws"] / total_selfplay_games if total_selfplay_games else 0.0
         decisive_rate = (
             (sp_stats["white_wins"] + sp_stats["black_wins"]) / total_selfplay_games
@@ -1167,6 +1192,11 @@ class Trainer:
             "avg_value_loss": value_loss_sum / steps if steps > 0 else 0,
             "avg_value_scale": value_scale_sum / steps if steps > 0 else 0,
         }
+        if not all(math.isfinite(v) for v in avg_losses.values()):
+            raise RuntimeError(
+                "Non-finite average losses detected after training phase: "
+                f"{avg_losses}"
+            )
         logger.info(f"Training: policy={avg_losses['avg_policy_loss']:.3f} "
                      f"value={avg_losses['avg_value_loss']:.4f}")
 

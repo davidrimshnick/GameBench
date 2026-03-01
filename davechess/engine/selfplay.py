@@ -1091,6 +1091,14 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
         except Exception as e:
             logger.warning(f"Timeout waiting for worker results: {e}")
 
+    missing_workers = sorted(set(range(num_workers)) - set(all_worker_results.keys()))
+    if missing_workers:
+        raise RuntimeError(
+            "Multiprocess self-play missing worker results "
+            f"from workers {missing_workers} "
+            f"({len(all_worker_results)}/{num_workers} reported)"
+        )
+
     # Wait for workers to exit
     for p in workers:
         p.join(timeout=10)
@@ -1165,6 +1173,12 @@ def _aggregate_multiprocess_results(all_worker_results: dict, num_games: int,
     for worker_id, results in all_worker_results.items():
         all_game_results.extend(results)
     all_game_results.sort(key=lambda r: r["game_idx"])
+
+    if len(all_game_results) != num_games:
+        raise RuntimeError(
+            "Multiprocess self-play returned incomplete game results: "
+            f"got {len(all_game_results)} games, expected {num_games}"
+        )
 
     for r in all_game_results:
         # Only add self-play examples to buffer — vs-random data is heavily
