@@ -465,8 +465,19 @@ class Trainer:
         draw_sample_weight = float(self.config.get("training", {}).get("draw_sample_weight", 1.0))
 
         def _compute_losses(policy_logits, value_pred):
+            # Legal-move masked cross-entropy: compute softmax only over legal
+            # moves so gradient focuses on move quality, not legality detection.
+            # Without masking, softmax over 4288 moves (only ~28 legal) wastes
+            # most gradient suppressing illegal logits instead of learning which
+            # legal move is best.
+            legal_mask = policies_t > 0  # (batch, 4288) bool
+            neg_inf = torch.tensor(float("-inf"), device=policy_logits.device)
+            masked_logits = torch.where(legal_mask, policy_logits, neg_inf)
+            log_probs = torch.log_softmax(masked_logits, dim=1)
+            # Zero out illegal positions to avoid 0 * (-inf) = nan
+            log_probs = torch.where(legal_mask, log_probs, torch.zeros_like(log_probs))
             per_example_policy_loss = -torch.sum(
-                policies_t * torch.log_softmax(policy_logits, dim=1), dim=1
+                policies_t * log_probs, dim=1
             )
             per_example_value_loss = (value_pred - values_t) ** 2
 
@@ -495,12 +506,11 @@ class Trainer:
             entropy_weight = float(self.config.get("training", {}).get("policy_entropy_weight", 0.0))
             entropy_bonus = torch.tensor(0.0, device=policy_logits.device)
             if entropy_weight > 0:
-                log_probs = torch.log_softmax(policy_logits, dim=1)
-                probs = torch.softmax(policy_logits, dim=1)
-                # Only compute entropy over legal moves (identified by non-zero targets)
-                # to prevent the network from being rewarded for predicting illegal moves.
-                legal_mask = (policies_t > 0).float()
-                per_example_entropy = -torch.sum(probs * log_probs * legal_mask, dim=1)
+                # Reuse legal-move masked logits for consistent entropy computation
+                log_probs = torch.log_softmax(masked_logits, dim=1)
+                probs = torch.softmax(masked_logits, dim=1)
+                # Entropy only over legal moves (illegal have 0 prob from masking)
+                per_example_entropy = -torch.sum(probs * log_probs * legal_mask.float(), dim=1)
                 entropy_bonus = torch.mean(per_example_entropy * sample_weights.squeeze(1))
 
             if policy_frozen:
