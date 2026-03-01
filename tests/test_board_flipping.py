@@ -69,16 +69,16 @@ class TestBoardFlipPlanes:
         gold_black = set(zip(*np.where(planes_black[10] > 0)))
         assert gold_white == gold_black
 
-    def test_player_indicator_preserved(self):
-        """Player indicator plane should be 1 for White, 0 for Black."""
+    def test_side_to_move_plane_is_constant(self):
+        """Side-to-move plane should remain constant in current-player frame."""
         state = GameState()
         planes_w = state_to_planes(state)
-        assert planes_w[11, 0, 0] == 1.0  # White
+        assert np.all(planes_w[11] == 1.0)
 
         legal = generate_legal_moves(state)
         apply_move(state, legal[0])
         planes_b = state_to_planes(state)
-        assert planes_b[11, 0, 0] == 0.0  # Black
+        assert np.all(planes_b[11] == 1.0)
 
     def test_last_move_flipped_for_black(self):
         """Last move source/dest planes should be flipped for Black."""
