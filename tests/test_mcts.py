@@ -386,19 +386,20 @@ class TestGumbelActionSelection:
 
 
 class TestGumbelConsideredActions:
-    def test_effective_considered_actions_expands_with_budget(self):
+    def test_effective_considered_actions_capped_at_max_k(self):
         from davechess.engine.gumbel_mcts import _effective_considered_actions
 
-        # If we can afford one root visit per action, don't hard-prune to max_k.
-        assert _effective_considered_actions(50, 16, 128) == 50
+        # k must be capped at max_num_considered_actions so Sequential Halving
+        # concentrates simulations on the most promising moves.
+        assert _effective_considered_actions(50, 16, 128) == 16
 
-    def test_effective_considered_actions_respects_sim_budget(self):
+    def test_effective_considered_actions_uses_fewer_when_less_legal(self):
         from davechess.engine.gumbel_mcts import _effective_considered_actions
 
-        # Can't cover more actions than total simulations.
-        assert _effective_considered_actions(200, 16, 128) == 128
+        # When fewer legal moves than max_k, use all of them.
         assert _effective_considered_actions(10, 16, 128) == 10
-        assert _effective_considered_actions(200, 0, 32) == 32
+        # When more legal moves, cap at max_k regardless of sim budget.
+        assert _effective_considered_actions(200, 16, 128) == 16
 
 
 class TestTrainingConfigPassThrough:

@@ -26,9 +26,10 @@ mcts:
   temperature_threshold: 30    # Exploit in middlegame/endgame where tactics matter
 
 gumbel:
-  enabled: false                   # DISABLED: Gumbel self-play produces 100% draws at random init.
-                                   # Standard MCTS with Dirichlet noise produces decisive games.
-                                   # Re-enable once network learns basic tactics (ELO > 500).
+  enabled: true                    # Re-enabled: legal-move masking + value dropout + value_scale
+                                   # should prevent the draw spiral seen at random init before.
+                                   # Sequential Halving concentrates 128 sims on top-16 moves
+                                   # (8 visits each vs 3.5 with standard MCTS).
   max_num_considered_actions: 16   # Top-k actions for Sequential Halving
   gumbel_scale: 1.0               # Scale of Gumbel noise
   maxvisit_init: 50.0             # Q-transform: baseline visit scale
@@ -69,7 +70,7 @@ training:
                                 # to learn. Was 800 (~5 passes) which overfit without dropout.
                                 # Dropout (0.3) now prevents value head memorization.
   checkpoint_interval: 100
-  elo_probe_interval: 5        # Every 5 iters — watch for improvement with fixed max_moves
+  elo_probe_interval: 999      # Disabled until vs-random is 100%. Each probe wastes ~90min.
   elo_probe_games: 6           # Keep probes under ~1hr at 800 sims
   elo_probe_mctslite_sims: 50
   elo_probe_nn_sims: 800       # AlphaZero-level search for accurate measurement

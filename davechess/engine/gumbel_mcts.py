@@ -75,16 +75,17 @@ def _effective_considered_actions(num_actions: int,
                                   num_simulations: int) -> int:
     """Choose how many root actions Sequential Halving may consider.
 
-    In high-branching games, a fixed small k (e.g., 16) can permanently
-    hide tactical actions as soon as priors become slightly biased. When
-    the simulation budget can cover more actions, expand k accordingly.
+    Caps at max_num_considered_actions (default 16) so that Sequential
+    Halving concentrates simulations on the most promising moves.
+    Without this cap, k=num_actions and Gumbel degenerates to spreading
+    sims uniformly across all legal moves (~3.5 visits each with 128
+    sims and 37 legal moves), producing near-uniform policy targets
+    that the network cannot learn from.
     """
     if num_actions <= 0:
         return 0
 
-    sims_cap = min(num_actions, max(1, int(num_simulations)))
-    base_k = max(1, int(max_num_considered_actions))
-    return min(num_actions, max(base_k, sims_cap))
+    return min(num_actions, max(1, int(max_num_considered_actions)))
 
 
 def _qtransform(qvalues: np.ndarray, visit_counts: np.ndarray,
