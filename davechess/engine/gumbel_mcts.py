@@ -61,10 +61,12 @@ def _get_sequence_of_considered_visits(max_k: int, num_simulations: int) -> list
                 sequence.append(visits[i])
                 if len(sequence) >= num_simulations:
                     break
+            # Increment after EACH sweep so visit levels stay in sync
+            # with actual MCTS visit counts during search.
+            for i in range(num_considered):
+                visits[i] += 1
             if len(sequence) >= num_simulations:
                 break
-        for i in range(num_considered):
-            visits[i] += 1
         num_considered = max(2, num_considered // 2)
 
     return sequence[:num_simulations]

@@ -1,11 +1,16 @@
-"""Tests for Gumbel Sequential Halving k-cap.
+"""Tests for Gumbel Sequential Halving k-cap and visit concentration.
 
 The k (number of considered actions) must be capped at max_num_considered_actions
 so that Sequential Halving concentrates simulations on the most promising moves.
 Without capping, k=num_actions and Gumbel produces near-uniform visit distributions
 that are indistinguishable from random.
+
+Additionally, Sequential Halving must produce a schedule where visit levels
+stay in sync with actual MCTS visit counts, so that later phases properly
+halve the considered set and concentrate visits on fewer actions.
 """
 
+import math
 import numpy as np
 import pytest
 
@@ -53,12 +58,74 @@ class TestEffectiveConsideredActions:
         assert _effective_considered_actions(0, 16, 128) == 0
 
 
+class TestSequentialHalvingSchedule:
+    """Verify the visit schedule produces proper halving concentration."""
+
+    def test_schedule_length_matches_sims(self):
+        """Schedule length should equal num_simulations."""
+        for k in [2, 4, 8, 16]:
+            for sims in [32, 64, 128]:
+                seq = _get_sequence_of_considered_visits(k, sims)
+                assert len(seq) == sims, f"k={k}, sims={sims}: len={len(seq)}"
+
+    def test_schedule_visit_levels_increment(self):
+        """Visit levels should increment after each sweep of k actions.
+
+        With k=16 and 128 sims, the first 16 entries should be cv=0
+        (one per action), then next 16 should be cv=1, etc.
+        """
+        seq = _get_sequence_of_considered_visits(16, 128)
+        # First sweep: cv=0 for 16 entries
+        assert all(v == 0 for v in seq[:16]), (
+            f"First 16 entries should all be 0, got {seq[:16]}"
+        )
+        # Second sweep: cv=1 for 16 entries
+        assert all(v == 1 for v in seq[16:32]), (
+            f"Entries 16-31 should all be 1, got {seq[16:32]}"
+        )
+
+    def test_schedule_halves_considered_set(self):
+        """After each phase, entries per visit level should halve."""
+        seq = _get_sequence_of_considered_visits(16, 128)
+        from collections import Counter
+        counts = Counter(seq)
+        # Phase 1 (nc=16): cv=0 and cv=1 each have 16 entries
+        assert counts[0] == 16, f"cv=0 count={counts[0]}, expected 16"
+        assert counts[1] == 16, f"cv=1 count={counts[1]}, expected 16"
+        # Phase 2 (nc=8): cv=2..5 each have 8 entries
+        for cv in range(2, 6):
+            assert counts[cv] == 8, f"cv={cv} count={counts[cv]}, expected 8"
+        # Phase 3 (nc=4): cv=6..13 each have 4 entries
+        for cv in range(6, 14):
+            assert counts[cv] == 4, f"cv={cv} count={counts[cv]}, expected 4"
+        # Phase 4 (nc=2): cv=14+ each have 2 entries
+        for cv in range(14, 30):
+            assert counts[cv] == 2, f"cv={cv} count={counts[cv]}, expected 2"
+
+    def test_schedule_not_uniform(self):
+        """Schedule should have many distinct visit levels, not just 4.
+
+        Old broken schedule had only 4 levels (0,1,2,3), each repeated 32 times,
+        which produced uniform visits. Fixed schedule has 30 distinct levels.
+        """
+        seq = _get_sequence_of_considered_visits(16, 128)
+        unique_levels = len(set(seq))
+        assert unique_levels >= 10, (
+            f"Only {unique_levels} unique visit levels — schedule may be broken. "
+            f"Expected 30 levels with k=16, sims=128."
+        )
+
+    def test_k1_schedule(self):
+        """With k=1, schedule should be simple ascending."""
+        seq = _get_sequence_of_considered_visits(1, 10)
+        assert seq == list(range(10))
+
+
 class TestGumbelVisitConcentration:
     """Verify Gumbel search concentrates visits on top-k actions."""
 
-    def test_visit_distribution_peaked(self):
+    def test_visit_distribution_peaked_small_k(self):
         """With k=4 and 128 sims on 10 legal moves, visits concentrate on top-4."""
-        # Starting position has 10 legal moves; use max_k=4 to force concentration
         gumbel = GumbelMCTS(
             network=None,
             num_simulations=128,
@@ -87,12 +154,46 @@ class TestGumbelVisitConcentration:
             f"Sequential Halving should only visit top-k actions."
         )
 
-        # Top action should have significantly more visits than uniform over all moves
+        # Top action should have significantly more visits than uniform
         max_visits = visits.max()
-        uniform_visits = 128 / num_legal  # 12.8 if all 10 visited
+        uniform_visits = 128 / num_legal  # 12.8
         assert max_visits > uniform_visits * 2, (
-            f"Max visits {max_visits} not much above uniform {uniform_visits:.1f}. "
-            f"Sequential Halving isn't concentrating visits."
+            f"Max visits {max_visits} not much above uniform {uniform_visits:.1f}."
+        )
+
+    def test_visit_distribution_not_uniform_k16(self):
+        """With k=16 (all 10 legal moves), visits should NOT be uniform.
+
+        This is the critical test. With the old broken schedule, all k actions
+        got exactly sims/k visits each (perfectly uniform). With the fixed
+        schedule, Sequential Halving concentrates visits on top actions.
+        """
+        gumbel = GumbelMCTS(
+            network=None,
+            num_simulations=128,
+            max_num_considered_actions=16,
+            cpuct=4.0,
+            value_scale=0.1,
+        )
+
+        state = GameState()
+        legal_moves = generate_legal_moves(state)
+        num_legal = len(legal_moves)
+
+        move, info = gumbel.search(state)
+
+        visit_counts = info["visit_counts"]
+        visits = np.array([visit_counts.get(i, 0) for i in range(num_legal)])
+
+        # Visit distribution should NOT be perfectly uniform
+        # With 10 actions and 128 sims, uniform would be 12.8 each
+        max_v = visits.max()
+        min_v = visits[visits > 0].min() if (visits > 0).any() else 0
+
+        # Max should be significantly above min (concentration)
+        assert max_v >= min_v * 2, (
+            f"Visits nearly uniform: max={max_v}, min={min_v}. "
+            f"Sequential Halving should concentrate visits."
         )
 
     def test_policy_target_has_limited_nonzero_entries(self):
@@ -130,9 +231,9 @@ class TestGumbelVisitConcentration:
         move, info = gumbel.search(state)
         max_prob = max(info["policy_target"].values())
 
-        # With k=16 and 128 sims, top move should get > 15% of visits
-        # (uniform over 16 would be 6.25%, Sequential Halving concentrates more)
-        assert max_prob > 0.10, (
+        # With proper Sequential Halving, top move should get >>6.25% of visits
+        # (uniform over 16 would be 6.25%)
+        assert max_prob > 0.15, (
             f"Max policy target prob {max_prob:.3f} is too low. "
-            f"Expected > 0.10 with Sequential Halving on k=16."
+            f"Expected > 0.15 with Sequential Halving."
         )
