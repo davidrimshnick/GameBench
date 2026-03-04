@@ -36,14 +36,14 @@ gumbel:
   value_scale: 0.1                # Q-transform: Q-value scaling factor
 
 selfplay:
-  num_games_per_iteration: 40  # More games = more diverse data, less overfitting per position
+  num_games_per_iteration: 20  # Fewer games = faster iterations. With 50% vs-random, 10 decisive + 10 draws.
   replay_buffer_size: 20000    # Total (informational only, actual = seed + decisive + draw)
   buffer_seed_size: 12000      # Permanent seed partition (checkmates, tactical wins)
   buffer_decisive_size: 10000  # Circular: self-play decisive positions — ~25% turnover/iter
   buffer_draw_size: 5000       # Circular: self-play draw positions — ~25% turnover/iter
   num_workers: 4               # CPU worker processes for MCTS tree traversal
   min_buffer_size: 1000        # Train immediately on seed games
-  random_opponent_fraction: 0.25  # 25% vs random MCTS — enough diversity without wasting data
+  random_opponent_fraction: 0.5   # 50% vs random for decisive signal to bootstrap value head
   parallel_games: 20             # Fallback for single-process mode (multiprocess ignores this)
   draw_value_target: 0.0       # Neutral — -0.1 caused systematic pessimism (75%+ of data is draws)
   policy_target_smoothing: 0.0 # Disabled for now.
