@@ -1110,13 +1110,14 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
 
 
 def _random_sim_levels(nn_sims: int) -> list[int]:
-    """Generate random opponent sim levels scaled to the NN's sim count.
+    """Generate random opponent sim levels much weaker than the NN.
 
-    Returns 5 levels spanning 25%-100% of the NN's simulations.
-    At nn_sims=100: [25, 44, 63, 81, 100]. At nn_sims=25: [7, 12, 16, 21, 25].
+    Returns 5 levels at 5-25 sims so the NN has a clear search advantage.
+    This produces decisive games that provide strong value signal for
+    bootstrapping from random init. The old scaling (25-100% of nn_sims)
+    made the random opponent equally strong, eliminating the learning signal.
     """
-    levels = [max(5, int(nn_sims * f)) for f in [0.25, 0.44, 0.63, 0.81, 1.0]]
-    return levels
+    return [5, 10, 15, 20, 25]
 
 
 # Legacy constant kept for backward compat (unused in active code paths)
