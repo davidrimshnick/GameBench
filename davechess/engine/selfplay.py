@@ -906,6 +906,7 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
             gumbel_scale=gumbel_config.get("gumbel_scale", 1.0),
             maxvisit_init=gumbel_config.get("maxvisit_init", 50.0),
             value_scale=gumbel_config.get("value_scale", 0.1),
+            backprop_value_scale=gumbel_config.get("backprop_value_scale", 1.0),
             device=device,
         )
         logger.info(f"Using Gumbel MCTS (k={gumbel_search.max_num_considered_actions}, "

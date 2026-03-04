@@ -150,6 +150,7 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                 gumbel_scale=gumbel_config.get("gumbel_scale", 1.0),
                 maxvisit_init=gumbel_config.get("maxvisit_init", 50.0),
                 value_scale=gumbel_config.get("value_scale", 0.1),
+                backprop_value_scale=gumbel_config.get("backprop_value_scale", 1.0),
                 device="cpu",
                 evaluator=remote_eval,
             )

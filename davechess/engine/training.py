@@ -924,6 +924,8 @@ class Trainer:
                 "gumbel_scale": gumbel_cfg.get("gumbel_scale", 1.0),
                 "maxvisit_init": gumbel_cfg.get("maxvisit_init", 50.0),
                 "value_scale": gumbel_cfg.get("value_scale", 0.1),
+                # Use mcts.value_scale for subtree backprop to match standard MCTS dampening
+                "backprop_value_scale": float(mcts_cfg.get("value_scale", 1.0)),
             }
 
         sp_kwargs = dict(

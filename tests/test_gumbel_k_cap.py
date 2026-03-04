@@ -18,6 +18,7 @@ from davechess.engine.gumbel_mcts import (
     _effective_considered_actions,
     _get_sequence_of_considered_visits,
     GumbelMCTS,
+    GumbelBatchedSearch,
 )
 from davechess.game.state import GameState
 from davechess.game.rules import generate_legal_moves
@@ -237,3 +238,64 @@ class TestGumbelVisitConcentration:
             f"Max policy target prob {max_prob:.3f} is too low. "
             f"Expected > 0.15 with Sequential Halving."
         )
+
+
+class TestBackpropValueScale:
+    """Verify backprop_value_scale dampens NN value predictions in subtrees.
+
+    Standard MCTS uses value_scale to dampen hallucinated NN predictions
+    during backpropagation. Gumbel MCTS must do the same via backprop_value_scale,
+    otherwise confident-but-wrong ±1.0 predictions dominate Q-values.
+    """
+
+    def test_default_backprop_scale_is_one(self):
+        """Default backprop_value_scale should be 1.0 (no dampening)."""
+        gumbel = GumbelMCTS(
+            network=None, num_simulations=32,
+            max_num_considered_actions=4,
+        )
+        assert gumbel.backprop_value_scale == 1.0
+
+    def test_custom_backprop_scale(self):
+        """backprop_value_scale should be settable."""
+        gumbel = GumbelMCTS(
+            network=None, num_simulations=32,
+            max_num_considered_actions=4,
+            backprop_value_scale=0.5,
+        )
+        assert gumbel.backprop_value_scale == 0.5
+
+    def test_batched_default_backprop_scale(self):
+        """GumbelBatchedSearch default backprop_value_scale should be 1.0."""
+        gbs = GumbelBatchedSearch(
+            network=None, num_simulations=32,
+            max_num_considered_actions=4,
+        )
+        assert gbs.backprop_value_scale == 1.0
+
+    def test_batched_custom_backprop_scale(self):
+        """GumbelBatchedSearch backprop_value_scale should be settable."""
+        gbs = GumbelBatchedSearch(
+            network=None, num_simulations=32,
+            max_num_considered_actions=4,
+            backprop_value_scale=0.5,
+        )
+        assert gbs.backprop_value_scale == 0.5
+
+    def test_search_works_with_half_scale(self):
+        """Gumbel search should work correctly with backprop_value_scale=0.5."""
+        gumbel = GumbelMCTS(
+            network=None, num_simulations=64,
+            max_num_considered_actions=4,
+            backprop_value_scale=0.5,
+        )
+
+        state = GameState()
+        move, info = gumbel.search(state)
+
+        # Should produce valid results
+        assert move is not None
+        assert "policy_target" in info
+        visits = info["visit_counts"]
+        total = sum(visits.values())
+        assert total == 64, f"Total visits {total} != 64"

@@ -186,6 +186,7 @@ class GumbelMCTS:
                  gumbel_scale: float = 1.0,
                  maxvisit_init: float = 50.0,
                  value_scale: float = 0.1,
+                 backprop_value_scale: float = 1.0,
                  temperature: float = 1.0,
                  device: str = "cpu"):
         self.network = network
@@ -195,6 +196,7 @@ class GumbelMCTS:
         self.gumbel_scale = gumbel_scale
         self.maxvisit_init = maxvisit_init
         self.value_scale = value_scale
+        self.backprop_value_scale = backprop_value_scale
         self.temperature = temperature
         self.device = device
 
@@ -301,9 +303,11 @@ class GumbelMCTS:
                     subtree_root = MCTSNode(state=child_state)
                     subtree_root.expand(child_logits)
                     subtrees[a] = subtree_root
-                    # child_val from child's perspective; negate for root
+                    # child_val from child's perspective; negate for root.
+                    # Scale NN values to reduce impact of hallucinated predictions
+                    # (terminal values are ground truth — never scale those).
                     visit_counts[a] += 1
-                    total_values[a] += -child_val
+                    total_values[a] += -child_val * self.backprop_value_scale
             else:
                 # Re-visit: PUCT simulation in subtree
                 subtree = subtrees[a]
@@ -317,7 +321,7 @@ class GumbelMCTS:
                 else:
                     _, leaf_logits, value = self._evaluate(leaf.state)
                     leaf.expand(leaf_logits)
-                    leaf.backpropagate(-value)
+                    leaf.backpropagate(-value * self.backprop_value_scale)
 
                 # Delta at subtree root = value from root's perspective
                 delta = subtree.total_value - old_total
@@ -389,6 +393,7 @@ class GumbelBatchedSearch:
                  gumbel_scale: float = 1.0,
                  maxvisit_init: float = 50.0,
                  value_scale: float = 0.1,
+                 backprop_value_scale: float = 1.0,
                  temperature: float = 1.0,
                  device: str = "cpu",
                  evaluator=None):
@@ -399,6 +404,7 @@ class GumbelBatchedSearch:
         self.gumbel_scale = gumbel_scale
         self.maxvisit_init = maxvisit_init
         self.value_scale = value_scale
+        self.backprop_value_scale = backprop_value_scale
         self.temperature = temperature
         self.device = device
         self._evaluator = evaluator
@@ -581,16 +587,17 @@ class GumbelBatchedSearch:
                     subtree_root = MCTSNode(state=child_state)
                     subtree_root.expand(logits)
                     g["subtrees"][a] = subtree_root
-                    # value from child's perspective → negate for root
+                    # value from child's perspective → negate for root.
+                    # Scale NN values to reduce hallucinated predictions.
                     g["visit_counts"][a] += 1
-                    g["total_values"][a] += -value
+                    g["total_values"][a] += -value * self.backprop_value_scale
 
                 # Process subtree PUCT leaves (re-visits)
                 for idx, (gi, a, old_total, leaf) in enumerate(tree_leaves):
                     _, logits, value = all_results[n_new + idx]
                     g = games[gi]
                     leaf.expand(logits)
-                    leaf.backpropagate(-value)
+                    leaf.backpropagate(-value * self.backprop_value_scale)
                     delta = g["subtrees"][a].total_value - old_total
                     g["visit_counts"][a] += 1
                     g["total_values"][a] += delta
