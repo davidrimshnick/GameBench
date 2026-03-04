@@ -626,11 +626,9 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
             game_type = "selfplay"
 
         game_len = game_record["length"]
-        # Only add self-play examples to buffer — vs-random data is heavily
-        # loss-biased (NN loses most games) which creates pessimistic value head.
-        # vs-random games are still tracked in game_details for monitoring.
-        if game_type != "vs_random":
-            all_examples.extend(examples)
+        # Include all game types in buffer — vs-random provides decisive
+        # outcomes that bootstrap value learning from random init.
+        all_examples.extend(examples)
         game_lengths.append(game_len)
 
         winner = game_record["winner"]
@@ -958,10 +956,9 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                 g, draw_value_target=draw_value_target,
                 policy_target_smoothing=policy_target_smoothing,
             )
-            # Only add self-play examples to buffer — vs-random data is heavily
-            # loss-biased (NN loses most games) which creates pessimistic value head.
-            if g.game_type != "vs_random":
-                all_examples.extend(training_data)
+            # Include all game types — vs-random provides decisive outcomes
+            # that bootstrap value learning from random init.
+            all_examples.extend(training_data)
             game_lengths.append(game_record["length"])
 
             winner = game_record["winner"]
@@ -1182,10 +1179,9 @@ def _aggregate_multiprocess_results(all_worker_results: dict, num_games: int,
         )
 
     for r in all_game_results:
-        # Only add self-play examples to buffer — vs-random data is heavily
-        # loss-biased (NN loses most games) which creates pessimistic value head.
-        if r["game_type"] != "vs_random":
-            all_examples.extend(r["training_data"])
+        # Include all game types — vs-random provides decisive outcomes
+        # that bootstrap value learning from random init.
+        all_examples.extend(r["training_data"])
         game_lengths.append(r["game_record"]["length"])
 
         winner = r["game_record"]["winner"]
