@@ -47,9 +47,23 @@ class WorkerDone:
         self.worker_id = worker_id
 
 
+class GameCompleted:
+    """Notification that a worker finished one game (for progress tracking)."""
+    __slots__ = ["worker_id", "game_idx", "game_type", "length", "winner"]
+
+    def __init__(self, worker_id: int, game_idx: int, game_type: str,
+                 length: int, winner: str):
+        self.worker_id = worker_id
+        self.game_idx = game_idx
+        self.game_type = game_type
+        self.length = length
+        self.winner = winner
+
+
 def run_gpu_server(network, device: str, request_queue, response_queues: list,
                    num_workers: int, workers: list = None,
-                   drain_timeout_ms: float = 5.0):
+                   drain_timeout_ms: float = 5.0,
+                   num_games: int = 0):
     """Run the GPU inference server loop.
 
     Blocks until all workers send WorkerDone. Batches requests from multiple
@@ -64,9 +78,18 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
         workers: List of Process objects (for crash detection).
         drain_timeout_ms: Max time in ms to wait for additional requests after
             the first one arrives, to build bigger batches.
+        num_games: Total number of games being played (for progress logging).
     """
     workers_done = set()
     drain_timeout_sec = drain_timeout_ms / 1000.0
+
+    # Progress tracking
+    total_batches = 0
+    total_evals = 0
+    games_completed = 0
+    start_time = time.monotonic()
+    last_log_time = start_time
+    log_interval = 30.0  # seconds
 
     if HAS_TORCH and network is not None:
         network.to(device)
@@ -87,6 +110,16 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
 
         if isinstance(msg, WorkerDone):
             workers_done.add(msg.worker_id)
+            logger.info(f"GPU server: worker {msg.worker_id} done "
+                        f"({len(workers_done)}/{num_workers} workers)")
+            continue
+
+        if isinstance(msg, GameCompleted):
+            games_completed += 1
+            game_label = f"{num_games}" if num_games else "?"
+            logger.info(f"  Game {games_completed}/{game_label} done "
+                        f"(w{msg.worker_id} g{msg.game_idx} {msg.game_type}): "
+                        f"{msg.length} moves, winner={msg.winner}")
             continue
 
         # Collect this request and greedily drain for more
@@ -100,6 +133,11 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
                 break
             if isinstance(msg, WorkerDone):
                 workers_done.add(msg.worker_id)
+                logger.info(f"GPU server: worker {msg.worker_id} done "
+                            f"({len(workers_done)}/{num_workers} workers)")
+                continue
+            if isinstance(msg, GameCompleted):
+                games_completed += 1
                 continue
             pending.append(msg)
 
@@ -141,4 +179,21 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
             )
             response_queues[worker_id].put(resp)
 
-    logger.info("GPU server: all workers done")
+        total_batches += 1
+        total_evals += len(all_planes)
+
+        # Periodic progress logging
+        now = time.monotonic()
+        if now - last_log_time >= log_interval:
+            elapsed = now - start_time
+            rate = total_evals / elapsed if elapsed > 0 else 0
+            logger.info(f"GPU server: {total_batches} batches, "
+                        f"{total_evals} evals ({rate:.0f}/s), "
+                        f"{games_completed}/{num_games or '?'} games done, "
+                        f"{elapsed:.0f}s elapsed")
+            last_log_time = now
+
+    elapsed = time.monotonic() - start_time
+    rate = total_evals / elapsed if elapsed > 0 else 0
+    logger.info(f"GPU server: all workers done — {total_batches} batches, "
+                f"{total_evals} evals ({rate:.0f}/s) in {elapsed:.0f}s")

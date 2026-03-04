@@ -22,7 +22,7 @@ from davechess.engine.mcts import MCTS, MCTSNode
 from davechess.engine.selfplay import (
     _ActiveGame, _play_wave, _finalize_game,
 )
-from davechess.engine.gpu_server import BatchRequest, BatchResponse, WorkerDone
+from davechess.engine.gpu_server import BatchRequest, BatchResponse, WorkerDone, GameCompleted
 
 logger = logging.getLogger("davechess.mcts_worker")
 
@@ -230,6 +230,14 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                 "training_data": training_data,
                 "game_record": game_record,
             })
+            # Notify GPU server of game completion for progress logging
+            request_queue.put(GameCompleted(
+                worker_id=worker_id,
+                game_idx=g.game_idx,
+                game_type=g.game_type,
+                length=game_record["length"],
+                winner=game_record["winner"],
+            ))
 
         results_queue.put((worker_id, worker_results))
 

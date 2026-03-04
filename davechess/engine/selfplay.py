@@ -1081,7 +1081,7 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
 
     # Main process runs GPU inference server (blocks until all workers done)
     run_gpu_server(network, device, request_queue, response_queues,
-                   num_workers, workers)
+                   num_workers, workers, num_games=num_games)
 
     # Collect results from all workers
     all_worker_results = {}
