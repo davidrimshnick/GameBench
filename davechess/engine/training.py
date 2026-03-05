@@ -42,6 +42,7 @@ except ImportError:
 
 from davechess.engine.network import DaveChessNetwork, POLICY_SIZE, NUM_INPUT_PLANES, state_to_planes, move_to_policy_index
 from davechess.engine.selfplay import (
+    build_legal_move_mask,
     ReplayBuffer, StructuredReplayBuffer, run_selfplay_batch,
     run_selfplay_batch_parallel, run_selfplay_multiprocess,
 )
@@ -446,11 +447,14 @@ class Trainer:
         seed_w_min = float(seed_cfg.get("seed_sample_weight_min", 0.1))
         seed_weight = max(seed_w_min, seed_w_init * (seed_w_decay ** self.iteration))
 
-        planes, policies, values = self.replay_buffer.sample(batch_size, seed_weight=seed_weight)
+        planes, policies, values, legal_masks = self.replay_buffer.sample(
+            batch_size, seed_weight=seed_weight
+        )
 
         planes_t = torch.from_numpy(planes).to(self.device)
         policies_t = torch.from_numpy(policies).to(self.device)
         values_t = torch.from_numpy(values).unsqueeze(1).to(self.device)
+        legal_masks_t = torch.from_numpy(legal_masks).to(self.device)
 
         self.network.train()
 
@@ -470,7 +474,7 @@ class Trainer:
             # Without masking, softmax over 4288 moves (only ~28 legal) wastes
             # most gradient suppressing illegal logits instead of learning which
             # legal move is best.
-            legal_mask = policies_t > 0  # (batch, 4288) bool
+            legal_mask = legal_masks_t.bool()  # (batch, 4288) bool
             neg_inf = torch.tensor(float("-inf"), device=policy_logits.device)
             masked_logits = torch.where(legal_mask, policy_logits, neg_inf)
             log_probs = torch.log_softmax(masked_logits, dim=1)
@@ -771,11 +775,16 @@ class Trainer:
                 logger.info(f"Saved seed games to {seed_file}")
 
             # Copy smart seeds to permanent seed partition, then free the pickle data
+            smart_legal_masks = getattr(smart_buffer, "legal_masks", None)
             for i in range(total_positions):
                 self.replay_buffer.push_seed(
                     smart_buffer.planes[i],
                     smart_buffer.policies[i],
-                    smart_buffer.values[i]
+                    smart_buffer.values[i],
+                    legal_mask=(
+                        smart_legal_masks[i]
+                        if smart_legal_masks is not None else None
+                    ),
                 )
             del smart_buffer
             gc.collect()
@@ -799,6 +808,7 @@ class Trainer:
                     policy = np.zeros(POLICY_SIZE, dtype=np.float32)
                     flip = state.current_player == Player.BLACK
                     policy[move_to_policy_index(move, flip=flip)] = 1.0
+                    legal_mask = build_legal_move_mask(state)
 
                     # Value from current player's perspective: +1 win, -1 loss
                     if int(winner) == int(state.current_player):
@@ -806,7 +816,7 @@ class Trainer:
                     else:
                         value = -1.0
 
-                    self.replay_buffer.push(planes, policy, value)
+                    self.replay_buffer.push(planes, policy, value, legal_mask=legal_mask)
                     total_positions += 1
                     apply_move(state, move)
 
@@ -970,8 +980,8 @@ class Trainer:
         # Add all positions to buffer — draws carry useful value signal
         # (draw_sample_weight in training config downweights them in the loss).
         num_new_examples = len(examples)
-        for planes, policy, value in examples:
-            self.replay_buffer.push(planes, policy, value)
+        for planes, policy, value, legal_mask in examples:
+            self.replay_buffer.push(planes, policy, value, legal_mask=legal_mask)
         del examples
         gc.collect()
         if self.device != "cpu":

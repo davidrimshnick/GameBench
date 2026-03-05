@@ -472,11 +472,12 @@ class TestSelfplayPipelineFlipAlignment:
 
             # Find the matching training example (by position in game)
             if i < len(training_data):
-                planes, policy, value = training_data[i]
+                planes, policy, value, legal_mask = training_data[i]
                 np.testing.assert_array_equal(
                     planes, expected_planes,
                     err_msg=f"Planes mismatch at move {i} (player={current_player})"
                 )
+                assert legal_mask.shape == (POLICY_SIZE,)
 
                 # Verify policy target uses correct flip convention:
                 # nonzero policy indices should be valid flipped indices for legal moves
@@ -523,8 +524,9 @@ class TestSelfplayPipelineFlipAlignment:
             # (training_data is in game order for self-play)
             idx = game_record["moves"].index((game_state, move))
             if idx < len(training_data):
-                _, policy, _ = training_data[idx]
+                _, policy, _, legal_mask = training_data[idx]
                 nonzero = set(np.nonzero(policy)[0])
+                assert legal_mask.shape == (POLICY_SIZE,)
 
                 assert nonzero.issubset(flipped_indices), (
                     f"Black policy target uses unflipped indices! "

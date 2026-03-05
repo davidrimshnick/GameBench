@@ -26,6 +26,18 @@ from davechess.engine.mcts import MCTS, BatchedEvaluator
 from davechess.engine.gumbel_mcts import GumbelMCTS, GumbelBatchedSearch
 
 
+def build_legal_move_mask(state: GameState,
+                          legal_moves: Optional[list[Move]] = None) -> np.ndarray:
+    """Build a dense legal-move mask aligned with the policy encoding."""
+    if legal_moves is None:
+        legal_moves = generate_legal_moves(state)
+    mask = np.zeros(POLICY_SIZE, dtype=np.bool_)
+    flip = state.current_player == Player.BLACK
+    for move in legal_moves:
+        mask[move_to_policy_index(move, flip=flip)] = True
+    return mask
+
+
 def _build_policy_target(policy_dict: dict, smoothing: float = 0.0) -> np.ndarray:
     """Build dense policy target from sparse visit proportions.
 
@@ -64,7 +76,7 @@ def classify_draw_reason(state: GameState) -> str:
 class ReplayBuffer:
     """Circular replay buffer for training data.
 
-    Stores (planes, policy_target, value_target) tuples.
+    Stores (planes, policy_target, value_target, legal_mask) tuples.
     """
 
     def __init__(self, max_size: int = 500_000):
@@ -72,27 +84,34 @@ class ReplayBuffer:
         self.planes: deque[np.ndarray] = deque(maxlen=max_size)
         self.policies: deque[np.ndarray] = deque(maxlen=max_size)
         self.values: deque[float] = deque(maxlen=max_size)
+        self.legal_masks: deque[np.ndarray] = deque(maxlen=max_size)
 
     def __len__(self) -> int:
         return len(self.planes)
 
-    def push(self, planes: np.ndarray, policy: np.ndarray, value: float):
+    def push(self, planes: np.ndarray, policy: np.ndarray, value: float,
+             legal_mask: Optional[np.ndarray] = None):
         """Add a single training example."""
         self.planes.append(planes.astype(np.float32, copy=False))
         self.policies.append(policy.astype(np.float32, copy=False))
         self.values.append(value)
+        if legal_mask is None:
+            # Backward compatibility for older callers / buffers.
+            legal_mask = policy > 0
+        self.legal_masks.append(legal_mask.astype(np.bool_, copy=False))
 
-    def sample(self, batch_size: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def sample(self, batch_size: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Sample a random mini-batch.
 
         Returns:
-            (planes_batch, policy_batch, value_batch)
+            (planes_batch, policy_batch, value_batch, legal_mask_batch)
         """
         indices = random.sample(range(len(self)), min(batch_size, len(self)))
         planes = np.stack([self.planes[i] for i in indices])
         policies = np.stack([self.policies[i] for i in indices])
         values = np.array([self.values[i] for i in indices], dtype=np.float32)
-        return planes, policies, values
+        legal_masks = np.stack([self.legal_masks[i] for i in indices])
+        return planes, policies, values, legal_masks
 
     def save(self, path: str):
         """Save buffer metadata (not full data, for memory efficiency)."""
@@ -114,7 +133,8 @@ class ReplayBuffer:
         if n == 0:
             np.savez_compressed(path, planes=np.empty((0, NUM_INPUT_PLANES, 8, 8)),
                                 policies=np.empty((0, POLICY_SIZE)),
-                                values=np.empty(0))
+                                values=np.empty(0),
+                                legal_masks=np.empty((0, POLICY_SIZE), dtype=np.bool_))
             return
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -145,11 +165,22 @@ class ReplayBuffer:
             del arr
             gc.collect()
 
+            legal_masks_path = os.path.join(tmp, "legal_masks.npy")
+            legal_masks_mmap = np.lib.format.open_memmap(
+                legal_masks_path, mode="w+", dtype=np.bool_, shape=(n, POLICY_SIZE))
+            for start in range(0, n, chunk_size):
+                end = min(start + chunk_size, n)
+                chunk = np.stack([self.legal_masks[i] for i in range(start, end)])
+                legal_masks_mmap[start:end] = chunk
+            del legal_masks_mmap, chunk
+            gc.collect()
+
             # Combine into compressed npz
             with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
                 zf.write(planes_path, "planes.npy")
                 zf.write(policies_path, "policies.npy")
                 zf.write(values_path, "values.npy")
+                zf.write(legal_masks_path, "legal_masks.npy")
 
     def load_data(self, path: str, chunk_size: int = 5000):
         """Load buffer data from disk using chunked reads to limit peak memory.
@@ -187,6 +218,19 @@ class ReplayBuffer:
                 self.policies.append(chunk[i].astype(np.float32, copy=False))
             del chunk
         del policies_arr
+
+        legal_masks_arr = data["legal_masks"] if "legal_masks" in data else None
+        if legal_masks_arr is not None:
+            for start in range(0, n, chunk_size):
+                end = min(start + chunk_size, n)
+                chunk = legal_masks_arr[start:end]
+                for i in range(len(chunk)):
+                    self.legal_masks.append(chunk[i].astype(np.bool_, copy=False))
+                del chunk
+            del legal_masks_arr
+        else:
+            for policy in self.policies:
+                self.legal_masks.append((policy > 0).astype(np.bool_, copy=False))
         del data
         gc.collect()
 
@@ -218,16 +262,18 @@ class StructuredReplayBuffer:
     def max_size(self) -> int:
         return self.seed_size + self.decisive_size + self.draw_size
 
-    def push_seed(self, planes: np.ndarray, policy: np.ndarray, value: float):
+    def push_seed(self, planes: np.ndarray, policy: np.ndarray, value: float,
+                  legal_mask: Optional[np.ndarray] = None):
         """Add a seed position (permanent, never evicted by self-play)."""
-        self._seeds.push(planes, policy, value)
+        self._seeds.push(planes, policy, value, legal_mask=legal_mask)
 
-    def push(self, planes: np.ndarray, policy: np.ndarray, value: float):
+    def push(self, planes: np.ndarray, policy: np.ndarray, value: float,
+             legal_mask: Optional[np.ndarray] = None):
         """Add a self-play position, routed by value magnitude."""
         if abs(value) > 0.5:
-            self._decisive.push(planes, policy, value)
+            self._decisive.push(planes, policy, value, legal_mask=legal_mask)
         else:
-            self._draws.push(planes, policy, value)
+            self._draws.push(planes, policy, value, legal_mask=legal_mask)
 
     def resize(self, decisive_size: int, draw_size: int):
         """Resize decisive and draw partitions, keeping most recent data."""
@@ -238,7 +284,10 @@ class StructuredReplayBuffer:
             # Copy most recent data (deque keeps oldest at front)
             start = max(0, len(old) - decisive_size)
             for i in range(start, len(old)):
-                self._decisive.push(old.planes[i], old.policies[i], old.values[i])
+                self._decisive.push(
+                    old.planes[i], old.policies[i], old.values[i],
+                    legal_mask=old.legal_masks[i],
+                )
             del old
         if draw_size != self.draw_size:
             old = self._draws
@@ -246,7 +295,10 @@ class StructuredReplayBuffer:
             self._draws = ReplayBuffer(max_size=draw_size)
             start = max(0, len(old) - draw_size)
             for i in range(start, len(old)):
-                self._draws.push(old.planes[i], old.policies[i], old.values[i])
+                self._draws.push(
+                    old.planes[i], old.policies[i], old.values[i],
+                    legal_mask=old.legal_masks[i],
+                )
             del old
         gc.collect()
 
@@ -257,7 +309,7 @@ class StructuredReplayBuffer:
         gc.collect()
         return n
 
-    def sample(self, batch_size: int, seed_weight: float = 1.0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def sample(self, batch_size: int, seed_weight: float = 1.0) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Weighted random sample across all three partitions.
 
         Args:
@@ -271,7 +323,8 @@ class StructuredReplayBuffer:
         if total == 0:
             return (np.empty((0, NUM_INPUT_PLANES, 8, 8), dtype=np.float32),
                     np.empty((0, POLICY_SIZE), dtype=np.float32),
-                    np.empty(0, dtype=np.float32))
+                    np.empty(0, dtype=np.float32),
+                    np.empty((0, POLICY_SIZE), dtype=np.bool_))
 
         n = min(batch_size, total)
         len_s = len(self._seeds)
@@ -299,6 +352,7 @@ class StructuredReplayBuffer:
         planes_list = []
         policies_list = []
         values_list = []
+        legal_masks_list = []
         for buf, count in [(self._seeds, n_s), (self._decisive, n_d), (self._draws, n_dr)]:
             if count <= 0 or len(buf) == 0:
                 continue
@@ -307,15 +361,18 @@ class StructuredReplayBuffer:
                 planes_list.append(buf.planes[i])
                 policies_list.append(buf.policies[i])
                 values_list.append(buf.values[i])
+                legal_masks_list.append(buf.legal_masks[i])
 
         if not planes_list:
             return (np.empty((0, NUM_INPUT_PLANES, 8, 8), dtype=np.float32),
                     np.empty((0, POLICY_SIZE), dtype=np.float32),
-                    np.empty(0, dtype=np.float32))
+                    np.empty(0, dtype=np.float32),
+                    np.empty((0, POLICY_SIZE), dtype=np.bool_))
 
         return (np.stack(planes_list),
                 np.stack(policies_list),
-                np.array(values_list, dtype=np.float32))
+                np.array(values_list, dtype=np.float32),
+                np.stack(legal_masks_list))
 
     def partition_sizes(self) -> dict:
         """Return sizes of each partition."""
@@ -346,6 +403,7 @@ class StructuredReplayBuffer:
                                 planes=np.empty((0, NUM_INPUT_PLANES, 8, 8)),
                                 policies=np.empty((0, POLICY_SIZE)),
                                 values=np.empty(0),
+                                legal_masks=np.empty((0, POLICY_SIZE), dtype=np.bool_),
                                 partition_offsets=np.array([0, 0, 0, 0]))
             return
 
@@ -395,6 +453,21 @@ class StructuredReplayBuffer:
             del values_list, values_arr
             gc.collect()
 
+            legal_masks_path = os.path.join(tmp, "legal_masks.npy")
+            legal_masks_mmap = np.lib.format.open_memmap(
+                legal_masks_path, mode="w+", dtype=np.bool_, shape=(total, POLICY_SIZE))
+            pos = 0
+            for buf in all_bufs:
+                n = len(buf)
+                for start in range(0, n, chunk_size):
+                    end = min(start + chunk_size, n)
+                    chunk = np.stack([buf.legal_masks[i] for i in range(start, end)])
+                    legal_masks_mmap[pos + start:pos + end] = chunk
+                    del chunk
+                pos += n
+            del legal_masks_mmap
+            gc.collect()
+
             offsets_path = os.path.join(tmp, "partition_offsets.npy")
             np.save(offsets_path, offsets)
 
@@ -402,6 +475,7 @@ class StructuredReplayBuffer:
                 zf.write(planes_path, "planes.npy")
                 zf.write(policies_path, "policies.npy")
                 zf.write(values_path, "values.npy")
+                zf.write(legal_masks_path, "legal_masks.npy")
                 zf.write(offsets_path, "partition_offsets.npy")
 
     def load_data(self, path: str, chunk_size: int = 5000):
@@ -414,6 +488,7 @@ class StructuredReplayBuffer:
         values_arr = data["values"]
         planes_arr = data["planes"]
         policies_arr = data["policies"]
+        legal_masks_arr = data["legal_masks"] if "legal_masks" in data else None
         total = len(values_arr)
 
         if "partition_offsets" in data:
@@ -434,18 +509,28 @@ class StructuredReplayBuffer:
                         planes_arr[i].astype(np.float32, copy=False),
                         policies_arr[i].astype(np.float32, copy=False),
                         float(values_arr[i]),
+                        legal_mask=(
+                            legal_masks_arr[i].astype(np.bool_, copy=False)
+                            if legal_masks_arr is not None else None
+                        ),
                     )
         else:
             for i in range(total):
                 v = float(values_arr[i])
                 p = planes_arr[i].astype(np.float32, copy=False)
                 pol = policies_arr[i].astype(np.float32, copy=False)
+                legal_mask = (
+                    legal_masks_arr[i].astype(np.bool_, copy=False)
+                    if legal_masks_arr is not None else None
+                )
                 if abs(v) > 0.5:
-                    self._decisive.push(p, pol, v)
+                    self._decisive.push(p, pol, v, legal_mask=legal_mask)
                 else:
-                    self._draws.push(p, pol, v)
+                    self._draws.push(p, pol, v, legal_mask=legal_mask)
 
         del values_arr, planes_arr, policies_arr, data
+        if legal_masks_arr is not None:
+            del legal_masks_arr
         gc.collect()
 
 
@@ -475,7 +560,7 @@ def play_selfplay_game(mcts_engine: MCTS,
           and "draw_reason" (or None for decisive games)
     """
     state = GameState()
-    examples: list[tuple[np.ndarray, dict, int]] = []  # (planes, policy_dict, player)
+    examples: list[tuple[np.ndarray, dict, int, np.ndarray]] = []  # (planes, policy_dict, player, legal_mask)
     game_moves: list[tuple[GameState, Move]] = []  # For DCN logging
     move_count = 0
     nn_player = Player.WHITE if nn_plays_white else Player.BLACK
@@ -505,7 +590,8 @@ def play_selfplay_game(mcts_engine: MCTS,
         # Only record training examples from the NN engine's turns
         if is_nn_turn:
             planes = state_to_planes(state)
-            examples.append((planes, info["policy_target"], int(state.current_player)))
+            legal_mask = build_legal_move_mask(state, legal_moves=moves)
+            examples.append((planes, info["policy_target"], int(state.current_player), legal_mask))
 
         # Record move for game log (apply_move mutates in-place, so clone first)
         game_moves.append((state.clone(), move))
@@ -532,7 +618,7 @@ def play_selfplay_game(mcts_engine: MCTS,
 
     # Assign value targets based on outcome
     training_data = []
-    for planes, policy_dict, player in examples:
+    for planes, policy_dict, player, legal_mask in examples:
         policy = _build_policy_target(policy_dict)
 
         # Value from this player's perspective: +1 win, -1 loss, draw_value_target draw
@@ -543,7 +629,7 @@ def play_selfplay_game(mcts_engine: MCTS,
         else:
             value = -1.0
 
-        training_data.append((planes, policy, value))
+        training_data.append((planes, policy, value, legal_mask))
 
     return training_data, game_record
 
@@ -722,7 +808,7 @@ def _finalize_game(g: _ActiveGame,
         winner = -1
 
     training_data = []
-    for planes, policy_dict, player in g.examples:
+    for planes, policy_dict, player, legal_mask in g.examples:
         policy = _build_policy_target(policy_dict, smoothing=policy_target_smoothing)
         if winner == -1:
             value = draw_value_target
@@ -730,7 +816,7 @@ def _finalize_game(g: _ActiveGame,
             value = 1.0
         else:
             value = -1.0
-        training_data.append((planes, policy, value))
+        training_data.append((planes, policy, value, legal_mask))
 
     game_record = {"moves": g.game_moves, "winner": winner_str,
                    "length": g.move_count, "draw_reason": g.draw_reason}
@@ -741,7 +827,8 @@ def _apply_game_move(g: _ActiveGame, move: Move, info: dict, is_nn_turn: bool):
     """Apply a move to an active game, collect training data if NN's turn."""
     if is_nn_turn:
         planes = state_to_planes(g.state)
-        g.examples.append((planes, info["policy_target"], int(g.state.current_player)))
+        legal_mask = build_legal_move_mask(g.state)
+        g.examples.append((planes, info["policy_target"], int(g.state.current_player), legal_mask))
 
     g.game_moves.append((g.state.clone(), move))
     g.state = apply_move(g.state, move)

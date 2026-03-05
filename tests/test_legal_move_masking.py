@@ -9,15 +9,17 @@ import numpy as np
 import pytest
 import torch
 
-from davechess.engine.network import DaveChessNetwork, state_to_planes, NUM_INPUT_PLANES
+from davechess.engine.network import (
+    DaveChessNetwork, state_to_planes, NUM_INPUT_PLANES, move_to_policy_index,
+)
+from davechess.engine.selfplay import build_legal_move_mask
 from davechess.game.state import GameState
 from davechess.game.rules import generate_legal_moves
 
 
-def _masked_cross_entropy(logits, target):
+def _masked_cross_entropy(logits, target, legal_mask):
     """Compute legal-move-masked cross-entropy, matching training.py logic."""
-    legal_mask = target > 0
-    neg_inf = torch.tensor(float("-inf"))
+    neg_inf = torch.tensor(float("-inf"), device=logits.device)
     masked_logits = torch.where(legal_mask, logits, neg_inf)
     log_probs = torch.log_softmax(masked_logits, dim=1)
     log_probs = torch.where(legal_mask, log_probs, torch.zeros_like(log_probs))
@@ -51,10 +53,11 @@ class TestLegalMoveMaskingInLoss:
             logits, _ = net(planes)
 
         # Create uniform target over legal moves
-        from davechess.engine.mcts import move_to_policy_index
-        legal_indices = [move_to_policy_index(m, state.current_player) for m in legal_moves]
+        legal_indices = [move_to_policy_index(m) for m in legal_moves]
         target = torch.zeros(1, 4288)
         target[0, legal_indices] = 1.0 / num_legal
+        legal_mask = torch.zeros(1, 4288, dtype=torch.bool)
+        legal_mask[0, legal_indices] = True
 
         # Unmasked loss: softmax over all 4288
         unmasked_loss = -torch.sum(
@@ -62,7 +65,7 @@ class TestLegalMoveMaskingInLoss:
         ).item()
 
         # Masked loss: softmax only over legal moves
-        masked_loss = _masked_cross_entropy(logits, target).item()
+        masked_loss = _masked_cross_entropy(logits, target, legal_mask).item()
 
         # Masked loss should be much smaller (near ln(num_legal) ≈ 2.3)
         # Unmasked loss should be near ln(4288) ≈ 8.4
@@ -76,9 +79,11 @@ class TestLegalMoveMaskingInLoss:
         legal_indices = [0, 10, 50, 100, 200]
         target = torch.zeros(1, 4288)
         target[0, legal_indices] = 0.2  # uniform over 5 legal moves
+        legal_mask = torch.zeros(1, 4288, dtype=torch.bool)
+        legal_mask[0, legal_indices] = True
 
         # Method 1: mask + full softmax
-        loss_masked = _masked_cross_entropy(logits, target).item()
+        loss_masked = _masked_cross_entropy(logits, target, legal_mask).item()
 
         # Method 2: extract legal logits and compute directly
         legal_logits = logits[0, legal_indices]
@@ -95,8 +100,10 @@ class TestLegalMoveMaskingInLoss:
         legal_indices = [5, 15, 25, 35, 45]
         target = torch.zeros(1, 4288)
         target[0, legal_indices] = 0.2
+        legal_mask = torch.zeros(1, 4288, dtype=torch.bool)
+        legal_mask[0, legal_indices] = True
 
-        loss = _masked_cross_entropy(logits, target)
+        loss = _masked_cross_entropy(logits, target, legal_mask)
         loss.backward()
 
         grad = logits.grad[0]
@@ -112,6 +119,8 @@ class TestLegalMoveMaskingInLoss:
         target[0, 10] = 0.8
         target[0, 20] = 0.15
         target[0, 30] = 0.05
+        legal_mask = torch.zeros(1, 4288, dtype=torch.bool)
+        legal_mask[0, [10, 20, 30]] = True
 
         # Logits that produce exactly the target distribution over legal moves
         logits = torch.full((1, 4288), -100.0)
@@ -119,7 +128,7 @@ class TestLegalMoveMaskingInLoss:
         logits[0, 20] = np.log(0.15)
         logits[0, 30] = np.log(0.05)
 
-        loss = _masked_cross_entropy(logits, target).item()
+        loss = _masked_cross_entropy(logits, target, legal_mask).item()
 
         # Loss should equal entropy of the target distribution
         expected_entropy = -(0.8 * np.log(0.8) + 0.15 * np.log(0.15) + 0.05 * np.log(0.05))
@@ -159,8 +168,7 @@ class TestLegalMoveMaskingInLoss:
         # Add some training data with known legal moves
         state = GameState()
         legal_moves = generate_legal_moves(state)
-        from davechess.engine.mcts import move_to_policy_index
-        legal_indices = [move_to_policy_index(m, state.current_player) for m in legal_moves]
+        legal_indices = [move_to_policy_index(m) for m in legal_moves]
         num_legal = len(legal_indices)
 
         for i in range(10):
@@ -168,7 +176,10 @@ class TestLegalMoveMaskingInLoss:
             policy = np.zeros(4288, dtype=np.float32)
             policy[legal_indices] = 1.0 / num_legal
             value = 1.0 if i % 2 == 0 else -1.0
-            trainer.replay_buffer.push(planes_np, policy, value)
+            trainer.replay_buffer.push(
+                planes_np, policy, value,
+                legal_mask=build_legal_move_mask(state),
+            )
 
         # Run one training step and check loss is reasonable
         losses = trainer.train_step(batch_size=4)
@@ -187,8 +198,10 @@ class TestLegalMoveMaskingInLoss:
         logits = torch.randn(1, 4288)
         target = torch.zeros(1, 4288)
         target[0, 42] = 1.0  # single legal move
+        legal_mask = torch.zeros(1, 4288, dtype=torch.bool)
+        legal_mask[0, 42] = True
 
-        loss = _masked_cross_entropy(logits, target).item()
+        loss = _masked_cross_entropy(logits, target, legal_mask).item()
 
         # softmax of a single element is always 1.0, so log(1.0) = 0
         assert loss == pytest.approx(0.0, abs=1e-5)
@@ -198,6 +211,8 @@ class TestLegalMoveMaskingInLoss:
         legal_indices = [5, 15, 25]
         target = torch.zeros(1, 4288)
         target[0, legal_indices] = 1.0 / 3.0
+        legal_mask = torch.zeros(1, 4288, dtype=torch.bool)
+        legal_mask[0, legal_indices] = True
 
         logits1 = torch.randn(1, 4288)
         logits2 = logits1.clone()
@@ -205,8 +220,8 @@ class TestLegalMoveMaskingInLoss:
         logits2[0, 100] = 999.0
         logits2[0, 200] = -999.0
 
-        loss1 = _masked_cross_entropy(logits1, target).item()
-        loss2 = _masked_cross_entropy(logits2, target).item()
+        loss1 = _masked_cross_entropy(logits1, target, legal_mask).item()
+        loss2 = _masked_cross_entropy(logits2, target, legal_mask).item()
 
         assert loss1 == pytest.approx(loss2, abs=1e-6)
 
@@ -214,16 +229,20 @@ class TestLegalMoveMaskingInLoss:
         """Masked loss should never produce NaN, even with extreme logits."""
         target = torch.zeros(1, 4288)
         target[0, [0, 1, 2]] = 1.0 / 3.0
+        legal_mask = torch.zeros(1, 4288, dtype=torch.bool)
+        legal_mask[0, [0, 1, 2]] = True
 
         # Test with extreme logit values
         logits = torch.randn(1, 4288) * 100
-        loss = _masked_cross_entropy(logits, target)
+        loss = _masked_cross_entropy(logits, target, legal_mask)
         assert torch.isfinite(loss).all()
 
         # Test with very small number of legal moves
         target2 = torch.zeros(1, 4288)
         target2[0, 0] = 1.0
-        loss2 = _masked_cross_entropy(torch.randn(1, 4288), target2)
+        legal_mask2 = torch.zeros(1, 4288, dtype=torch.bool)
+        legal_mask2[0, 0] = True
+        loss2 = _masked_cross_entropy(torch.randn(1, 4288), target2, legal_mask2)
         assert torch.isfinite(loss2).all()
 
     def test_batch_consistency(self):
@@ -231,14 +250,19 @@ class TestLegalMoveMaskingInLoss:
         batch_size = 4
         logits = torch.randn(batch_size, 4288)
         target = torch.zeros(batch_size, 4288)
+        legal_mask = torch.zeros(batch_size, 4288, dtype=torch.bool)
 
         # Different legal move counts per example
         target[0, [0, 1, 2]] = 1.0 / 3.0          # 3 legal moves
         target[1, [10, 20, 30, 40, 50]] = 0.2      # 5 legal moves
         target[2, [100]] = 1.0                      # 1 legal move
         target[3, list(range(50))] = 1.0 / 50.0     # 50 legal moves
+        legal_mask[0, [0, 1, 2]] = True
+        legal_mask[1, [10, 20, 30, 40, 50]] = True
+        legal_mask[2, [100]] = True
+        legal_mask[3, list(range(50))] = True
 
-        losses = _masked_cross_entropy(logits, target)
+        losses = _masked_cross_entropy(logits, target, legal_mask)
         assert losses.shape == (batch_size,)
         assert torch.isfinite(losses).all()
 
@@ -246,3 +270,19 @@ class TestLegalMoveMaskingInLoss:
         assert losses[2].item() == pytest.approx(0.0, abs=1e-5)
         # More legal moves → higher baseline loss
         assert losses[3].item() > losses[0].item()  # 50 moves > 3 moves
+
+    def test_zero_visit_legal_moves_remain_in_mask(self):
+        """A legal move with zero visits must stay in the normalization set."""
+        logits = torch.tensor([[5.0, 4.0, -5.0]])
+        target = torch.tensor([[1.0, 0.0, 0.0]])
+
+        # Move 1 is legal but got zero visits; move 2 is illegal.
+        legal_mask = torch.tensor([[True, True, False]])
+
+        loss = _masked_cross_entropy(logits, target, legal_mask).item()
+        assert loss == pytest.approx(0.31326166, abs=1e-6)
+
+        support_only_mask = target > 0
+        bad_loss = _masked_cross_entropy(logits, target, support_only_mask).item()
+        assert bad_loss == pytest.approx(0.0, abs=1e-6)
+        assert loss > bad_loss

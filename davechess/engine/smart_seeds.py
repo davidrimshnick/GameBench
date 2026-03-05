@@ -10,7 +10,7 @@ from davechess.game.board import BOARD_SIZE
 from davechess.game.rules import apply_move, generate_legal_moves, is_in_check
 from davechess.engine.heuristic_player import HeuristicPlayer, SmartMCTS
 from davechess.engine.network import state_to_planes, move_to_policy_index, POLICY_SIZE
-from davechess.engine.selfplay import ReplayBuffer
+from davechess.engine.selfplay import ReplayBuffer, build_legal_move_mask
 
 logger = logging.getLogger("davechess.smart_seeds")
 
@@ -138,6 +138,7 @@ def generate_smart_seeds(num_games: int = 50, verbose: bool = False) -> ReplayBu
             policy = np.zeros(POLICY_SIZE, dtype=np.float32)
             flip = state.current_player == Player.BLACK
             policy[move_to_policy_index(move, flip=flip)] = 1.0
+            legal_mask = build_legal_move_mask(state)
 
             # Create value from game outcome: +1 win, -1 loss, 0 draw
             if winner is None:
@@ -147,7 +148,7 @@ def generate_smart_seeds(num_games: int = 50, verbose: bool = False) -> ReplayBu
             else:
                 value = -1.0
 
-            buffer.push(planes, policy, value)
+            buffer.push(planes, policy, value, legal_mask=legal_mask)
             total_positions += 1
 
         game_count += 1
@@ -489,7 +490,7 @@ def generate_endgame_seeds(
                 planes = state_to_planes(gs)
                 # +1 if current player wins, -1 if they lose
                 value = 1.0 if gs.current_player == winner else -1.0
-                buffer.push(planes, policy, value)
+                buffer.push(planes, policy, value, legal_mask=build_legal_move_mask(gs))
                 total_positions += 1
 
             if verbose:
@@ -710,7 +711,7 @@ def generate_middlegame_checkmate_seeds(
             for gs, policy in zip(game_states, game_policies):
                 planes = state_to_planes(gs)
                 value = 1.0 if gs.current_player == winner else -1.0
-                buffer.push(planes, policy, value)
+                buffer.push(planes, policy, value, legal_mask=build_legal_move_mask(gs))
                 total_positions += 1
 
             if verbose:

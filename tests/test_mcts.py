@@ -208,10 +208,11 @@ class TestBatchedMCTS:
         assert "white_wins" in stats
         assert "game_records" in stats
         assert "game_details" in stats
-        for planes, policy, value in examples:
+        for planes, policy, value, legal_mask in examples:
             from davechess.engine.network import NUM_INPUT_PLANES; assert planes.shape == (NUM_INPUT_PLANES, 8, 8)
             assert policy.shape == (POLICY_SIZE,)
             assert -1.0 <= value <= 1.0
+            assert legal_mask.shape == (POLICY_SIZE,)
 
     def test_parallel_selfplay_with_random_opponent(self):
         """Parallel selfplay with random opponents should work."""
@@ -293,10 +294,11 @@ class TestMultiprocessMCTS:
         assert "white_wins" in stats
         assert "game_records" in stats
         assert "game_details" in stats
-        for planes, policy, value in examples:
+        for planes, policy, value, legal_mask in examples:
             from davechess.engine.network import NUM_INPUT_PLANES; assert planes.shape == (NUM_INPUT_PLANES, 8, 8)
             assert policy.shape == (POLICY_SIZE,)
             assert -1.0 <= value <= 1.0
+            assert legal_mask.shape == (POLICY_SIZE,)
 
     def test_multiprocess_selfplay_with_random_opponent(self):
         """Multiprocess selfplay with random opponents should work."""
