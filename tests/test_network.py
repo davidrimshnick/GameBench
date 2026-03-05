@@ -29,12 +29,23 @@ class TestStateToPlanes:
         for r, c in GOLD_NODES:
             assert planes[10, r, c] == 1.0
 
-    def test_current_player_plane(self):
-        """Plane 11 should indicate current player."""
+    def test_perspective_anchor_plane(self):
+        """Plane 11 should stay constant across current-player flips."""
         state = GameState()
         planes = state_to_planes(state)
-        # White to move: all 1s
         assert planes[11, 0, 0] == 1.0
+
+        state.current_player = Player.BLACK
+        planes = state_to_planes(state)
+        assert planes[11, 0, 0] == 1.0
+
+    def test_start_position_is_color_symmetric(self):
+        """Current-player-normalized start positions should encode identically."""
+        white = GameState()
+        black = GameState()
+        black.current_player = Player.BLACK
+
+        assert np.array_equal(state_to_planes(white), state_to_planes(black))
 
     def test_piece_planes(self):
         """Current player's pieces should be on planes 0-4, opponent on 5-9."""

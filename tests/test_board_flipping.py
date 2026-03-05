@@ -69,16 +69,16 @@ class TestBoardFlipPlanes:
         gold_black = set(zip(*np.where(planes_black[10] > 0)))
         assert gold_white == gold_black
 
-    def test_player_indicator_preserved(self):
-        """Player indicator plane should be 1 for White, 0 for Black."""
+    def test_perspective_anchor_constant(self):
+        """Perspective anchor plane should stay constant after board flips."""
         state = GameState()
         planes_w = state_to_planes(state)
-        assert planes_w[11, 0, 0] == 1.0  # White
+        assert planes_w[11, 0, 0] == 1.0
 
         legal = generate_legal_moves(state)
         apply_move(state, legal[0])
         planes_b = state_to_planes(state)
-        assert planes_b[11, 0, 0] == 0.0  # Black
+        assert planes_b[11, 0, 0] == 1.0
 
     def test_last_move_flipped_for_black(self):
         """Last move source/dest planes should be flipped for Black."""
@@ -262,7 +262,7 @@ class TestTrainingDataFlipConsistency:
 
     def test_no_player_indicator_bias_in_balanced_data(self):
         """With balanced win/loss data, value targets should not correlate
-        with the player indicator plane."""
+        with absolute color."""
         # Simulate balanced training data
         white_win_target_for_white = 1.0
         white_win_target_for_black = -1.0

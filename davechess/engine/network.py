@@ -4,7 +4,7 @@ Input: 18 planes of 8x8
   Planes 0-4: Current player's C/W/R/B/L positions (binary)
   Planes 5-9: Opponent's C/W/R/B/L positions (binary)
   Plane 10: Gold node positions (binary)
-  Plane 11: Current player indicator (all 1s or 0s)
+  Plane 11: Perspective anchor (all 1s; kept for input compatibility)
   Plane 12: Current player resources (scalar broadcast, normalized)
   Plane 13: Opponent resources (scalar broadcast, normalized)
   Plane 14: Turn progress (turn/100, broadcast — urgency signal)
@@ -84,8 +84,9 @@ def state_to_planes(state: GameState) -> np.ndarray:
     for r, c in GOLD_NODES:
         planes[10, r, c] = 1.0
 
-    # Current player indicator
-    planes[11, :, :] = 1.0 if current == Player.WHITE else 0.0
+    # Perspective is already normalized into planes 0-10 and the board flip.
+    # Keep this plane constant so the network cannot shortcut on absolute color.
+    planes[11, :, :] = 1.0
 
     # Resources (normalized, broadcast)
     planes[12, :, :] = min(state.resources[current] / RESOURCE_NORM, 1.0)

@@ -267,13 +267,10 @@ class TestFinalizeGameValueTargets:
         g = self._make_finished_game("black")
         training_data, _ = _finalize_game(g, draw_value_target=0.0)
 
-        for planes, policy, value, legal_mask in training_data:
-            # Determine which player was to move from the planes
-            # Player indicator plane (11) is 1.0 for White, 0.0 for Black
-            # But after board flip, this still holds (scalar plane)
-            player_indicator = planes[11, 0, 0]
+        for idx, (planes, policy, value, legal_mask) in enumerate(training_data):
+            player_was_white = (idx % 2 == 0)
             assert legal_mask.shape == (POLICY_SIZE,)
-            if player_indicator == 1.0:
+            if player_was_white:
                 # White-to-move position -> should be -1 (Black won)
                 assert value == -1.0, f"White pos should be -1 when Black wins, got {value}"
             else:
@@ -285,10 +282,10 @@ class TestFinalizeGameValueTargets:
         g = self._make_finished_game("white")
         training_data, _ = _finalize_game(g, draw_value_target=0.0)
 
-        for planes, policy, value, legal_mask in training_data:
-            player_indicator = planes[11, 0, 0]
+        for idx, (planes, policy, value, legal_mask) in enumerate(training_data):
+            player_was_white = (idx % 2 == 0)
             assert legal_mask.shape == (POLICY_SIZE,)
-            if player_indicator == 1.0:
+            if player_was_white:
                 # White-to-move -> +1 (White won)
                 assert value == 1.0, f"White pos should be +1 when White wins, got {value}"
             else:
@@ -562,7 +559,7 @@ class TestEndToEndScenario:
         """Play a full game with no NN (random MCTS) and verify:
         - All value targets are from current player's perspective
         - Winner's positions have +1, loser's have -1 (or 0 for draws)
-        - Planes' player indicator is consistent with the stored player
+        - Example order remains consistent with alternating players
         """
         from davechess.engine.mcts import MCTS
 
@@ -597,18 +594,10 @@ class TestEndToEndScenario:
                 # Reconstruct which Player enum won
                 winner_player = Player.WHITE if winner_str == "white" else Player.BLACK
                 winner_int = int(winner_player)
-                loser_int = 1 - winner_int
-
                 # Verify every example
-                for planes, policy, value, legal_mask in training_data:
-                    # The player indicator plane tells us who was to move
-                    # plane[11] is 1.0 for White, 0.0 for Black
-                    player_indicator = planes[11, 0, 0]
+                for idx, (planes, policy, value, legal_mask) in enumerate(training_data):
+                    player_was = int(Player.WHITE) if (idx % 2 == 0) else int(Player.BLACK)
                     assert legal_mask.shape == (POLICY_SIZE,)
-                    if player_indicator == 1.0:
-                        player_was = int(Player.WHITE)
-                    else:
-                        player_was = int(Player.BLACK)
 
                     expected = 1.0 if player_was == winner_int else -1.0
                     assert value == expected, (
