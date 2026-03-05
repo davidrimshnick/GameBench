@@ -60,6 +60,66 @@ class GameCompleted:
         self.winner = winner
 
 
+@dataclass
+class ProgressTracker:
+    """Aggregate partial game results for mid-run logging."""
+    games_completed: int = 0
+    total_completed_length: int = 0
+    vr_wins: int = 0
+    vr_losses: int = 0
+    vr_draws: int = 0
+    sp_white_wins: int = 0
+    sp_black_wins: int = 0
+    sp_draws: int = 0
+
+    def record(self, msg: GameCompleted):
+        """Ingest one finished game notification."""
+        self.games_completed += 1
+        self.total_completed_length += int(msg.length)
+
+        if msg.game_type == "vs_random":
+            nn_plays_white = (msg.game_idx % 2 == 0)
+            if msg.winner == "draw":
+                self.vr_draws += 1
+            elif ((msg.winner == "white" and nn_plays_white) or
+                  (msg.winner == "black" and not nn_plays_white)):
+                self.vr_wins += 1
+            else:
+                self.vr_losses += 1
+            return
+
+        if msg.winner == "white":
+            self.sp_white_wins += 1
+        elif msg.winner == "black":
+            self.sp_black_wins += 1
+        else:
+            self.sp_draws += 1
+
+    def summary(self) -> str:
+        """Human-readable partial results summary."""
+        parts = []
+        if self.games_completed > 0:
+            parts.append(
+                f"avg_len={self.total_completed_length / self.games_completed:.0f}"
+            )
+
+        vr_total = self.vr_wins + self.vr_losses + self.vr_draws
+        if vr_total > 0:
+            vr_score = (self.vr_wins + 0.5 * self.vr_draws) / vr_total
+            parts.append(
+                f"vs_random W:{self.vr_wins} L:{self.vr_losses} D:{self.vr_draws} "
+                f"score={vr_score:.1%}"
+            )
+
+        sp_total = self.sp_white_wins + self.sp_black_wins + self.sp_draws
+        if sp_total > 0:
+            parts.append(
+                f"selfplay W:{self.sp_white_wins} B:{self.sp_black_wins} D:{self.sp_draws}"
+            )
+
+        return ", ".join(parts)
+
+
 def run_gpu_server(network, device: str, request_queue, response_queues: list,
                    num_workers: int, workers: list = None,
                    drain_timeout_ms: float = 5.0,
@@ -86,10 +146,20 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
     # Progress tracking
     total_batches = 0
     total_evals = 0
-    games_completed = 0
     start_time = time.monotonic()
     last_log_time = start_time
     log_interval = 30.0  # seconds
+    progress = ProgressTracker()
+
+    def _handle_game_completed(msg: GameCompleted):
+        progress.record(msg)
+        game_label = f"{num_games}" if num_games else "?"
+        logger.info(f"  Game {progress.games_completed}/{game_label} done "
+                    f"(w{msg.worker_id} g{msg.game_idx} {msg.game_type}): "
+                    f"{msg.length} moves, winner={msg.winner}")
+        partial = progress.summary()
+        if partial:
+            logger.info(f"    Partial: {partial}")
 
     if HAS_TORCH and network is not None:
         network.to(device)
@@ -115,11 +185,7 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
             continue
 
         if isinstance(msg, GameCompleted):
-            games_completed += 1
-            game_label = f"{num_games}" if num_games else "?"
-            logger.info(f"  Game {games_completed}/{game_label} done "
-                        f"(w{msg.worker_id} g{msg.game_idx} {msg.game_type}): "
-                        f"{msg.length} moves, winner={msg.winner}")
+            _handle_game_completed(msg)
             continue
 
         # Collect this request and greedily drain for more
@@ -137,7 +203,7 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
                             f"({len(workers_done)}/{num_workers} workers)")
                 continue
             if isinstance(msg, GameCompleted):
-                games_completed += 1
+                _handle_game_completed(msg)
                 continue
             pending.append(msg)
 
@@ -187,9 +253,12 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
         if now - last_log_time >= log_interval:
             elapsed = now - start_time
             rate = total_evals / elapsed if elapsed > 0 else 0
+            partial = progress.summary()
+            partial_suffix = f", {partial}" if partial else ""
             logger.info(f"GPU server: {total_batches} batches, "
                         f"{total_evals} evals ({rate:.0f}/s), "
-                        f"{games_completed}/{num_games or '?'} games done, "
+                        f"{progress.games_completed}/{num_games or '?'} games done"
+                        f"{partial_suffix}, "
                         f"{elapsed:.0f}s elapsed")
             last_log_time = now
 
