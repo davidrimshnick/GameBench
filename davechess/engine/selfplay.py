@@ -823,7 +823,8 @@ def _finalize_game(g: _ActiveGame,
     return training_data, game_record
 
 
-def _apply_game_move(g: _ActiveGame, move: Move, info: dict, is_nn_turn: bool):
+def _apply_game_move(g: _ActiveGame, move: Move, info: dict, is_nn_turn: bool,
+                     on_game_finished=None):
     """Apply a move to an active game, collect training data if NN's turn."""
     if is_nn_turn:
         planes = state_to_planes(g.state)
@@ -837,12 +838,15 @@ def _apply_game_move(g: _ActiveGame, move: Move, info: dict, is_nn_turn: bool):
     if g.state.done or not generate_legal_moves(g.state):
         g.finished = True
         _record_winner(g)
+        if on_game_finished is not None:
+            on_game_finished(g)
 
 
 def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
                random_mcts: Optional[MCTS], evaluator: BatchedEvaluator,
                temperature_threshold: int,
-               gumbel_search: Optional[GumbelBatchedSearch] = None):
+               gumbel_search: Optional[GumbelBatchedSearch] = None,
+               on_game_finished=None):
     """Play a wave of games to completion with batched evaluation.
 
     At each step:
@@ -864,6 +868,8 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
             if not moves or g.state.done:
                 g.finished = True
                 _record_winner(g)
+                if on_game_finished is not None:
+                    on_game_finished(g)
                 continue
 
             # Determine whose turn it is
@@ -904,10 +910,15 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
 
                 for g, (move, info) in zip(gumbel_games, results):
                     if move is not None:
-                        _apply_game_move(g, move, info, is_nn_turn=True)
+                        _apply_game_move(
+                            g, move, info, is_nn_turn=True,
+                            on_game_finished=on_game_finished,
+                        )
                     else:
                         g.finished = True
                         _record_winner(g)
+                        if on_game_finished is not None:
+                            on_game_finished(g)
 
             if standard_games:
                 # Standard MCTS — batched PUCT search (vs-random + non-gumbel)
@@ -928,14 +939,20 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
 
                 for g, eng, root in zip(standard_games, engines, roots):
                     move, info = eng.get_move_from_root(root, g.state)
-                    _apply_game_move(g, move, info, is_nn_turn=True)
+                    _apply_game_move(
+                        g, move, info, is_nn_turn=True,
+                        on_game_finished=on_game_finished,
+                    )
 
         # Sequential MCTS for random-opponent games
         for g in random_games:
             temp = 1.0 if g.move_count < temperature_threshold else 0.1
             g.opponent_engine.temperature = temp
             move, info = g.opponent_engine.get_move(g.state, add_noise=True)
-            _apply_game_move(g, move, info, is_nn_turn=False)
+            _apply_game_move(
+                g, move, info, is_nn_turn=False,
+                on_game_finished=on_game_finished,
+            )
 
 
 def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 200,

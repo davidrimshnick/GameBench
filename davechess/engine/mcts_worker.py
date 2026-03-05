@@ -214,8 +214,18 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                 game_type="vs_random" if g["is_random"] else "selfplay",
             ))
 
+        def on_game_finished(g: _ActiveGame):
+            request_queue.put(GameCompleted(
+                worker_id=worker_id,
+                game_idx=g.game_idx,
+                game_type=g.game_type,
+                length=g.move_count,
+                winner=g.winner_str,
+            ))
+
         _play_wave(wave_games, nn_mcts, random_mcts, evaluator,
-                   temperature_threshold, gumbel_search=gumbel_search)
+                   temperature_threshold, gumbel_search=gumbel_search,
+                   on_game_finished=on_game_finished)
 
         # Finalize games and send results
         worker_results = []
@@ -230,14 +240,6 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                 "training_data": training_data,
                 "game_record": game_record,
             })
-            # Notify GPU server of game completion for progress logging
-            request_queue.put(GameCompleted(
-                worker_id=worker_id,
-                game_idx=g.game_idx,
-                game_type=g.game_type,
-                length=game_record["length"],
-                winner=game_record["winner"],
-            ))
 
         results_queue.put((worker_id, worker_results))
 
