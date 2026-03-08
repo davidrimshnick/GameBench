@@ -47,6 +47,7 @@ from davechess.engine.selfplay import (
     run_selfplay_batch_parallel, run_selfplay_multiprocess,
 )
 from davechess.engine.mcts import MCTS
+from davechess.engine.gumbel_mcts import GumbelMCTS
 from davechess.game.state import GameState, Player
 from davechess.game.rules import generate_legal_moves, apply_move
 from davechess.data.generator import MCTSLiteAgent, play_game
@@ -293,9 +294,11 @@ class Trainer:
         self.scaler = GradScaler("cuda") if HAS_TORCH and device != "cpu" else None
         self.training_step = 0
         self.iteration = 0
-        self.elo_estimate = 0  # Running ELO estimate from MCTSLite probes
+        self.elo_estimate = 0  # Running ELO estimate from network-vs-network probes
         # Smoothed ELO used for adaptive self-play sims (less jittery than probes)
         self.elo_for_sims = 0.0
+        # Reference network ELO (the ELO of the reference.pt checkpoint)
+        self.reference_elo = 0.0
 
         # Paths
         paths = config.get("paths", {})
@@ -330,6 +333,7 @@ class Trainer:
             "iteration": self.iteration,
             "elo_estimate": self.elo_estimate,
             "elo_for_sims": self.elo_for_sims,
+            "reference_elo": self.reference_elo,
             "value_head_dropout": self.value_head_dropout,
         }
         if self.scaler is not None:
@@ -397,6 +401,7 @@ class Trainer:
         self.iteration = checkpoint["iteration"]
         self.elo_estimate = checkpoint.get("elo_estimate", checkpoint.get("best_elo_estimate", 0))
         self.elo_for_sims = checkpoint.get("elo_for_sims", float(self.elo_estimate))
+        self.reference_elo = checkpoint.get("reference_elo", 0.0)
 
         if self.scaler is not None and "scaler_state" in checkpoint:
             self.scaler.load_state_dict(checkpoint["scaler_state"])
@@ -718,6 +723,170 @@ class Trainer:
             "nn_sims": nn_sims,
         }
 
+    def save_reference(self):
+        """Save current network as the reference for future ELO probes."""
+        path = self.checkpoint_dir / "reference.pt"
+        torch.save({
+            "network_state": self.network.state_dict(),
+            "iteration": self.iteration,
+            "elo": self.reference_elo,
+            "value_head_dropout": self.value_head_dropout,
+        }, path)
+        logger.info(f"Saved reference network: {path} (ELO={self.reference_elo:.0f})")
+
+    def _load_reference_network(self) -> Optional["DaveChessNetwork"]:
+        """Load reference network from reference.pt. Returns None if not found."""
+        path = self.checkpoint_dir / "reference.pt"
+        if not path.exists():
+            return None
+        ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
+        state_dict = ckpt["network_state"]
+        # Infer architecture from weights (same as from_checkpoint)
+        conv_input_weight = state_dict["conv_input.weight"]
+        num_filters = conv_input_weight.shape[0]
+        input_planes = conv_input_weight.shape[1]
+        max_block = max(
+            int(k.split(".")[1]) for k in state_dict if k.startswith("res_blocks.")
+        )
+        num_res_blocks = max_block + 1
+        ref_net = DaveChessNetwork(
+            num_res_blocks=num_res_blocks,
+            num_filters=num_filters,
+            input_planes=input_planes,
+            value_head_dropout=ckpt.get("value_head_dropout", self.value_head_dropout),
+        )
+        ref_net.load_state_dict(state_dict, strict=False)
+        self.reference_elo = ckpt.get("elo", self.reference_elo)
+        del ckpt, state_dict
+        return ref_net
+
+    def probe_vs_network(self, num_games: int = 10,
+                         nn_sims: int = 512,
+                         max_moves: int = 200,
+                         gumbel_config: Optional[dict] = None) -> dict:
+        """Play current network vs reference network to estimate relative ELO.
+
+        Both networks use Gumbel MCTS (if gumbel_config provided) or standard
+        MCTS with the same sim count. Current network stays on GPU; reference
+        network is loaded to GPU briefly, then freed.
+
+        Returns dict with results. If current beats reference (>55% win rate),
+        reference is updated and ELO ratchets up.
+        """
+        ref_net = self._load_reference_network()
+        if ref_net is None:
+            # No reference yet — save current as reference
+            logger.info("No reference network found. Saving current as reference.")
+            self.save_reference()
+            return None
+
+        # Move reference to GPU for the probe
+        ref_net = ref_net.to(self.device)
+        ref_net.eval()
+
+        if gumbel_config and gumbel_config.get("enabled", False):
+            cpuct = float(self.config.get("mcts", {}).get("cpuct", 4.0))
+            gumbel_kwargs = dict(
+                num_simulations=nn_sims,
+                max_num_considered_actions=gumbel_config.get("max_num_considered_actions", 48),
+                cpuct=cpuct,
+                gumbel_scale=gumbel_config.get("gumbel_scale", 1.0),
+                maxvisit_init=gumbel_config.get("maxvisit_init", 50.0),
+                value_scale=gumbel_config.get("value_scale", 0.1),
+                temperature=0.1, device=self.device,
+            )
+            current_mcts = GumbelMCTS(self.network, **gumbel_kwargs)
+            ref_mcts = GumbelMCTS(ref_net, **gumbel_kwargs)
+        else:
+            current_mcts = MCTS(self.network, num_simulations=nn_sims,
+                                temperature=0.1, device=self.device)
+            ref_mcts = MCTS(ref_net, num_simulations=nn_sims,
+                            temperature=0.1, device=self.device)
+
+        wins = 0
+        losses = 0
+        draws = 0
+        game_lengths = []
+
+        for game_idx in range(num_games):
+            state = GameState()
+            current_is_white = (game_idx % 2 == 0)
+            move_count = 0
+
+            while not state.done and move_count < max_moves:
+                moves = generate_legal_moves(state)
+                if not moves:
+                    break
+
+                is_current_turn = (
+                    (state.current_player == Player.WHITE and current_is_white) or
+                    (state.current_player == Player.BLACK and not current_is_white)
+                )
+
+                if is_current_turn:
+                    move, _ = current_mcts.get_move(state, add_noise=False)
+                else:
+                    move, _ = ref_mcts.get_move(state, add_noise=False)
+
+                apply_move(state, move)
+                move_count += 1
+
+            game_lengths.append(move_count)
+
+            if state.winner is not None:
+                current_won = (
+                    (state.winner == Player.WHITE and current_is_white) or
+                    (state.winner == Player.BLACK and not current_is_white)
+                )
+                if current_won:
+                    wins += 1
+                    result = "W"
+                else:
+                    losses += 1
+                    result = "L"
+            else:
+                draws += 1
+                result = "D"
+
+            logger.info(f"  NN probe {game_idx+1}/{num_games}: {result} "
+                        f"({move_count} moves, current as {'W' if current_is_white else 'B'}) "
+                        f"[running: {wins}W {draws}D {losses}L]")
+
+        # Free reference network
+        del current_mcts, ref_mcts, ref_net
+        gc.collect()
+        if self.device != "cpu":
+            torch.cuda.empty_cache()
+
+        total = wins + losses + draws
+        win_rate = (wins + 0.5 * draws) / total if total > 0 else 0.5
+
+        elo_diff = win_rate_to_elo_diff(win_rate)
+        estimated_elo = self.reference_elo + elo_diff
+
+        # Update reference if current is convincingly better (>55%)
+        promoted = False
+        if win_rate > 0.55:
+            self.reference_elo = estimated_elo
+            self.save_reference()
+            promoted = True
+            logger.info(f"Reference updated! New reference ELO: {self.reference_elo:.0f}")
+        else:
+            logger.info(f"Reference kept (win_rate={win_rate:.2f} <= 0.55, "
+                        f"ref_elo={self.reference_elo:.0f})")
+
+        return {
+            "wins": wins,
+            "losses": losses,
+            "draws": draws,
+            "win_rate": win_rate,
+            "avg_game_length": sum(game_lengths) / len(game_lengths) if game_lengths else 0,
+            "estimated_elo": estimated_elo,
+            "nn_sims": nn_sims,
+            "reference_elo": self.reference_elo,
+            "promoted": promoted,
+        }
+
     def log_metrics(self, metrics: dict):
         """Append metrics to the training log and wandb."""
         metrics["timestamp"] = time.time()
@@ -930,7 +1099,8 @@ class Trainer:
         gumbel_config = None
         if use_gumbel:
             gumbel_config = {
-                "max_num_considered_actions": gumbel_cfg.get("max_num_considered_actions", 16),
+                "enabled": True,
+                "max_num_considered_actions": gumbel_cfg.get("max_num_considered_actions", 48),
                 "gumbel_scale": gumbel_cfg.get("gumbel_scale", 1.0),
                 "maxvisit_init": gumbel_cfg.get("maxvisit_init", 50.0),
                 "value_scale": gumbel_cfg.get("value_scale", 0.1),
@@ -1225,66 +1395,69 @@ class Trainer:
         # Pure AlphaZero: no eval gatekeeper. Save best.pt every iteration.
         self.save_best()
 
-        # Periodic MCTSLite ELO probe (every 5 iterations, non-gating)
-        elo_interval = train_cfg.get("elo_probe_interval", 5)
+        # Periodic ELO probe (network-vs-network)
+        # Smoke testing is done by vs-random games in self-play each iteration.
+        elo_interval = int(train_cfg.get("elo_probe_interval", 10))
         elo_results = None
+        nn_probe_results = None
         if self.iteration % elo_interval == 0:
             _log_memory("before_elo_probe")
-            logger.info("MCTSLite ELO probe...")
             gc.collect()
             if self.device != "cpu":
                 torch.cuda.empty_cache()
-            probe_num_games = int(train_cfg.get("elo_probe_games", 20))
-            probe_mctslite_sims = int(train_cfg.get("elo_probe_mctslite_sims", 50))
-            probe_nn_sims = int(train_cfg.get("elo_probe_nn_sims", max(min_sims, probe_mctslite_sims)))
-            probe_max_moves = int(train_cfg.get("elo_probe_max_moves", 100))
-            elo_results = self.estimate_elo_mctslite(
+
+            probe_nn_sims = int(train_cfg.get("elo_probe_nn_sims", num_sims))
+            probe_max_moves = int(train_cfg.get("elo_probe_max_moves", 200))
+
+            probe_num_games = int(train_cfg.get("elo_probe_games", 10))
+            logger.info(f"ELO probe: {probe_num_games} games vs reference network "
+                        f"(ref_elo={self.reference_elo:.0f}, sims={probe_nn_sims})...")
+            nn_probe_results = self.probe_vs_network(
                 num_games=probe_num_games,
-                mctslite_sims=probe_mctslite_sims,
                 nn_sims=probe_nn_sims,
                 max_moves=probe_max_moves,
+                gumbel_config=gumbel_config,
             )
-            self.elo_estimate = elo_results["estimated_elo"]
-            smoothing = float(train_cfg.get("adaptive_elo_smoothing", 0.7))
-            smoothing = min(max(smoothing, 0.0), 0.99)
-            self.elo_for_sims = (
-                smoothing * self.elo_for_sims + (1.0 - smoothing) * self.elo_estimate
-            )
-            logger.info(f"MCTSLite ELO estimate: {self.elo_estimate:.0f} "
-                        f"(W:{elo_results['wins']} L:{elo_results['losses']} D:{elo_results['draws']} "
-                        f"win_rate={elo_results['win_rate']:.2f} avg_len={elo_results['avg_game_length']:.0f}, "
-                        f"nn_sims={elo_results['nn_sims']}, mctslite_sims={elo_results['mctslite_sims']})")
+            if nn_probe_results is not None:
+                self.elo_estimate = nn_probe_results["estimated_elo"]
+                smoothing = float(train_cfg.get("adaptive_elo_smoothing", 0.7))
+                smoothing = min(max(smoothing, 0.0), 0.99)
+                self.elo_for_sims = (
+                    smoothing * self.elo_for_sims + (1.0 - smoothing) * self.elo_estimate
+                )
+                logger.info(f"Network ELO estimate: {self.elo_estimate:.0f} "
+                            f"(W:{nn_probe_results['wins']} L:{nn_probe_results['losses']} "
+                            f"D:{nn_probe_results['draws']} win_rate={nn_probe_results['win_rate']:.2f} "
+                            f"avg_len={nn_probe_results['avg_game_length']:.0f}, "
+                            f"ref_elo={nn_probe_results['reference_elo']:.0f}, "
+                            f"promoted={nn_probe_results['promoted']})")
+
+            elo_results = nn_probe_results
 
             # Clear seed partition once model is strong enough to self-improve
             seed_elo_threshold = float(train_cfg.get("seed_removal_elo", 650))
-            max_reachable_probe_elo = 300.0 + win_rate_to_elo_diff(1.0)
-            effective_seed_elo_threshold = min(seed_elo_threshold, max_reachable_probe_elo)
-            if seed_elo_threshold > max_reachable_probe_elo:
-                logger.warning(
-                    "seed_removal_elo %.0f exceeds probe ceiling %.0f; using %.0f",
-                    seed_elo_threshold,
-                    max_reachable_probe_elo,
-                    effective_seed_elo_threshold,
-                )
-            parts = self.replay_buffer.partition_sizes()
-            if self.elo_estimate >= effective_seed_elo_threshold and parts["seeds"] > 0:
-                n_cleared = self.replay_buffer.clear_seeds()
-                logger.info(f"Cleared {n_cleared} seed positions (ELO {self.elo_estimate:.0f} "
-                            f">= threshold {effective_seed_elo_threshold:.0f})")
+            if self.elo_estimate >= seed_elo_threshold:
+                parts = self.replay_buffer.partition_sizes()
+                if parts["seeds"] > 0:
+                    n_cleared = self.replay_buffer.clear_seeds()
+                    logger.info(f"Cleared {n_cleared} seed positions (ELO {self.elo_estimate:.0f} "
+                                f">= threshold {seed_elo_threshold:.0f})")
 
             if self.use_wandb:
                 elo_metrics = {
                     "elo/estimate": self.elo_estimate,
                     "elo/for_sims": self.elo_for_sims,
-                    "elo/vs_mctslite_win_rate": elo_results["win_rate"],
-                    "elo/vs_mctslite_wins": elo_results["wins"],
-                    "elo/vs_mctslite_losses": elo_results["losses"],
-                    "elo/vs_mctslite_draws": elo_results["draws"],
-                    "elo/vs_mctslite_avg_length": elo_results["avg_game_length"],
-                    "elo/vs_mctslite_num_games": probe_num_games,
-                    "elo/vs_mctslite_nn_sims": elo_results["nn_sims"],
-                    "elo/vs_mctslite_sims": elo_results["mctslite_sims"],
+                    "elo/reference_elo": self.reference_elo,
                 }
+                if nn_probe_results is not None:
+                    elo_metrics.update({
+                        "elo/vs_network_win_rate": nn_probe_results["win_rate"],
+                        "elo/vs_network_wins": nn_probe_results["wins"],
+                        "elo/vs_network_losses": nn_probe_results["losses"],
+                        "elo/vs_network_draws": nn_probe_results["draws"],
+                        "elo/vs_network_avg_length": nn_probe_results["avg_game_length"],
+                        "elo/vs_network_promoted": int(nn_probe_results["promoted"]),
+                    })
                 _safe_wandb_log(elo_metrics, step=self.training_step)
                 wandb.run.summary["elo_estimate"] = self.elo_estimate
                 wandb.run.summary["total_iterations"] = self.iteration
@@ -1310,14 +1483,23 @@ class Trainer:
         # W&B summary update (every iteration) + alert (only on ELO probe iterations)
         if self.use_wandb:
             wandb.run.summary["total_iterations"] = self.iteration
-            if elo_results:
+            if elo_results or smoke_results:
                 total_sp = total_selfplay_games
                 sp_draw_pct = draw_rate * 100
                 iter_elapsed = time.time() - iteration_start
+                probe_text = f"ELO: {self.elo_estimate:.0f} (ref={self.reference_elo:.0f})"
+                if elo_results:
+                    probe_text += (f" | vs-ref W:{elo_results['wins']} L:{elo_results['losses']} "
+                                   f"D:{elo_results['draws']} wr={elo_results['win_rate']:.2f}")
+                    if elo_results.get("promoted"):
+                        probe_text += " [PROMOTED]"
+                if smoke_results:
+                    probe_text += (f"\nSmoke: W:{smoke_results['wins']} L:{smoke_results['losses']} "
+                                   f"D:{smoke_results['draws']} wr={smoke_results['win_rate']:.2f}")
                 wandb.alert(
                     title=f"Iter {self.iteration}: ELO {self.elo_estimate:.0f}",
                     text=(
-                        f"ELO: {self.elo_estimate:.0f} (W:{elo_results['wins']} L:{elo_results['losses']} D:{elo_results['draws']}) | Sims: {num_sims}\n"
+                        f"{probe_text}\n"
                         f"Self-play: {sp_stats['white_wins']}W/{sp_stats['black_wins']}B/{sp_stats['draws']}D "
                         f"({sp_draw_pct:.0f}% draws) avg={sp_stats['avg_game_length']:.0f} moves "
                         f"[{sp_stats['min_game_length']}-{sp_stats['max_game_length']}]\n"
