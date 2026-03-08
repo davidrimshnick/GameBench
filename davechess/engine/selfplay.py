@@ -684,22 +684,18 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
 
     game_records = []
 
-    # Create random opponents at mixed difficulty levels (scaled to NN sims)
+    # Random opponent: same search budget, no network (uniform policy, zero value)
     num_random_games = int(num_games * random_opponent_fraction)
-    sim_levels = _random_sim_levels(num_simulations)
-    random_mcts_by_sims: dict[int, MCTS] = {}
+    random_opp = None
     if num_random_games > 0:
-        for s in sim_levels:
-            random_mcts_by_sims[s] = MCTS(None, num_simulations=s, cpuct=cpuct, device=device)
+        random_opp = MCTS(None, num_simulations=num_simulations, cpuct=cpuct, device=device)
 
     for game_idx in range(num_games):
         if game_idx < num_random_games:
-            # Play against random MCTS — alternate sides and difficulty
             nn_plays_white = (game_idx % 2 == 0)
-            sims = sim_levels[game_idx % len(sim_levels)]
             examples, game_record = play_selfplay_game(
                 mcts, temperature_threshold,
-                opponent_mcts=random_mcts_by_sims[sims],
+                opponent_mcts=random_opp,
                 nn_plays_white=nn_plays_white,
                 draw_value_target=draw_value_target,
             )
@@ -889,15 +885,11 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
 
         # Batched search for NN games
         if nn_games:
-            # Split: Gumbel for self-play (training), standard MCTS for vs-random (inference)
+            # Use Gumbel for all NN turns (self-play and vs-random alike)
             gumbel_games = []
             standard_games = []
             if gumbel_search is not None:
-                for g in nn_games:
-                    if g.game_type == "selfplay":
-                        gumbel_games.append(g)
-                    else:
-                        standard_games.append(g)
+                gumbel_games = nn_games
             else:
                 standard_games = nn_games
 
@@ -1021,12 +1013,22 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                    device=device,
                    value_scale=value_scale)
     num_random_games = int(num_games * random_opponent_fraction)
-    sim_levels = _random_sim_levels(num_simulations)
-    random_mcts_by_sims: dict[int, MCTS] = {}
+    # Random opponent: same search config but with no network (uniform policy, zero value)
+    random_opp = None
     if num_random_games > 0:
-        for s in sim_levels:
-            random_mcts_by_sims[s] = MCTS(None, num_simulations=s, cpuct=cpuct, device=device)
-    random_mcts = next(iter(random_mcts_by_sims.values()), None)
+        if gumbel_config is not None:
+            random_opp = GumbelMCTS(
+                network=None, num_simulations=num_simulations,
+                max_num_considered_actions=gumbel_config.get("max_num_considered_actions", 48),
+                cpuct=cpuct,
+                gumbel_scale=gumbel_config.get("gumbel_scale", 1.0),
+                maxvisit_init=gumbel_config.get("maxvisit_init", 50.0),
+                value_scale=gumbel_config.get("value_scale", 0.1),
+                device=device,
+            )
+        else:
+            random_opp = MCTS(None, num_simulations=num_simulations, cpuct=cpuct, device=device)
+    random_mcts = random_opp
 
     games_launched = 0
     while games_launched < num_games:
@@ -1037,11 +1039,7 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
             game_global_idx = games_launched + i
             is_random_game = game_global_idx < num_random_games
             nn_plays_white = (game_global_idx % 2 == 0)
-            if is_random_game:
-                sims = sim_levels[game_global_idx % len(sim_levels)]
-                opp = random_mcts_by_sims[sims]
-            else:
-                opp = None
+            opp = random_opp if is_random_game else None
 
             wave_games.append(_ActiveGame(
                 game_idx=game_global_idx,
@@ -1234,21 +1232,18 @@ def _distribute_games(num_games: int, num_workers: int,
     """Distribute games evenly across workers.
 
     Returns list of game assignments per worker, each a list of dicts with
-    game_idx, is_random, nn_plays_white, random_sims.
+    game_idx, is_random, nn_plays_white.
     """
-    sim_levels = _random_sim_levels(nn_sims)
     assignments: list[list[dict]] = [[] for _ in range(num_workers)]
 
     for i in range(num_games):
         worker_id = i % num_workers
         is_random = i < num_random_games
         nn_plays_white = (i % 2 == 0)
-        random_sims = sim_levels[i % len(sim_levels)] if is_random else 0
         assignments[worker_id].append({
             "game_idx": i,
             "is_random": is_random,
             "nn_plays_white": nn_plays_white,
-            "random_sims": random_sims,
         })
 
     return assignments

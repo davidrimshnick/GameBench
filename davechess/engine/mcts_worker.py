@@ -187,24 +187,35 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                 value_scale=mcts_config.get("value_scale", 1.0),
             )
 
-        # Create per-sim-level random MCTS instances
-        random_mcts_by_sims: dict[int, MCTS] = {}
-        for g in game_assignments:
-            if g["is_random"]:
-                sims = g.get("random_sims", 25)
-                if sims not in random_mcts_by_sims:
-                    random_mcts_by_sims[sims] = MCTS(
-                        None, num_simulations=sims, device="cpu",
-                    )
-        random_mcts = next(iter(random_mcts_by_sims.values()), None)
+        # Random opponent: same Gumbel MCTS config but with no network
+        # (uniform policy, zero value). Tests whether learned network beats
+        # random given identical search budget.
+        random_opp = None
+        has_random = any(g["is_random"] for g in game_assignments)
+        if has_random:
+            if gumbel_config:
+                from davechess.engine.gumbel_mcts import GumbelMCTS as _GumbelMCTS
+                random_opp = _GumbelMCTS(
+                    network=None,
+                    num_simulations=mcts_config["num_simulations"],
+                    max_num_considered_actions=gumbel_config.get(
+                        "max_num_considered_actions", 48),
+                    cpuct=mcts_config.get("cpuct", 1.5),
+                    gumbel_scale=gumbel_config.get("gumbel_scale", 1.0),
+                    maxvisit_init=gumbel_config.get("maxvisit_init", 50.0),
+                    value_scale=gumbel_config.get("value_scale", 0.1),
+                    device="cpu",
+                )
+            else:
+                random_opp = MCTS(
+                    None, num_simulations=mcts_config["num_simulations"],
+                    cpuct=mcts_config.get("cpuct", 1.5), device="cpu",
+                )
+        random_mcts = random_opp
 
         wave_games: list[_ActiveGame] = []
         for g in game_assignments:
-            if g["is_random"]:
-                sims = g.get("random_sims", 25)
-                opp = random_mcts_by_sims[sims]
-            else:
-                opp = None
+            opp = random_opp if g["is_random"] else None
             wave_games.append(_ActiveGame(
                 game_idx=g["game_idx"],
                 nn_engine=nn_mcts,
