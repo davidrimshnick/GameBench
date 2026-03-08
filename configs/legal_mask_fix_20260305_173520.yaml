@@ -85,6 +85,6 @@ training:
   max_iterations: 200
 
 paths:
-  checkpoint_dir: "checkpoints"
-  log_dir: "logs"
+  checkpoint_dir: "checkpoints/legal_mask_fix_20260305_173520"
+  log_dir: "logs/legal_mask_fix_20260305_173520"
   training_log: "training_log.jsonl"
