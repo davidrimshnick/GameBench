@@ -1390,7 +1390,7 @@ class Trainer:
         # W&B summary update (every iteration) + alert (only on ELO probe iterations)
         if self.use_wandb:
             wandb.run.summary["total_iterations"] = self.iteration
-            if elo_results or smoke_results:
+            if elo_results:
                 total_sp = total_selfplay_games
                 sp_draw_pct = draw_rate * 100
                 iter_elapsed = time.time() - iteration_start
@@ -1400,9 +1400,6 @@ class Trainer:
                                    f"D:{elo_results['draws']} wr={elo_results['win_rate']:.2f}")
                     if elo_results.get("promoted"):
                         probe_text += " [PROMOTED]"
-                if smoke_results:
-                    probe_text += (f"\nSmoke: W:{smoke_results['wins']} L:{smoke_results['losses']} "
-                                   f"D:{smoke_results['draws']} wr={smoke_results['win_rate']:.2f}")
                 wandb.alert(
                     title=f"Iter {self.iteration}: ELO {self.elo_estimate:.0f}",
                     text=(
