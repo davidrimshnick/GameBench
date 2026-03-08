@@ -22,14 +22,10 @@ mcts:
   temperature_threshold: 30    # Exploit in middlegame/endgame where tactics matter
 
 gumbel:
-  enabled: true                    # Re-enabled after off-policy fix (Known Issue #29, commit 0733997).
-                                   # Move selection now uses visit distribution (same as policy target).
-  max_num_considered_actions: 16   # k=16 at 128 sims: 128/(16*5 rounds) ≈ 1.6 visits/action/round.
-                                   # Truncates ~50% of legal moves (avg 37) but Sequential Halving
-                                   # focuses budget on promising actions anyway.
-  gumbel_scale: 1.0               # Scale of Gumbel noise
-  maxvisit_init: 50.0             # Q-transform: baseline visit scale
-  value_scale: 0.1                # Q-transform: Q-value scaling factor
+  enabled: false                   # Disabled at 128 sims — Gumbel costs ~4x wall time but doesn't
+                                   # produce 4x better signal at this sim count. Standard MCTS with
+                                   # cpuct=4.0 + Dirichlet noise explores broadly enough.
+                                   # Re-enable once we confirm learning works, then scale sims up.
 
 selfplay:
   num_games_per_iteration: 20  # 10 selfplay + 10 vs-random with 50% fraction.
