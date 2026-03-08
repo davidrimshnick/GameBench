@@ -223,12 +223,16 @@ class GumbelMCTS:
         policy = policy / policy.sum()
         return policy, logits, value_t.item()
 
-    def search(self, state: GameState) -> tuple[Move, dict]:
+    def search(self, state: GameState,
+               add_noise: bool = True) -> tuple[Move, dict]:
         """Run Gumbel MCTS search from state.
 
         Returns (selected_move, info_dict) where info_dict contains:
-        - policy_target: visit count proportions (not Gumbel improved policy)
+        - policy_target: visit count proportions
         - root_value: value estimate at root
+
+        The played move is sampled from the same visit distribution written to
+        policy_target so self-play remains on-policy.
         """
         legal_moves = generate_legal_moves(state)
         if not legal_moves:
@@ -258,8 +262,12 @@ class GumbelMCTS:
         total_values = np.zeros(num_actions, dtype=np.float64)
         subtrees: list[Optional[MCTSNode]] = [None] * num_actions
 
-        # Sample Gumbel noise and select top-k
-        gumbel = self.gumbel_scale * np.random.gumbel(size=num_actions)
+        # Self-play uses root Gumbel noise for exploration. Evaluation and
+        # probes pass add_noise=False so search is deterministic given logits.
+        if add_noise:
+            gumbel = self.gumbel_scale * np.random.gumbel(size=num_actions)
+        else:
+            gumbel = np.zeros(num_actions, dtype=np.float64)
         k = _effective_considered_actions(
             num_actions=num_actions,
             max_num_considered_actions=self.max_num_considered_actions,
@@ -339,25 +347,22 @@ class GumbelMCTS:
         policy_target = {move_indices[i]: float(visit_probs[i])
                          for i in range(num_actions)}
 
-        # Move selection still uses improved policy for better play
-        qvalues = np.where(
-            visit_counts > 0,
-            total_values / np.maximum(visit_counts, 1),
-            0.0
-        )
-        sigma_q = _qtransform(
-            qvalues, visit_counts, root_value,
-            self.maxvisit_init, self.value_scale,
-        )
-        improved_logits = logits + sigma_q
-        improved_logits = improved_logits - improved_logits.max()
-        improved_policy = np.exp(improved_logits)
-        improved_policy = improved_policy / improved_policy.sum()
-
-        if self.temperature == 0:
-            selected_idx = np.argmax(improved_logits)
+        # Select the played move from the same visit distribution we train on.
+        # This keeps self-play on-policy: replay-buffer targets now describe the
+        # policy that actually generated the game trajectory.
+        if self.temperature == 0 or self.temperature < 0.2:
+            selected_idx = int(np.argmax(visit_probs))
+        elif self.temperature == float("inf"):
+            selected_idx = int(np.random.randint(num_actions))
         else:
-            selected_idx = np.random.choice(num_actions, p=improved_policy)
+            visit_temp = visit_probs ** (1.0 / self.temperature)
+            visit_temp_sum = visit_temp.sum()
+            if visit_temp_sum <= 0:
+                selected_idx = int(np.random.randint(num_actions))
+            else:
+                selected_idx = int(np.random.choice(
+                    num_actions, p=visit_temp / visit_temp_sum
+                ))
 
         root_q = np.sum(total_values) / max(np.sum(visit_counts), 1)
 
@@ -369,7 +374,7 @@ class GumbelMCTS:
 
     def get_move(self, state: GameState, add_noise: bool = True) -> tuple[Move, dict]:
         """Drop-in compatible interface with MCTS.get_move()."""
-        return self.search(state)
+        return self.search(state, add_noise=add_noise)
 
 
 class GumbelBatchedSearch:
@@ -442,7 +447,8 @@ class GumbelBatchedSearch:
         return results
 
     def batched_search(self, states: list[GameState],
-                       temperatures: list[float]) -> list[tuple[Move, dict]]:
+                       temperatures: list[float],
+                       add_noise_flags: Optional[list[bool]] = None) -> list[tuple[Move, dict]]:
         """Run Gumbel MCTS on multiple states with batched NN evaluation.
 
         Uses proper deep tree search: Sequential Halving selects which root
@@ -452,6 +458,8 @@ class GumbelBatchedSearch:
         Args:
             states: List of game states to search from.
             temperatures: Per-game temperature for action selection.
+            add_noise_flags: Per-game root-noise toggle. Defaults to True for
+                every game to preserve self-play exploration behavior.
 
         Returns:
             List of (move, info_dict) per game.
@@ -459,6 +467,10 @@ class GumbelBatchedSearch:
         n = len(states)
         if n == 0:
             return []
+        if add_noise_flags is None:
+            add_noise_flags = [True] * n
+        elif len(add_noise_flags) != n:
+            raise ValueError("add_noise_flags must match states length")
 
         # Batch evaluate all root states
         root_results = self._batch_evaluate(states)
@@ -484,7 +496,10 @@ class GumbelBatchedSearch:
                 max_num_considered_actions=self.max_num_considered_actions,
                 num_simulations=self.num_simulations,
             )
-            gumbel = self.gumbel_scale * np.random.gumbel(size=num_actions)
+            if add_noise_flags[i]:
+                gumbel = self.gumbel_scale * np.random.gumbel(size=num_actions)
+            else:
+                gumbel = np.zeros(num_actions, dtype=np.float64)
             scores = gumbel + logits
             if k < num_actions:
                 top_k = np.argpartition(scores, -k)[-k:]
@@ -620,25 +635,19 @@ class GumbelBatchedSearch:
             policy_target = {g["move_indices"][i]: float(visit_probs[i])
                              for i in range(g["num_actions"])}
 
-            # Move selection uses improved policy for better play
-            qvalues = np.where(
-                g["visit_counts"] > 0,
-                g["total_values"] / np.maximum(g["visit_counts"], 1),
-                0.0
-            )
-            sigma_q = _qtransform(
-                qvalues, g["visit_counts"], g["root_value"],
-                self.maxvisit_init, self.value_scale,
-            )
-            improved_logits = g["logits"] + sigma_q
-            improved_logits = improved_logits - improved_logits.max()
-            improved_policy = np.exp(improved_logits)
-            improved_policy = improved_policy / improved_policy.sum()
-
             if g["temperature"] == 0 or g["temperature"] < 0.2:
-                selected_idx = np.argmax(improved_logits)
+                selected_idx = int(np.argmax(visit_probs))
+            elif g["temperature"] == float("inf"):
+                selected_idx = int(np.random.randint(g["num_actions"]))
             else:
-                selected_idx = np.random.choice(g["num_actions"], p=improved_policy)
+                visit_temp = visit_probs ** (1.0 / g["temperature"])
+                visit_temp_sum = visit_temp.sum()
+                if visit_temp_sum <= 0:
+                    selected_idx = int(np.random.randint(g["num_actions"]))
+                else:
+                    selected_idx = int(np.random.choice(
+                        g["num_actions"], p=visit_temp / visit_temp_sum
+                    ))
 
             root_q = (np.sum(g["total_values"]) /
                       max(np.sum(g["visit_counts"]), 1))

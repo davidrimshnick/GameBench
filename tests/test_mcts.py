@@ -4,6 +4,7 @@ import pytest
 
 from davechess.game.state import GameState, Player, Piece, PieceType, MoveStep, BombardAttack
 from davechess.game.rules import generate_legal_moves, apply_move
+from davechess.engine.network import move_to_policy_index
 from davechess.engine.mcts_lite import MCTSLite, play_random_game
 
 
@@ -339,8 +340,8 @@ class TestMultiprocessMCTS:
 
 
 class TestGumbelActionSelection:
-    def test_gumbel_search_temp0_ignores_root_gumbel_for_played_move(self, monkeypatch):
-        """At low temp, played move should come from improved policy, not gumbel."""
+    def test_gumbel_search_played_move_matches_policy_target(self, monkeypatch):
+        """Played move should align with the stored policy target distribution."""
         from davechess.engine.gumbel_mcts import GumbelMCTS
 
         def fake_gumbel(size):
@@ -357,14 +358,37 @@ class TestGumbelActionSelection:
         assert len(legal_moves) > 1
 
         mcts = GumbelMCTS(network=None, num_simulations=8, temperature=0.0)
-        move, _ = mcts.search(state)
+        move, info = mcts.search(state)
 
-        # With uniform logits/values (network=None), improved_logits tie and
-        # argmax picks index 0. A gumbel-driven final argmax would pick index 1.
+        best_policy_idx = max(info["policy_target"], key=info["policy_target"].get)
+        assert move_to_policy_index(move) == best_policy_idx
+
+    def test_gumbel_search_add_noise_false_ignores_root_gumbel(self, monkeypatch):
+        """add_noise=False should disable root Gumbel noise entirely."""
+        from davechess.engine.gumbel_mcts import GumbelMCTS
+
+        def fake_gumbel(size):
+            import numpy as np
+            arr = np.zeros(size, dtype=np.float64)
+            if size > 1:
+                arr[1] = 100.0
+            return arr
+
+        monkeypatch.setattr("numpy.random.gumbel", fake_gumbel)
+
+        state = GameState()
+        legal_moves = generate_legal_moves(state)
+        assert len(legal_moves) > 1
+
+        mcts = GumbelMCTS(network=None, num_simulations=8, temperature=0.0)
+        move, info = mcts.search(state, add_noise=False)
+
+        best_policy_idx = max(info["policy_target"], key=info["policy_target"].get)
+        assert move_to_policy_index(move) == best_policy_idx
         assert move == legal_moves[0]
 
-    def test_batched_gumbel_search_temp0_ignores_root_gumbel_for_played_move(self, monkeypatch):
-        """Batched variant should also avoid gumbel noise in final action."""
+    def test_batched_gumbel_search_played_move_matches_policy_target(self, monkeypatch):
+        """Batched variant should also play from the stored visit target."""
         from davechess.engine.gumbel_mcts import GumbelBatchedSearch
 
         def fake_gumbel(size):
@@ -382,8 +406,34 @@ class TestGumbelActionSelection:
 
         search = GumbelBatchedSearch(network=None, num_simulations=8, temperature=0.0)
         results = search.batched_search([state], [0.0])
-        move, _ = results[0]
+        move, info = results[0]
 
+        best_policy_idx = max(info["policy_target"], key=info["policy_target"].get)
+        assert move_to_policy_index(move) == best_policy_idx
+
+    def test_batched_gumbel_search_add_noise_false_ignores_root_gumbel(self, monkeypatch):
+        """Batched add_noise_flags=False should disable root Gumbel noise."""
+        from davechess.engine.gumbel_mcts import GumbelBatchedSearch
+
+        def fake_gumbel(size):
+            import numpy as np
+            arr = np.zeros(size, dtype=np.float64)
+            if size > 1:
+                arr[1] = 100.0
+            return arr
+
+        monkeypatch.setattr("numpy.random.gumbel", fake_gumbel)
+
+        state = GameState()
+        legal_moves = generate_legal_moves(state)
+        assert len(legal_moves) > 1
+
+        search = GumbelBatchedSearch(network=None, num_simulations=8, temperature=0.0)
+        results = search.batched_search([state], [0.0], add_noise_flags=[False])
+        move, info = results[0]
+
+        best_policy_idx = max(info["policy_target"], key=info["policy_target"].get)
+        assert move_to_policy_index(move) == best_policy_idx
         assert move == legal_moves[0]
 
 

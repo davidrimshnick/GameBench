@@ -898,7 +898,9 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
                 states = [g.state for g in gumbel_games]
                 temps = [1.0 if g.move_count < temperature_threshold else 0.1
                          for g in gumbel_games]
-                results = gumbel_search.batched_search(states, temps)
+                results = gumbel_search.batched_search(
+                    states, temps, add_noise_flags=[True] * len(gumbel_games)
+                )
 
                 for g, (move, info) in zip(gumbel_games, results):
                     if move is not None:
