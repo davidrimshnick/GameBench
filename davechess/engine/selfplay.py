@@ -1211,6 +1211,99 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
                                             num_random_games)
 
 
+def run_probe_multiprocess(current_network, reference_network,
+                           num_games: int, num_simulations: int,
+                           cpuct: float, device: str,
+                           num_workers: int = 4,
+                           max_moves: int = 200,
+                           value_scale: float = 1.0) -> list[dict]:
+    """Run ELO probe games via multiprocess workers with dual-network GPU server.
+
+    Both networks are loaded on GPU. Workers run MCTS tree traversal on CPU,
+    routing evaluation requests to the appropriate network via network_id.
+
+    Returns list of game result dicts with keys:
+        game_idx, current_is_white, winner ("current"/"reference"/"draw"), length.
+    """
+    import multiprocessing as mp
+    from davechess.engine.gpu_server import run_gpu_server
+    from davechess.engine.mcts_worker import probe_worker_entry
+
+    num_workers = min(num_workers, num_games)
+
+    # Distribute games across workers, alternating colors
+    assignments: list[list[dict]] = [[] for _ in range(num_workers)]
+    for i in range(num_games):
+        assignments[i % num_workers].append({
+            "game_idx": i,
+            "current_is_white": (i % 2 == 0),
+        })
+
+    mcts_config = {
+        "num_simulations": num_simulations,
+        "cpuct": cpuct,
+        "max_moves": max_moves,
+        "value_scale": value_scale,
+    }
+
+    # Create IPC queues
+    request_queue = mp.Queue()
+    response_queues = [mp.Queue() for _ in range(num_workers)]
+    results_queue = mp.Queue()
+
+    # Spawn workers
+    workers = []
+    for wid in range(num_workers):
+        p = mp.Process(
+            target=probe_worker_entry,
+            args=(wid, request_queue, response_queues[wid], results_queue,
+                  assignments[wid], mcts_config),
+            daemon=True,
+        )
+        p.start()
+        workers.append(p)
+
+    logger.info(f"Multiprocess probe: {num_workers} workers, "
+                f"{num_games} games, {num_simulations} sims")
+
+    # Main process runs dual-network GPU server
+    run_gpu_server(current_network, device, request_queue, response_queues,
+                   num_workers, workers, num_games=num_games,
+                   secondary_network=reference_network)
+
+    # Collect results
+    all_worker_results = {}
+    for _ in range(num_workers):
+        try:
+            worker_id, worker_results = results_queue.get(timeout=30)
+            all_worker_results[worker_id] = worker_results
+        except Exception as e:
+            logger.warning(f"Timeout waiting for probe worker results: {e}")
+
+    missing = sorted(set(range(num_workers)) - set(all_worker_results.keys()))
+    if missing:
+        raise RuntimeError(
+            f"Probe missing results from workers {missing} "
+            f"({len(all_worker_results)}/{num_workers} reported)")
+
+    # Wait for workers to exit
+    for p in workers:
+        p.join(timeout=10)
+        if p.is_alive():
+            p.terminate()
+
+    # Flatten and sort by game_idx
+    all_results = []
+    for results in all_worker_results.values():
+        all_results.extend(results)
+    all_results.sort(key=lambda r: r["game_idx"])
+
+    if len(all_results) != num_games:
+        raise RuntimeError(
+            f"Probe returned {len(all_results)} games, expected {num_games}")
+
+    return all_results
+
 
 def _distribute_games(num_games: int, num_workers: int,
                       num_random_games: int,

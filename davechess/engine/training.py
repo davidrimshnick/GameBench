@@ -47,7 +47,7 @@ from davechess.engine.selfplay import (
     run_selfplay_batch_parallel, run_selfplay_multiprocess,
 )
 from davechess.engine.mcts import MCTS
-from davechess.engine.gumbel_mcts import GumbelMCTS
+
 from davechess.game.state import GameState, Player
 from davechess.game.rules import generate_legal_moves, apply_move
 from davechess.data.generator import MCTSLiteAgent, play_game
@@ -673,9 +673,8 @@ class Trainer:
                          gumbel_config: Optional[dict] = None) -> dict:
         """Play current network vs reference network to estimate relative ELO.
 
-        Both networks use Gumbel MCTS (if gumbel_config provided) or standard
-        MCTS with the same sim count. Current network stays on GPU; reference
-        network is loaded to GPU briefly, then freed.
+        Uses multiprocess workers with dual-network GPU server for parallelism.
+        Falls back to sequential play on CPU (e.g., in tests).
 
         Returns dict with results. If current beats reference (>55% win rate),
         reference is updated and ELO ratchets up.
@@ -687,83 +686,95 @@ class Trainer:
             self.save_reference()
             return None
 
-        # Move reference to GPU for the probe
-        ref_net = ref_net.to(self.device)
-        ref_net.eval()
+        cpuct = float(self.config.get("mcts", {}).get("cpuct", 4.0))
+        value_scale = float(self.config.get("mcts", {}).get("value_scale", 1.0))
 
-        if gumbel_config and gumbel_config.get("enabled", False):
-            cpuct = float(self.config.get("mcts", {}).get("cpuct", 4.0))
-            gumbel_kwargs = dict(
-                num_simulations=nn_sims,
-                max_num_considered_actions=gumbel_config.get("max_num_considered_actions", 48),
-                cpuct=cpuct,
-                gumbel_scale=gumbel_config.get("gumbel_scale", 1.0),
-                maxvisit_init=gumbel_config.get("maxvisit_init", 50.0),
-                value_scale=gumbel_config.get("value_scale", 0.1),
-                temperature=0.1, device=self.device,
-            )
-            current_mcts = GumbelMCTS(self.network, **gumbel_kwargs)
-            ref_mcts = GumbelMCTS(ref_net, **gumbel_kwargs)
-        else:
-            current_mcts = MCTS(self.network, num_simulations=nn_sims,
-                                temperature=0.1, device=self.device)
-            ref_mcts = MCTS(ref_net, num_simulations=nn_sims,
-                            temperature=0.1, device=self.device)
-
-        wins = 0
-        losses = 0
-        draws = 0
-        game_lengths = []
-
-        for game_idx in range(num_games):
-            state = GameState()
-            current_is_white = (game_idx % 2 == 0)
-            move_count = 0
-
-            while not state.done and move_count < max_moves:
-                moves = generate_legal_moves(state)
-                if not moves:
-                    break
-
-                is_current_turn = (
-                    (state.current_player == Player.WHITE and current_is_white) or
-                    (state.current_player == Player.BLACK and not current_is_white)
-                )
-
-                if is_current_turn:
-                    move, _ = current_mcts.get_move(state, add_noise=False)
-                else:
-                    move, _ = ref_mcts.get_move(state, add_noise=False)
-
-                apply_move(state, move)
-                move_count += 1
-
-            game_lengths.append(move_count)
-
-            if state.winner is not None:
-                current_won = (
-                    (state.winner == Player.WHITE and current_is_white) or
-                    (state.winner == Player.BLACK and not current_is_white)
-                )
-                if current_won:
-                    wins += 1
-                    result = "W"
-                else:
-                    losses += 1
-                    result = "L"
-            else:
-                draws += 1
-                result = "D"
-
-            logger.info(f"  NN probe {game_idx+1}/{num_games}: {result} "
-                        f"({move_count} moves, current as {'W' if current_is_white else 'B'}) "
-                        f"[running: {wins}W {draws}D {losses}L]")
-
-        # Free reference network
-        del current_mcts, ref_mcts, ref_net
-        gc.collect()
         if self.device != "cpu":
+            # Multiprocess path: GPU server handles both networks
+            from davechess.engine.selfplay import run_probe_multiprocess
+            ref_net = ref_net.to(self.device)
+            ref_net.eval()
+
+            num_workers = min(4, num_games)
+            game_results = run_probe_multiprocess(
+                current_network=self.network,
+                reference_network=ref_net,
+                num_games=num_games,
+                num_simulations=nn_sims,
+                cpuct=cpuct,
+                device=self.device,
+                num_workers=num_workers,
+                max_moves=max_moves,
+                value_scale=value_scale,
+            )
+
+            wins, losses, draws = 0, 0, 0
+            game_lengths = []
+            for r in game_results:
+                game_lengths.append(r["length"])
+                if r["winner"] == "current":
+                    wins += 1
+                elif r["winner"] == "reference":
+                    losses += 1
+                else:
+                    draws += 1
+                logger.info(
+                    f"  NN probe {r['game_idx']+1}/{num_games}: "
+                    f"{'W' if r['winner']=='current' else 'L' if r['winner']=='reference' else 'D'} "
+                    f"({r['length']} moves, current as {'W' if r['current_is_white'] else 'B'}) "
+                    f"[running: {wins}W {draws}D {losses}L]")
+
+            del ref_net
+            gc.collect()
             torch.cuda.empty_cache()
+        else:
+            # Sequential path for CPU (tests)
+            ref_net.eval()
+            current_mcts = MCTS(self.network, num_simulations=nn_sims,
+                                cpuct=cpuct, temperature=0.1, device="cpu",
+                                value_scale=value_scale)
+            ref_mcts = MCTS(ref_net, num_simulations=nn_sims,
+                            cpuct=cpuct, temperature=0.1, device="cpu",
+                            value_scale=value_scale)
+
+            wins, losses, draws = 0, 0, 0
+            game_lengths = []
+
+            for game_idx in range(num_games):
+                state = GameState()
+                current_is_white = (game_idx % 2 == 0)
+                move_count = 0
+
+                while not state.done and move_count < max_moves:
+                    moves = generate_legal_moves(state)
+                    if not moves:
+                        break
+                    is_current_turn = (
+                        (state.current_player == Player.WHITE and current_is_white) or
+                        (state.current_player == Player.BLACK and not current_is_white)
+                    )
+                    if is_current_turn:
+                        move, _ = current_mcts.get_move(state, add_noise=False)
+                    else:
+                        move, _ = ref_mcts.get_move(state, add_noise=False)
+                    apply_move(state, move)
+                    move_count += 1
+
+                game_lengths.append(move_count)
+                if state.winner is not None:
+                    current_won = (
+                        (state.winner == Player.WHITE and current_is_white) or
+                        (state.winner == Player.BLACK and not current_is_white)
+                    )
+                    if current_won:
+                        wins += 1
+                    else:
+                        losses += 1
+                else:
+                    draws += 1
+
+            del current_mcts, ref_mcts, ref_net
+            gc.collect()
 
         total = wins + losses + draws
         win_rate = (wins + 0.5 * draws) / total if total > 0 else 0.5

@@ -29,6 +29,7 @@ class BatchRequest:
     """Request from a worker to evaluate leaf states."""
     worker_id: int
     planes_list: list  # list of np.ndarray, each (NUM_INPUT_PLANES, 8, 8) float32
+    network_id: int = 0  # 0 = primary, 1 = secondary (for probe)
 
 
 @dataclass
@@ -123,7 +124,8 @@ class ProgressTracker:
 def run_gpu_server(network, device: str, request_queue, response_queues: list,
                    num_workers: int, workers: list = None,
                    drain_timeout_ms: float = 5.0,
-                   num_games: int = 0):
+                   num_games: int = 0,
+                   secondary_network=None):
     """Run the GPU inference server loop.
 
     Blocks until all workers send WorkerDone. Batches requests from multiple
@@ -139,6 +141,8 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
         drain_timeout_ms: Max time in ms to wait for additional requests after
             the first one arrives, to build bigger batches.
         num_games: Total number of games being played (for progress logging).
+        secondary_network: Optional second model for dual-network probes.
+            Requests with network_id=1 are evaluated against this network.
     """
     workers_done = set()
     drain_timeout_sec = drain_timeout_ms / 1000.0
@@ -161,9 +165,14 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
         if partial:
             logger.info(f"    Partial: {partial}")
 
+    networks = [network]
     if HAS_TORCH and network is not None:
         network.to(device)
         network.eval()
+    if HAS_TORCH and secondary_network is not None:
+        secondary_network.to(device)
+        secondary_network.eval()
+        networks.append(secondary_network)
 
     while len(workers_done) < num_workers:
         # Block until first request arrives
@@ -207,37 +216,51 @@ def run_gpu_server(network, device: str, request_queue, response_queues: list,
                 continue
             pending.append(msg)
 
-        # Build combined batch
+        # Build combined batch, tracking per-request metadata
         all_planes = []
-        # Track which planes belong to which worker request
-        request_slices: list[tuple[int, int, int]] = []  # (worker_id, start, end)
+        # (worker_id, start, end, network_id)
+        request_slices: list[tuple[int, int, int, int]] = []
         offset = 0
         for req in pending:
             n = len(req.planes_list)
-            request_slices.append((req.worker_id, offset, offset + n))
+            request_slices.append((req.worker_id, offset, offset + n, req.network_id))
             all_planes.extend(req.planes_list)
             offset += n
 
         if not all_planes:
             continue
 
-        # GPU forward pass
+        n_total = len(all_planes)
+        all_logits = np.zeros((n_total, POLICY_SIZE), dtype=np.float32)
+        all_policies = np.ones((n_total, POLICY_SIZE), dtype=np.float32) / POLICY_SIZE
+        all_values = np.zeros(n_total, dtype=np.float32)
+
         if HAS_TORCH and network is not None:
-            planes_batch = np.stack(all_planes)
-            x = torch.from_numpy(planes_batch).to(device)
-            with torch.no_grad():
-                logits, values = network(x)
-            all_logits = logits.cpu().numpy()
-            all_policies = torch.softmax(logits, dim=1).cpu().numpy()
-            all_values = values.cpu().numpy().flatten()
-        else:
-            n_total = len(all_planes)
-            all_logits = np.zeros((n_total, POLICY_SIZE), dtype=np.float32)
-            all_policies = np.ones((n_total, POLICY_SIZE), dtype=np.float32) / POLICY_SIZE
-            all_values = np.zeros(n_total, dtype=np.float32)
+            # Partition by network_id for separate forward passes
+            net_ids_used = set(r[3] for r in request_slices)
+            for net_id in sorted(net_ids_used):
+                net = networks[net_id] if net_id < len(networks) else network
+                # Gather indices for this network
+                indices = []
+                for _, start, end, nid in request_slices:
+                    if nid == net_id:
+                        indices.extend(range(start, end))
+                if not indices:
+                    continue
+                planes_batch = np.stack([all_planes[i] for i in indices])
+                x = torch.from_numpy(planes_batch).to(device)
+                with torch.no_grad():
+                    logits, values = net(x)
+                logits_np = logits.cpu().numpy()
+                policies_np = torch.softmax(logits, dim=1).cpu().numpy()
+                values_np = values.cpu().numpy().flatten()
+                for j, idx in enumerate(indices):
+                    all_logits[idx] = logits_np[j]
+                    all_policies[idx] = policies_np[j]
+                    all_values[idx] = values_np[j]
 
         # Distribute results back to workers
-        for worker_id, start, end in request_slices:
+        for worker_id, start, end, _ in request_slices:
             resp = BatchResponse(
                 policies=all_policies[start:end],
                 values=[float(v) for v in all_values[start:end]],

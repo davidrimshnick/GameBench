@@ -35,11 +35,12 @@ class RemoteBatchedEvaluator:
     """
 
     def __init__(self, worker_id: int, request_queue, response_queue,
-                 use_network: bool = True):
+                 use_network: bool = True, network_id: int = 0):
         self.worker_id = worker_id
         self.request_queue = request_queue
         self.response_queue = response_queue
         self.use_network = use_network
+        self.network_id = network_id
         self._pending: list[tuple[MCTSNode, np.ndarray]] = []
 
     def submit(self, node: MCTSNode, planes: np.ndarray):
@@ -62,6 +63,7 @@ class RemoteBatchedEvaluator:
         self.request_queue.put(BatchRequest(
             worker_id=self.worker_id,
             planes_list=planes_list,
+            network_id=self.network_id,
         ))
 
         resp: BatchResponse = self.response_queue.get(timeout=60)
@@ -78,7 +80,8 @@ class RemoteBatchedEvaluator:
         return len(self._pending)
 
 
-def _gumbel_remote_evaluator(worker_id, request_queue, response_queue):
+def _gumbel_remote_evaluator(worker_id, request_queue, response_queue,
+                             network_id: int = 0):
     """Create a batch evaluator callable for GumbelBatchedSearch.
 
     Returns a function: list[GameState] -> list[(policy, logits, value)]
@@ -92,6 +95,7 @@ def _gumbel_remote_evaluator(worker_id, request_queue, response_queue):
         request_queue.put(BatchRequest(
             worker_id=worker_id,
             planes_list=planes_list,
+            network_id=network_id,
         ))
 
         resp: BatchResponse = response_queue.get(timeout=60)
@@ -256,6 +260,114 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
 
     except Exception as e:
         logger.error(f"Worker {worker_id} failed: {e}", exc_info=True)
+        results_queue.put((worker_id, []))
+
+    finally:
+        request_queue.put(WorkerDone(worker_id))
+
+
+def probe_worker_entry(worker_id: int, request_queue, response_queue, results_queue,
+                       game_assignments: list[dict], mcts_config: dict):
+    """Entry point for ELO probe worker. Plays current vs reference network.
+
+    Each game assignment has current_is_white indicating which side uses
+    network_id=0 (current) vs network_id=1 (reference). Games are played
+    sequentially within each worker; parallelism comes from multiple workers
+    sharing the GPU server.
+
+    Uses standard MCTS with RemoteBatchedEvaluator (one per network).
+    Each move: batched_search with a single state and the appropriate evaluator.
+    """
+    from davechess.game.state import GameState
+    from davechess.game.rules import generate_legal_moves, apply_move
+    from davechess.game.state import Player
+
+    try:
+        num_sims = mcts_config["num_simulations"]
+        cpuct = mcts_config.get("cpuct", 4.0)
+        max_moves = mcts_config.get("max_moves", 200)
+        value_scale = mcts_config.get("value_scale", 1.0)
+
+        # Two evaluators routing to different networks on GPU
+        current_eval = RemoteBatchedEvaluator(
+            worker_id, request_queue, response_queue, network_id=0)
+        ref_eval = RemoteBatchedEvaluator(
+            worker_id, request_queue, response_queue, network_id=1)
+
+        # Standard MCTS engines (no Dirichlet noise, low temperature)
+        current_mcts = MCTS(
+            network=None, num_simulations=num_sims,
+            cpuct=cpuct, temperature=0.1, device="cpu",
+            value_scale=value_scale,
+        )
+        ref_mcts = MCTS(
+            network=None, num_simulations=num_sims,
+            cpuct=cpuct, temperature=0.1, device="cpu",
+            value_scale=value_scale,
+        )
+
+        worker_results = []
+        for g in game_assignments:
+            game_idx = g["game_idx"]
+            current_is_white = g["current_is_white"]
+            state = GameState()
+            move_count = 0
+
+            while not state.done and move_count < max_moves:
+                moves = generate_legal_moves(state)
+                if not moves:
+                    break
+
+                is_current_turn = (
+                    (state.current_player == Player.WHITE and current_is_white) or
+                    (state.current_player == Player.BLACK and not current_is_white)
+                )
+
+                if is_current_turn:
+                    mcts_engine = current_mcts
+                    evaluator = current_eval
+                else:
+                    mcts_engine = ref_mcts
+                    evaluator = ref_eval
+
+                # batched_search with single state
+                roots = MCTS.batched_search(
+                    [mcts_engine], [state], evaluator, [False])
+                move, _ = mcts_engine.get_move_from_root(roots[0], state)
+
+                apply_move(state, move)
+                move_count += 1
+
+            # Determine winner from current's perspective
+            if state.winner is not None:
+                current_won = (
+                    (state.winner == Player.WHITE and current_is_white) or
+                    (state.winner == Player.BLACK and not current_is_white)
+                )
+                winner_str = "current" if current_won else "reference"
+            else:
+                winner_str = "draw"
+
+            worker_results.append({
+                "game_idx": game_idx,
+                "current_is_white": current_is_white,
+                "winner": winner_str,
+                "length": move_count,
+            })
+
+            # Notify GPU server of completion
+            request_queue.put(GameCompleted(
+                worker_id=worker_id,
+                game_idx=game_idx,
+                game_type="probe",
+                length=move_count,
+                winner=winner_str,
+            ))
+
+        results_queue.put((worker_id, worker_results))
+
+    except Exception as e:
+        logger.error(f"Probe worker {worker_id} failed: {e}", exc_info=True)
         results_queue.put((worker_id, []))
 
     finally:

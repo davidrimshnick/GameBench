@@ -222,6 +222,84 @@ class TestProbeVsNetwork:
         assert result["wins"] + result["losses"] + result["draws"] == 2
 
 
+class TestMultiprocessProbe:
+    """Tests for dual-network GPU server and multiprocess probe."""
+
+    def test_batch_request_network_id_default(self):
+        """BatchRequest network_id defaults to 0."""
+        from davechess.engine.gpu_server import BatchRequest
+        req = BatchRequest(worker_id=0, planes_list=[])
+        assert req.network_id == 0
+
+    def test_batch_request_network_id_set(self):
+        """BatchRequest network_id can be set."""
+        from davechess.engine.gpu_server import BatchRequest
+        req = BatchRequest(worker_id=0, planes_list=[], network_id=1)
+        assert req.network_id == 1
+
+    def test_dual_network_gpu_server(self):
+        """GPU server dispatches to correct network based on network_id."""
+        import multiprocessing as mp
+        from davechess.engine.gpu_server import (
+            BatchRequest, BatchResponse, WorkerDone, run_gpu_server,
+        )
+
+        net_a = DaveChessNetwork(num_res_blocks=2, num_filters=16, input_planes=18)
+        net_b = DaveChessNetwork(num_res_blocks=2, num_filters=16, input_planes=18)
+
+        # Make networks differ
+        with torch.no_grad():
+            for p in net_b.parameters():
+                p.add_(torch.randn_like(p) * 1.0)
+
+        request_queue = mp.Queue()
+        response_queues = [mp.Queue()]
+        planes = np.random.randn(18, 8, 8).astype(np.float32)
+
+        # Send requests for both networks
+        request_queue.put(BatchRequest(worker_id=0, planes_list=[planes], network_id=0))
+        request_queue.put(BatchRequest(worker_id=0, planes_list=[planes], network_id=1))
+        request_queue.put(WorkerDone(0))
+
+        run_gpu_server(net_a, "cpu", request_queue, response_queues,
+                       num_workers=1, secondary_network=net_b)
+
+        resp_a: BatchResponse = response_queues[0].get(timeout=5)
+        resp_b: BatchResponse = response_queues[0].get(timeout=5)
+
+        # Results should differ because networks differ
+        assert not np.allclose(resp_a.logits, resp_b.logits, atol=0.01), \
+            "Dual-network dispatch should produce different results"
+
+    def test_run_probe_multiprocess(self):
+        """End-to-end multiprocess probe with tiny networks."""
+        from davechess.engine.selfplay import run_probe_multiprocess
+
+        net_a = DaveChessNetwork(num_res_blocks=2, num_filters=16, input_planes=18)
+        net_b = DaveChessNetwork(num_res_blocks=2, num_filters=16, input_planes=18)
+
+        results = run_probe_multiprocess(
+            current_network=net_a,
+            reference_network=net_b,
+            num_games=2,
+            num_simulations=4,
+            cpuct=4.0,
+            device="cpu",
+            num_workers=2,
+            max_moves=10,
+        )
+
+        assert len(results) == 2
+        for r in results:
+            assert "game_idx" in r
+            assert "current_is_white" in r
+            assert r["winner"] in ("current", "reference", "draw")
+            assert r["length"] > 0
+        # Colors should alternate
+        assert results[0]["current_is_white"] is True
+        assert results[1]["current_is_white"] is False
+
+
 class TestWinRateToEloDiff:
     def test_even_match(self):
         assert win_rate_to_elo_diff(0.5) == pytest.approx(0.0, abs=1.0)
