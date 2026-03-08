@@ -2,8 +2,8 @@
 # Tuned for Jetson Orin Nano Super (8GB shared, CUDA 12.6)
 #
 # Key changes from previous run:
-# - Gumbel disabled, using standard MCTS (simpler, fewer failure modes)
-# - 128 sims (fast iterations for verification)
+# - Gumbel re-enabled with on-policy fix (Known Issue #29 fixed in commit 0733997)
+# - 128 sims, k=16 (~1.8 visits/action/round — adequate for learning signal)
 # - Fresh checkpoint dir (old buffer was poisoned by off-policy targets)
 network:
   num_res_blocks: 10
@@ -13,7 +13,7 @@ network:
   value_head_dropout: 0.3          # Prevent value head memorization (Known Issue #27).
 
 mcts:
-  num_simulations: 128         # 128 sims with standard MCTS. ~16 min/iter for fast feedback.
+  num_simulations: 128         # 128 sims with Gumbel k=16. ~16 min/iter for fast feedback.
   min_selfplay_simulations: 128 # Match base sims — adaptive scaling starts from here
   cpuct: 4.0                   # High cpuct trusts policy prior over noisy Q-values.
   value_scale: 0.5             # Scale NN value predictions before MCTS backprop.
@@ -22,10 +22,14 @@ mcts:
   temperature_threshold: 30    # Exploit in middlegame/endgame where tactics matter
 
 gumbel:
-  enabled: false                   # Disabled: standard MCTS is simpler and Gumbel has been the
-                                   # source of 4 bugs (#23 truncation, #24 sigma_q collapse,
-                                   # #25 sharpening spiral, #29 off-policy targets). Use standard
-                                   # MCTS to verify the pipeline works end-to-end first.
+  enabled: true                    # Re-enabled after off-policy fix (Known Issue #29, commit 0733997).
+                                   # Move selection now uses visit distribution (same as policy target).
+  max_num_considered_actions: 16   # k=16 at 128 sims: 128/(16*5 rounds) ≈ 1.6 visits/action/round.
+                                   # Truncates ~50% of legal moves (avg 37) but Sequential Halving
+                                   # focuses budget on promising actions anyway.
+  gumbel_scale: 1.0               # Scale of Gumbel noise
+  maxvisit_init: 50.0             # Q-transform: baseline visit scale
+  value_scale: 0.1                # Q-transform: Q-value scaling factor
 
 selfplay:
   num_games_per_iteration: 20  # 10 selfplay + 10 vs-random with 50% fraction.
