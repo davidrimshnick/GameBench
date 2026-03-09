@@ -585,7 +585,9 @@ def play_selfplay_game(mcts_engine: MCTS,
         else:
             engine.temperature = 0.1  # Near-greedy
 
-        move, info = engine.get_move(state, add_noise=True)
+        # Noise only for self-play exploration; vs-random tests raw policy
+        use_noise = (opponent_mcts is None) or not is_nn_turn
+        move, info = engine.get_move(state, add_noise=use_noise)
 
         # Only record training examples from the NN engine's turns
         if is_nn_turn:
@@ -898,8 +900,9 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
                 states = [g.state for g in gumbel_games]
                 temps = [1.0 if g.move_count < temperature_threshold else 0.1
                          for g in gumbel_games]
+                noise_flags = [g.game_type != "vs_random" for g in gumbel_games]
                 results = gumbel_search.batched_search(
-                    states, temps, add_noise_flags=[True] * len(gumbel_games)
+                    states, temps, add_noise_flags=noise_flags
                 )
 
                 for g, (move, info) in zip(gumbel_games, results):
@@ -927,7 +930,7 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
                     engines.append(eng)
 
                 states = [g.state for g in standard_games]
-                noise_flags = [True] * len(standard_games)
+                noise_flags = [g.game_type != "vs_random" for g in standard_games]
 
                 roots = MCTS.batched_search(engines, states, evaluator, noise_flags)
 

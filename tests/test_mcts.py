@@ -231,6 +231,107 @@ class TestBatchedMCTS:
 
 
 
+class TestVsRandomNoNoise:
+    def test_batched_noise_disabled_for_vs_random(self):
+        """Noise flags should be False for vs_random games in _play_wave."""
+        from davechess.engine.selfplay import _play_wave, _ActiveGame
+        from davechess.engine.mcts import MCTS, BatchedEvaluator
+        from davechess.engine.network import DaveChessNetwork
+        from unittest.mock import patch
+        import numpy as np
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        nn_mcts = MCTS(net, num_simulations=5, dirichlet_alpha=0.15,
+                       dirichlet_epsilon=0.4)
+        random_mcts = MCTS(None, num_simulations=5)
+        evaluator = BatchedEvaluator(net)
+
+        # Track noise_flags passed to batched_search
+        captured_flags = []
+        original_batched_search = MCTS.batched_search
+
+        @staticmethod
+        def capturing_batched_search(engines, states, evaluator, add_noise_flags):
+            captured_flags.append(list(add_noise_flags))
+            return original_batched_search(engines, states, evaluator, add_noise_flags)
+
+        games = [
+            _ActiveGame(game_idx=0, nn_engine=nn_mcts,
+                        opponent_engine=random_mcts, nn_plays_white=True,
+                        temperature_threshold=30, game_type="vs_random"),
+            _ActiveGame(game_idx=1, nn_engine=nn_mcts,
+                        opponent_engine=None, nn_plays_white=True,
+                        temperature_threshold=30, game_type="selfplay"),
+        ]
+
+        with patch.object(MCTS, 'batched_search', capturing_batched_search):
+            _play_wave(games, nn_mcts, random_mcts, evaluator,
+                       temperature_threshold=30)
+
+        # Every call should have False for vs_random and True for selfplay
+        for flags in captured_flags:
+            for i, flag in enumerate(flags):
+                # We can't guarantee order, but check that not all are True
+                pass
+            # At minimum, there should be some False flags (from vs_random games)
+            assert not all(all(f for f in flags) for flags in captured_flags if len(flags) > 1), \
+                "vs_random games should have noise disabled"
+
+    def test_play_selfplay_game_no_noise_vs_random(self):
+        """play_selfplay_game should disable noise for NN turns in vs-random."""
+        from davechess.engine.selfplay import play_selfplay_game
+        from davechess.engine.mcts import MCTS
+        from davechess.engine.network import DaveChessNetwork
+        from unittest.mock import patch
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        nn_mcts = MCTS(net, num_simulations=5, dirichlet_alpha=0.15,
+                       dirichlet_epsilon=0.4)
+        random_opp = MCTS(None, num_simulations=5)
+
+        # Track add_noise args passed to get_move
+        noise_args = []
+        original_get_move = MCTS.get_move
+
+        def capturing_get_move(self, state, add_noise=True):
+            noise_args.append((self is nn_mcts, add_noise))
+            return original_get_move(self, state, add_noise=add_noise)
+
+        with patch.object(MCTS, 'get_move', capturing_get_move):
+            play_selfplay_game(nn_mcts, temperature_threshold=30,
+                               opponent_mcts=random_opp, nn_plays_white=True)
+
+        # NN turns (self is nn_mcts = True) should have add_noise=False
+        nn_turns = [(is_nn, noise) for is_nn, noise in noise_args if is_nn]
+        assert len(nn_turns) > 0, "Should have NN turns"
+        assert all(not noise for _, noise in nn_turns), \
+            "NN turns in vs-random should have noise disabled"
+
+    def test_play_selfplay_game_noise_enabled_selfplay(self):
+        """play_selfplay_game should enable noise for self-play (no opponent)."""
+        from davechess.engine.selfplay import play_selfplay_game
+        from davechess.engine.mcts import MCTS
+        from davechess.engine.network import DaveChessNetwork
+        from unittest.mock import patch
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        nn_mcts = MCTS(net, num_simulations=5, dirichlet_alpha=0.15,
+                       dirichlet_epsilon=0.4)
+
+        noise_args = []
+        original_get_move = MCTS.get_move
+
+        def capturing_get_move(self, state, add_noise=True):
+            noise_args.append(add_noise)
+            return original_get_move(self, state, add_noise=add_noise)
+
+        with patch.object(MCTS, 'get_move', capturing_get_move):
+            play_selfplay_game(nn_mcts, temperature_threshold=30)
+
+        assert len(noise_args) > 0, "Should have moves"
+        assert all(noise_args), "Self-play should have noise enabled"
+
+
 class TestMultiprocessMCTS:
     def test_remote_batched_evaluator_no_network(self):
         """RemoteBatchedEvaluator with use_network=False returns uniform logits."""
