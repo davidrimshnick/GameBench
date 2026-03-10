@@ -597,6 +597,89 @@ class TestTrainingConfigPassThrough:
         assert created[0]["cpuct"] == 3.25
 
 
+class TestCodeChangeWarning:
+    def test_get_git_head_returns_string(self):
+        """_get_git_head should return a commit hash in a git repo."""
+        from davechess.engine.training import Trainer
+        head = Trainer._get_git_head()
+        assert head is not None
+        assert len(head) == 40  # Full SHA-1
+
+    def test_hot_reload_warns_on_code_change(self, tmp_path, monkeypatch):
+        """_hot_reload_config should warn when git HEAD differs from startup."""
+        import yaml
+        from davechess.engine.training import Trainer
+
+        config = {
+            "network": {"num_res_blocks": 2, "num_filters": 32},
+            "training": {},
+            "selfplay": {},
+            "paths": {
+                "checkpoint_dir": str(tmp_path / "ckpt"),
+                "log_dir": str(tmp_path / "logs"),
+            },
+        }
+        config_path = tmp_path / "test_config.yaml"
+        config_path.write_text(yaml.dump(config))
+
+        trainer = Trainer(config, device="cpu", config_path=str(config_path))
+        trainer._startup_commit = "a" * 40  # Fake startup commit
+
+        # Simulate code change by making _get_git_head return different commit
+        monkeypatch.setattr(Trainer, "_get_git_head",
+                            staticmethod(lambda: "b" * 40))
+
+        import logging, io
+        log_stream = io.StringIO()
+        handler = logging.StreamHandler(log_stream)
+        handler.setLevel(logging.WARNING)
+        train_logger = logging.getLogger("davechess.training")
+        train_logger.addHandler(handler)
+        try:
+            trainer._hot_reload_config()
+            log_output = log_stream.getvalue()
+            assert "CODE CHANGED" in log_output
+            assert "aaaaaaa" in log_output  # startup commit
+            assert "bbbbbbb" in log_output  # current commit
+        finally:
+            train_logger.removeHandler(handler)
+
+    def test_hot_reload_no_warning_same_commit(self, tmp_path, monkeypatch):
+        """No warning when git HEAD matches startup commit."""
+        import yaml
+        from davechess.engine.training import Trainer
+
+        config = {
+            "network": {"num_res_blocks": 2, "num_filters": 32},
+            "training": {},
+            "selfplay": {},
+            "paths": {
+                "checkpoint_dir": str(tmp_path / "ckpt"),
+                "log_dir": str(tmp_path / "logs"),
+            },
+        }
+        config_path = tmp_path / "test_config.yaml"
+        config_path.write_text(yaml.dump(config))
+
+        trainer = Trainer(config, device="cpu", config_path=str(config_path))
+        same_commit = "c" * 40
+        trainer._startup_commit = same_commit
+        monkeypatch.setattr(Trainer, "_get_git_head",
+                            staticmethod(lambda: same_commit))
+
+        import logging, io
+        log_stream = io.StringIO()
+        handler = logging.StreamHandler(log_stream)
+        handler.setLevel(logging.WARNING)
+        train_logger = logging.getLogger("davechess.training")
+        train_logger.addHandler(handler)
+        try:
+            trainer._hot_reload_config()
+            assert "CODE CHANGED" not in log_stream.getvalue()
+        finally:
+            train_logger.removeHandler(handler)
+
+
 class TestEloMapping:
     def test_win_rate_to_elo_diff_monotonic_at_top_end(self):
         """A perfect score should not map below near-perfect scores."""

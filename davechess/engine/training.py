@@ -309,6 +309,11 @@ class Trainer:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
+        # Record startup git commit for code-change detection
+        self._startup_commit = self._get_git_head()
+        if self._startup_commit:
+            logger.info("Trainer started at commit %.7s", self._startup_commit)
+
         if HAS_TB:
             tb_dir = self.log_dir / "tensorboard"
             tb_dir.mkdir(exist_ok=True)
@@ -914,6 +919,19 @@ class Trainer:
         logger.info(f"Seeded buffer with {total_positions} positions from "
                     f"{num_games} games. Buffer size: {len(self.replay_buffer)}")
 
+    @staticmethod
+    def _get_git_head() -> Optional[str]:
+        """Return current HEAD commit hash, or None if not in a git repo."""
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return result.stdout.strip() if result.returncode == 0 else None
+        except Exception:
+            return None
+
     def _hot_reload_config(self):
         """Re-read config YAML if available. Skips network architecture (unsafe to change)."""
         if not self.config_path:
@@ -954,6 +972,15 @@ class Trainer:
                     logger.info("Hot-reload: lr %.4f -> %.4f", self.optimizer.param_groups[0]["lr"], new_lr)
                     self.optimizer.param_groups[0]["lr"] = new_lr
             logger.info("Hot-reloaded config from %s", self.config_path)
+            # Warn if Python source has changed since startup
+            current_commit = self._get_git_head()
+            if (self._startup_commit and current_commit
+                    and current_commit != self._startup_commit):
+                logger.warning(
+                    "CODE CHANGED since trainer start (started at %.7s, "
+                    "now at %.7s). Only YAML config is hot-reloaded — "
+                    "restart training to pick up Python source changes.",
+                    self._startup_commit, current_commit)
         except Exception as e:
             logger.warning("Config hot-reload failed: %s", e)
 
