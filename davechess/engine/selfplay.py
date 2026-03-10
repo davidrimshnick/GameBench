@@ -585,8 +585,8 @@ def play_selfplay_game(mcts_engine: MCTS,
         else:
             engine.temperature = 0.1  # Near-greedy
 
-        # Noise only for self-play exploration; vs-random tests raw policy
-        use_noise = (opponent_mcts is None) or not is_nn_turn
+        # Noise only for self-play exploration (both sides); no noise in vs-random
+        use_noise = (opponent_mcts is None)
         move, info = engine.get_move(state, add_noise=use_noise)
 
         # Only record training examples from the NN engine's turns
@@ -945,7 +945,7 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
         for g in random_games:
             temp = 1.0 if g.move_count < temperature_threshold else 0.1
             g.opponent_engine.temperature = temp
-            move, info = g.opponent_engine.get_move(g.state, add_noise=True)
+            move, info = g.opponent_engine.get_move(g.state, add_noise=False)
             _apply_game_move(
                 g, move, info, is_nn_turn=False,
                 on_game_finished=on_game_finished,

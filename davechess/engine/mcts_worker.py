@@ -294,15 +294,15 @@ def probe_worker_entry(worker_id: int, request_queue, response_queue, results_qu
         ref_eval = RemoteBatchedEvaluator(
             worker_id, request_queue, response_queue, network_id=1)
 
-        # Standard MCTS engines (no Dirichlet noise, low temperature)
+        # Standard MCTS engines (no Dirichlet noise, deterministic move selection)
         current_mcts = MCTS(
             network=None, num_simulations=num_sims,
-            cpuct=cpuct, temperature=0.1, device="cpu",
+            cpuct=cpuct, temperature=0, device="cpu",
             value_scale=value_scale,
         )
         ref_mcts = MCTS(
             network=None, num_simulations=num_sims,
-            cpuct=cpuct, temperature=0.1, device="cpu",
+            cpuct=cpuct, temperature=0, device="cpu",
             value_scale=value_scale,
         )
 

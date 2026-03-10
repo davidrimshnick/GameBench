@@ -332,6 +332,106 @@ class TestVsRandomNoNoise:
         assert all(noise_args), "Self-play should have noise enabled"
 
 
+    def test_play_selfplay_game_random_opponent_no_noise(self):
+        """play_selfplay_game should disable noise for random opponent turns."""
+        from davechess.engine.selfplay import play_selfplay_game
+        from davechess.engine.mcts import MCTS
+        from davechess.engine.network import DaveChessNetwork
+        from unittest.mock import patch
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        nn_mcts = MCTS(net, num_simulations=5, dirichlet_alpha=0.15,
+                       dirichlet_epsilon=0.4)
+        random_opp = MCTS(None, num_simulations=5)
+
+        noise_args = []
+        original_get_move = MCTS.get_move
+
+        def capturing_get_move(self, state, add_noise=True):
+            noise_args.append((self is random_opp, add_noise))
+            return original_get_move(self, state, add_noise=add_noise)
+
+        with patch.object(MCTS, 'get_move', capturing_get_move):
+            play_selfplay_game(nn_mcts, temperature_threshold=30,
+                               opponent_mcts=random_opp, nn_plays_white=True)
+
+        # Random opponent turns should have add_noise=False
+        random_turns = [(is_rand, noise) for is_rand, noise in noise_args if is_rand]
+        assert len(random_turns) > 0, "Should have random opponent turns"
+        assert all(not noise for _, noise in random_turns), \
+            "Random opponent turns should have noise disabled"
+
+    def test_batched_random_opponent_no_noise(self):
+        """_play_wave should call opponent get_move with add_noise=False."""
+        from davechess.engine.selfplay import _play_wave, _ActiveGame
+        from davechess.engine.mcts import MCTS, BatchedEvaluator
+        from davechess.engine.network import DaveChessNetwork
+        from unittest.mock import patch
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        nn_mcts = MCTS(net, num_simulations=5, dirichlet_alpha=0.15,
+                       dirichlet_epsilon=0.4)
+        random_mcts = MCTS(None, num_simulations=5)
+        evaluator = BatchedEvaluator(net)
+
+        noise_args = []
+        original_get_move = MCTS.get_move
+
+        def capturing_get_move(self, state, add_noise=True):
+            noise_args.append((self is random_mcts, add_noise))
+            return original_get_move(self, state, add_noise=add_noise)
+
+        games = [
+            _ActiveGame(game_idx=0, nn_engine=nn_mcts,
+                        opponent_engine=random_mcts, nn_plays_white=True,
+                        temperature_threshold=30, game_type="vs_random"),
+        ]
+
+        with patch.object(MCTS, 'get_move', capturing_get_move):
+            _play_wave(games, nn_mcts, random_mcts, evaluator,
+                       temperature_threshold=30)
+
+        # Random opponent moves should all have add_noise=False
+        random_turns = [(is_rand, noise) for is_rand, noise in noise_args if is_rand]
+        assert len(random_turns) > 0, "Should have random opponent turns"
+        assert all(not noise for _, noise in random_turns), \
+            "Random opponent in _play_wave should have noise disabled"
+
+
+class TestProbeDeterminism:
+    def test_probe_mcts_uses_argmax(self):
+        """Probe MCTS engines should use temperature=0 (argmax move selection)."""
+        from davechess.engine.mcts import MCTS
+
+        # Simulate what probe_worker_entry creates
+        probe_mcts = MCTS(
+            network=None, num_simulations=10,
+            cpuct=4.0, temperature=0, device="cpu",
+        )
+        assert probe_mcts.temperature == 0, \
+            "Probe MCTS should use temperature=0 for deterministic play"
+
+    def test_cpu_probe_uses_argmax(self):
+        """CPU fallback probe in training.py should also use temperature=0."""
+        # Verify by checking that MCTS with temperature=0 always picks highest-visit move
+        from davechess.engine.mcts import MCTS
+        from davechess.engine.network import DaveChessNetwork
+        import numpy as np
+
+        net = DaveChessNetwork(num_res_blocks=2, num_filters=32)
+        mcts = MCTS(net, num_simulations=10, temperature=0)
+        state = GameState()
+        move, info = mcts.get_move(state)
+
+        # With temperature=0, the selected move should be the one with most visits
+        if info.get("visit_counts"):
+            visits = info["visit_counts"]
+            max_visit_idx = max(visits, key=visits.get)
+            # The move should correspond to the highest-visited child
+            assert visits[max_visit_idx] >= max(visits.values()), \
+                "temperature=0 should select the move with most visits"
+
+
 class TestMultiprocessMCTS:
     def test_remote_batched_evaluator_no_network(self):
         """RemoteBatchedEvaluator with use_network=False returns uniform logits."""

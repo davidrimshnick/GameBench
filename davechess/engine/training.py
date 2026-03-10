@@ -736,10 +736,10 @@ class Trainer:
             # Sequential path for CPU (tests)
             ref_net.eval()
             current_mcts = MCTS(self.network, num_simulations=nn_sims,
-                                cpuct=cpuct, temperature=0.1, device="cpu",
+                                cpuct=cpuct, temperature=0, device="cpu",
                                 value_scale=value_scale)
             ref_mcts = MCTS(ref_net, num_simulations=nn_sims,
-                            cpuct=cpuct, temperature=0.1, device="cpu",
+                            cpuct=cpuct, temperature=0, device="cpu",
                             value_scale=value_scale)
 
             wins, losses, draws = 0, 0, 0
