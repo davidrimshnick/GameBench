@@ -431,6 +431,19 @@ class TestProbeDeterminism:
             assert visits[max_visit_idx] >= max(visits.values()), \
                 "temperature=0 should select the move with most visits"
 
+    def test_probe_openings_are_deterministic_and_varied(self):
+        """Probe openings should be reproducible per seed and differ across seeds."""
+        from davechess.engine.probe_openings import build_probe_start_state
+
+        state_a = build_probe_start_state(3, opening_plies=4)
+        state_b = build_probe_start_state(3, opening_plies=4)
+        state_c = build_probe_start_state(4, opening_plies=4)
+
+        assert state_a.get_position_key() == state_b.get_position_key()
+        assert state_a.move_history == state_b.move_history
+        assert len(state_a.move_history) == 4
+        assert state_a.get_position_key() != state_c.get_position_key()
+
 
 class TestMultiprocessMCTS:
     def test_remote_batched_evaluator_no_network(self):
@@ -480,6 +493,21 @@ class TestMultiprocessMCTS:
             assert g["is_random"]
         for g in all_games[10:]:
             assert not g["is_random"]
+
+    def test_distribute_probe_games_pairs_openings_with_color_swaps(self):
+        """Probe distribution should reuse openings across paired color swaps."""
+        from davechess.engine.selfplay import _distribute_probe_games
+
+        assignments = _distribute_probe_games(num_games=6, num_workers=2)
+        all_games = []
+        for worker_games in assignments:
+            all_games.extend(worker_games)
+        all_games.sort(key=lambda g: g["game_idx"])
+
+        assert [g["opening_seed"] for g in all_games] == [0, 0, 1, 1, 2, 2]
+        assert [g["current_is_white"] for g in all_games] == [
+            True, False, True, False, True, False,
+        ]
 
     def test_multiprocess_selfplay_output_format(self):
         """run_selfplay_multiprocess should produce same output format."""

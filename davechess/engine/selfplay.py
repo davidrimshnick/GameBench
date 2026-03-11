@@ -24,6 +24,7 @@ from davechess.game.rules import generate_legal_moves, apply_move
 from davechess.engine.network import state_to_planes, move_to_policy_index, POLICY_SIZE, NUM_INPUT_PLANES
 from davechess.engine.mcts import MCTS, BatchedEvaluator
 from davechess.engine.gumbel_mcts import GumbelMCTS, GumbelBatchedSearch
+from davechess.engine.probe_openings import probe_opening_seed_for_game
 
 
 def build_legal_move_mask(state: GameState,
@@ -1221,7 +1222,8 @@ def run_probe_multiprocess(current_network, reference_network,
                            cpuct: float, device: str,
                            num_workers: int = 4,
                            max_moves: int = 200,
-                           value_scale: float = 1.0) -> list[dict]:
+                           value_scale: float = 1.0,
+                           opening_plies: int = 4) -> list[dict]:
     """Run ELO probe games via multiprocess workers with dual-network GPU server.
 
     Both networks are loaded on GPU. Workers run MCTS tree traversal on CPU,
@@ -1236,19 +1238,15 @@ def run_probe_multiprocess(current_network, reference_network,
 
     num_workers = min(num_workers, num_games)
 
-    # Distribute games across workers, alternating colors
-    assignments: list[list[dict]] = [[] for _ in range(num_workers)]
-    for i in range(num_games):
-        assignments[i % num_workers].append({
-            "game_idx": i,
-            "current_is_white": (i % 2 == 0),
-        })
+    # Distribute games across workers, pairing color-swapped games on the same opening.
+    assignments = _distribute_probe_games(num_games, num_workers)
 
     mcts_config = {
         "num_simulations": num_simulations,
         "cpuct": cpuct,
         "max_moves": max_moves,
         "value_scale": value_scale,
+        "opening_plies": opening_plies,
     }
 
     # Create IPC queues
@@ -1308,6 +1306,20 @@ def run_probe_multiprocess(current_network, reference_network,
             f"Probe returned {len(all_results)} games, expected {num_games}")
 
     return all_results
+
+
+def _distribute_probe_games(num_games: int, num_workers: int) -> list[list[dict]]:
+    """Distribute probe games evenly across workers with paired openings."""
+    assignments: list[list[dict]] = [[] for _ in range(num_workers)]
+
+    for game_idx in range(num_games):
+        assignments[game_idx % num_workers].append({
+            "game_idx": game_idx,
+            "current_is_white": (game_idx % 2 == 0),
+            "opening_seed": probe_opening_seed_for_game(game_idx),
+        })
+
+    return assignments
 
 
 def _distribute_games(num_games: int, num_workers: int,

@@ -47,6 +47,10 @@ from davechess.engine.selfplay import (
     run_selfplay_batch_parallel, run_selfplay_multiprocess,
 )
 from davechess.engine.mcts import MCTS
+from davechess.engine.probe_openings import (
+    build_probe_start_state,
+    probe_opening_seed_for_game,
+)
 
 from davechess.game.state import GameState, Player
 from davechess.game.rules import generate_legal_moves, apply_move
@@ -675,6 +679,7 @@ class Trainer:
     def probe_vs_network(self, num_games: int = 10,
                          nn_sims: int = 512,
                          max_moves: int = 200,
+                         opening_plies: int = 4,
                          gumbel_config: Optional[dict] = None) -> dict:
         """Play current network vs reference network to estimate relative ELO.
 
@@ -711,6 +716,7 @@ class Trainer:
                 num_workers=num_workers,
                 max_moves=max_moves,
                 value_scale=value_scale,
+                opening_plies=opening_plies,
             )
 
             wins, losses, draws = 0, 0, 0
@@ -726,7 +732,8 @@ class Trainer:
                 logger.info(
                     f"  NN probe {r['game_idx']+1}/{num_games}: "
                     f"{'W' if r['winner']=='current' else 'L' if r['winner']=='reference' else 'D'} "
-                    f"({r['length']} moves, current as {'W' if r['current_is_white'] else 'B'}) "
+                    f"({r['length']} moves, current as {'W' if r['current_is_white'] else 'B'}, "
+                    f"opening={r['opening_seed']}) "
                     f"[running: {wins}W {draws}D {losses}L]")
 
             del ref_net
@@ -746,9 +753,10 @@ class Trainer:
             game_lengths = []
 
             for game_idx in range(num_games):
-                state = GameState()
+                opening_seed = probe_opening_seed_for_game(game_idx)
+                state = build_probe_start_state(opening_seed, opening_plies)
                 current_is_white = (game_idx % 2 == 0)
-                move_count = 0
+                move_count = len(state.move_history)
 
                 while not state.done and move_count < max_moves:
                     moves = generate_legal_moves(state)
@@ -1353,14 +1361,17 @@ class Trainer:
 
             probe_nn_sims = int(train_cfg.get("elo_probe_nn_sims", num_sims))
             probe_max_moves = int(train_cfg.get("elo_probe_max_moves", 200))
+            probe_opening_plies = int(train_cfg.get("elo_probe_opening_plies", 4))
 
             probe_num_games = int(train_cfg.get("elo_probe_games", 10))
             logger.info(f"ELO probe: {probe_num_games} games vs reference network "
-                        f"(ref_elo={self.reference_elo:.0f}, sims={probe_nn_sims})...")
+                        f"(ref_elo={self.reference_elo:.0f}, sims={probe_nn_sims}, "
+                        f"opening_plies={probe_opening_plies})...")
             nn_probe_results = self.probe_vs_network(
                 num_games=probe_num_games,
                 nn_sims=probe_nn_sims,
                 max_moves=probe_max_moves,
+                opening_plies=probe_opening_plies,
                 gumbel_config=gumbel_config,
             )
             if nn_probe_results is not None:

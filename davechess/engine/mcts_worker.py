@@ -19,6 +19,7 @@ from typing import Optional
 
 from davechess.engine.network import POLICY_SIZE, state_to_planes
 from davechess.engine.mcts import MCTS, MCTSNode
+from davechess.engine.probe_openings import build_probe_start_state
 from davechess.engine.selfplay import (
     _ActiveGame, _play_wave, _finalize_game,
 )
@@ -287,6 +288,7 @@ def probe_worker_entry(worker_id: int, request_queue, response_queue, results_qu
         cpuct = mcts_config.get("cpuct", 4.0)
         max_moves = mcts_config.get("max_moves", 200)
         value_scale = mcts_config.get("value_scale", 1.0)
+        opening_plies = mcts_config.get("opening_plies", 4)
 
         # Two evaluators routing to different networks on GPU
         current_eval = RemoteBatchedEvaluator(
@@ -310,8 +312,9 @@ def probe_worker_entry(worker_id: int, request_queue, response_queue, results_qu
         for g in game_assignments:
             game_idx = g["game_idx"]
             current_is_white = g["current_is_white"]
-            state = GameState()
-            move_count = 0
+            opening_seed = g.get("opening_seed", game_idx // 2)
+            state = build_probe_start_state(opening_seed, opening_plies)
+            move_count = len(state.move_history)
 
             while not state.done and move_count < max_moves:
                 moves = generate_legal_moves(state)
@@ -351,6 +354,7 @@ def probe_worker_entry(worker_id: int, request_queue, response_queue, results_qu
             worker_results.append({
                 "game_idx": game_idx,
                 "current_is_white": current_is_white,
+                "opening_seed": opening_seed,
                 "winner": winner_str,
                 "length": move_count,
             })
