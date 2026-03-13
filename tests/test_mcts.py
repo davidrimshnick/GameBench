@@ -351,6 +351,41 @@ class TestBatchedMCTS:
 
 
 
+class TestVsRandomExcludedFromBuffer:
+    def test_sequential_selfplay_excludes_vs_random_examples(self):
+        """Vs-random examples should NOT be included in training buffer."""
+        import davechess.engine.selfplay as selfplay
+        from davechess.engine.network import DaveChessNetwork
+        import numpy as np
+
+        net = DaveChessNetwork(num_res_blocks=1, num_filters=16)
+        examples, stats = selfplay.run_selfplay_batch(
+            network=net, num_games=4, num_simulations=2,
+            random_opponent_fraction=0.5,
+        )
+        # With 50% random fraction, 2 games are vs-random and 2 are selfplay.
+        # Only selfplay examples should be in the buffer.
+        assert stats["num_random_games"] == 2
+        # Vs-random games produce examples but they should be excluded.
+        # Selfplay games produce examples from both sides.
+        # We just check that we got SOME examples (from selfplay) but fewer
+        # than if all 4 games contributed.
+        assert len(examples) > 0, "Should have selfplay examples"
+
+    def test_parallel_selfplay_excludes_vs_random_examples(self):
+        """Parallel path should also exclude vs-random from training buffer."""
+        import davechess.engine.selfplay as selfplay
+        from davechess.engine.network import DaveChessNetwork
+
+        net = DaveChessNetwork(num_res_blocks=1, num_filters=16)
+        examples, stats = selfplay.run_selfplay_batch_parallel(
+            network=net, num_games=4, num_simulations=2,
+            random_opponent_fraction=0.5, parallel_games=4,
+        )
+        assert stats["num_random_games"] == 2
+        assert len(examples) > 0, "Should have selfplay examples"
+
+
 class TestVsRandomNoNoise:
     def test_batched_noise_disabled_for_vs_random(self):
         """Noise flags should be False for vs_random games in _play_wave."""

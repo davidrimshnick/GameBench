@@ -761,9 +761,10 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
             game_type = "selfplay"
 
         game_len = game_record["length"]
-        # Include all game types in buffer — vs-random provides decisive
-        # outcomes that bootstrap value learning from random init.
-        all_examples.extend(examples)
+        # Exclude vs-random from buffer — the NN wins 90%+ of vs-random,
+        # flooding the buffer with +1 labels that drown out material signal.
+        if game_type != "vs_random":
+            all_examples.extend(examples)
         game_lengths.append(game_len)
 
         winner = game_record["winner"]
@@ -1112,9 +1113,10 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                 g, draw_value_target=draw_value_target,
                 policy_target_smoothing=policy_target_smoothing,
             )
-            # Include all game types — vs-random provides decisive outcomes
-            # that bootstrap value learning from random init.
-            all_examples.extend(training_data)
+            # Exclude vs-random from buffer — NN wins 90%+ of vs-random,
+            # flooding buffer with +1 labels that drown out material signal.
+            if g.game_type != "vs_random":
+                all_examples.extend(training_data)
             game_lengths.append(game_record["length"])
 
             winner = game_record["winner"]
@@ -1425,9 +1427,10 @@ def _aggregate_multiprocess_results(all_worker_results: dict, num_games: int,
         )
 
     for r in all_game_results:
-        # Include all game types — vs-random provides decisive outcomes
-        # that bootstrap value learning from random init.
-        all_examples.extend(r["training_data"])
+        # Exclude vs-random from buffer — NN wins 90%+ of vs-random,
+        # flooding buffer with +1 labels that drown out material signal.
+        if r.get("game_type") != "vs_random":
+            all_examples.extend(r["training_data"])
         game_lengths.append(r["game_record"]["length"])
 
         winner = r["game_record"]["winner"]
