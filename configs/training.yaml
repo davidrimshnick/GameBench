@@ -3,83 +3,61 @@
 network:
   num_res_blocks: 10
   num_filters: 256
-  input_planes: 18
+  input_planes: 18               # Planes 14-17 zeroed (shortcut metadata removed)
   board_size: 8
-  value_head_dropout: 0.3          # Keep dropout, but remove metadata shortcut planes in
-                                    # the encoder so value must learn from board structure.
+  value_head_dropout: 0.3
 
 mcts:
-  num_simulations: 128         # 128 sims with ~37 legal moves = ~3.5 visits/move.
-  min_selfplay_simulations: 128 # Match base sims — adaptive scaling starts from here
-  # fixed_selfplay_simulations: 64  # Uncomment to disable adaptive sims entirely
-  cpuct: 4.0                   # High cpuct trusts policy prior over noisy Q-values.
-                                # At 2.5, self-play games were 100% draws (repetition/turn-limit)
-                                # because low exploration led to cyclic play. 4.0 produces decisive
-                                # games needed for value head learning signal.
-  value_scale: 0.5             # Scale NN value predictions before MCTS backprop.
-                                # Raw value head hallucinates ±0.9 on unseen positions;
-                                # scaling to ±0.45 keeps Q within exploration term range.
-  dirichlet_alpha: 0.15            # Spikier noise for fewer legal moves than Go
-  dirichlet_epsilon: 0.4            # 40% noise to break self-play overfitting
-  temperature_threshold: 30    # Exploit in middlegame/endgame where tactics matter
+  num_simulations: 128
+  min_selfplay_simulations: 128
+  cpuct: 4.0                     # Trust policy prior over noisy Q-values
+  value_scale: 0.5               # Dampen raw value predictions in MCTS backprop
+  dirichlet_alpha: 0.15
+  dirichlet_epsilon: 0.4
+  temperature_threshold: 30
 
 gumbel:
-  enabled: false                   # Disable during value-head recovery. Top-k concentration
-                                   # narrows the replay distribution too much when value is weak.
-  max_num_considered_actions: 16   # Top-k actions for Sequential Halving
-  gumbel_scale: 1.0               # Scale of Gumbel noise
-  maxvisit_init: 50.0             # Q-transform: baseline visit scale
-  value_scale: 0.1                # Q-transform: Q-value scaling factor
+  enabled: false
 
 selfplay:
-  num_games_per_iteration: 40  # More fresh positions per iter so value learns broader state coverage.
-  replay_buffer_size: 30000    # Total (informational only, actual = seed + decisive + draw)
-  buffer_seed_size: 12000      # Permanent seed partition (checkmates, tactical wins)
-  buffer_decisive_size: 20000  # Larger live window reduces value memorization of recent trajectories.
-  buffer_draw_size: 10000      # Match the old 2:1 decisive:draw ratio at a larger scale.
-  num_workers: 4               # CPU worker processes for MCTS tree traversal
-  min_buffer_size: 1000        # Train immediately on seed games
-  random_opponent_fraction: 0.5   # 50% vs random for decisive signal to bootstrap value head
-  parallel_games: 20             # Fallback for single-process mode (multiprocess ignores this)
-  draw_value_target: 0.0       # Neutral — -0.1 caused systematic pessimism (75%+ of data is draws)
-  policy_target_smoothing: 0.0 # Disabled for now.
+  num_games_per_iteration: 40
+  replay_buffer_size: 30000
+  buffer_seed_size: 12000
+  buffer_decisive_size: 20000
+  buffer_draw_size: 10000
+  num_workers: 4
+  min_buffer_size: 1000
+  random_opponent_fraction: 0.5
+  parallel_games: 20
+  draw_value_target: 0.0
+  policy_target_smoothing: 0.0
+  selfplay_opening_plies: 4
 
 training:
-  optimizer: muon               # muon = Muon for conv/hidden + SGD for heads/biases/BN
+  optimizer: muon
   batch_size: 128
-  learning_rate: 0.01           # Muon LR (reduced from 0.02 to prevent overfitting)
-  muon_momentum: 0.95           # Muon momentum (default)
-  head_lr: 0.001                # SGD LR for policy/value heads and biases (reduced from 0.003)
+  learning_rate: 0.01             # Muon LR for trunk convs
+  muon_momentum: 0.95
+  head_lr: 0.001                  # SGD LR for heads/biases/BN
   momentum: 0.9
   weight_decay: 0.0001
-  value_loss_weight: 10.0      # Restored to give value head ~14.5% of gradient.
-                                # With dropout preventing memorization, the value head needs
-                                # enough gradient to learn from decisive game outcomes.
-                                # Raw value loss (~0.1) is ~60x smaller than policy loss (~5.9).
-  policy_freeze_iterations: 0  # Disabled
-  policy_entropy_weight: 0.0   # DISABLED: was actively fighting learning from random init.
-                                # With legal-move masking in MCTS, the policy head naturally
-                                # concentrates on legal moves. Entropy reg pushed it back to
-                                # uniform, counteracting the little signal that existed.
-  draw_sample_weight: 0.4      # Downweight draw positions in loss vs decisive outcomes
-  steps_per_iteration: 200     # Reduce replay reuse. 400 steps over a 15K live buffer was
-                                # effectively repeated memorization of recent trajectories.
+  value_loss_weight: 10.0
+  policy_freeze_iterations: 0
+  policy_entropy_weight: 0.0
+  draw_sample_weight: 0.4
+  steps_per_iteration: 200
   checkpoint_interval: 100
-  elo_probe_interval: 999      # Disabled until vs-random is 100%. Each probe wastes ~90min.
-  elo_probe_games: 6           # Keep probes under ~1hr at 800 sims
-
-  elo_probe_nn_sims: 800       # AlphaZero-level search for accurate measurement
-  elo_probe_max_moves: 200     # Match self-play turn limit (100 full turns = 200 half-moves).
-  adaptive_elo_smoothing: 0.7  # Smooth probe ELO before mapping to adaptive sims
-  seed_removal_elo: 650        # Clear seed partition once ELO exceeds this
-  seed_sample_weight_init: 0.0  # DISABLED: seeds have 4:1 White win bias (Known Issue #21).
-                                # Board flipping makes this worse since the bias becomes
-                                # encoded differently. Pure self-play from random init.
-  seed_sample_weight_decay: 0.93 # (unused while init=0)
-  seed_sample_weight_min: 0.0   # (unused while init=0)
-  max_iterations: 200
+  elo_probe_interval: 10
+  elo_probe_games: 10
+  elo_probe_max_moves: 200
+  adaptive_elo_smoothing: 0.7
+  seed_removal_elo: 650
+  seed_sample_weight_init: 0.0
+  seed_sample_weight_decay: 0.93
+  seed_sample_weight_min: 0.0
+  max_iterations: 2000
 
 paths:
-  checkpoint_dir: "checkpoints"
-  log_dir: "logs"
+  checkpoint_dir: "checkpoints/on_policy_fix_20260308"
+  log_dir: "logs/on_policy_fix_20260308"
   training_log: "training_log.jsonl"
