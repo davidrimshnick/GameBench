@@ -27,15 +27,6 @@ from davechess.engine.gumbel_mcts import GumbelMCTS, GumbelBatchedSearch
 from davechess.engine.probe_openings import build_probe_start_state, probe_opening_seed_for_game
 
 
-def _sanitize_planes_for_training(planes: np.ndarray) -> np.ndarray:
-    """Remove reserved shortcut metadata planes from stored training data."""
-    planes = planes.astype(np.float32, copy=False)
-    if planes.shape[0] >= 18:
-        planes = planes.copy()
-        planes[14:18] = 0.0
-    return planes
-
-
 def build_legal_move_mask(state: GameState,
                           legal_moves: Optional[list[Move]] = None) -> np.ndarray:
     """Build a dense legal-move mask aligned with the policy encoding."""
@@ -137,7 +128,7 @@ class ReplayBuffer:
     def push(self, planes: np.ndarray, policy: np.ndarray, value: float,
              legal_mask: Optional[np.ndarray] = None):
         """Add a single training example."""
-        self.planes.append(_sanitize_planes_for_training(planes))
+        self.planes.append(planes.astype(np.float32, copy=False))
         self.policies.append(policy.astype(np.float32, copy=False))
         self.values.append(value)
         if legal_mask is None:
@@ -249,7 +240,7 @@ class ReplayBuffer:
             end = min(start + chunk_size, n)
             chunk = planes_arr[start:end]
             for i in range(len(chunk)):
-                self.planes.append(_sanitize_planes_for_training(chunk[i]))
+                self.planes.append(chunk[i].astype(np.float32, copy=False))
             del chunk
         del planes_arr
         gc.collect()

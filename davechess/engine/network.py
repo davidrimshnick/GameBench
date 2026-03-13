@@ -7,12 +7,10 @@ Input: 18 planes of 8x8
   Plane 11: Perspective anchor (all 1s; kept for input compatibility)
   Plane 12: Current player resources (scalar broadcast, normalized)
   Plane 13: Opponent resources (scalar broadcast, normalized)
-  Planes 14-17: Reserved / zeroed.
-
-The reserved planes previously carried turn-count, repetition, and last-move
-metadata. Those features made it too easy for the value head to memorize
-trajectory shortcuts instead of learning board evaluation. We keep the input
-width at 18 for checkpoint/buffer compatibility, but leave those planes zero.
+  Plane 14: Turn progress (turn/100, broadcast — urgency signal)
+  Plane 15: Position repetition count (0/0.5/1.0 for 1x/2x/3x+)
+  Plane 16: Last move source square (binary one-hot)
+  Plane 17: Last move destination square (binary one-hot)
 
 Output:
   Policy: flat logit vector over all possible moves (4288 logits)
@@ -65,8 +63,7 @@ def state_to_planes(state: GameState) -> np.ndarray:
     When Black is playing, the board is flipped vertically so the CNN
     always sees the current player's pieces "moving up" — standard
     AlphaZero technique that doubles effective network capacity for
-    spatial patterns. Planes 14-17 are reserved and intentionally zeroed
-    so the network cannot shortcut on non-spatial trajectory metadata.
+    spatial patterns.
     """
     planes = np.zeros((NUM_INPUT_PLANES, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
     current = state.current_player
@@ -95,10 +92,32 @@ def state_to_planes(state: GameState) -> np.ndarray:
     planes[12, :, :] = min(state.resources[current] / RESOURCE_NORM, 1.0)
     planes[13, :, :] = min(state.resources[opponent] / RESOURCE_NORM, 1.0)
 
-    # Planes 14-17 intentionally remain zeroed. They previously encoded
-    # non-spatial shortcut metadata (turn count, repetition count, last move).
-    # Zeroing them preserves input compatibility while forcing the value head
-    # to learn from board structure instead of trajectory proxies.
+    # Turn progress: urgency signal (0.0 at turn 1, 1.0 at turn 100)
+    planes[14, :, :] = min(state.turn / 100.0, 1.0)
+
+    # Repetition count for current position
+    pos_key = state.get_position_key()
+    rep_count = state.position_counts.get(pos_key, 1)
+    # Encode: 1x=0.0, 2x=0.5, 3x+=1.0
+    planes[15, :, :] = min((rep_count - 1) * 0.5, 1.0)
+
+    # Last move source and destination squares
+    if state.last_move is not None:
+        move = state.last_move
+        if isinstance(move, MoveStep):
+            fr, fc = move.from_rc
+            tr, tc = move.to_rc
+            planes[16, fr, fc] = 1.0
+            planes[17, tr, tc] = 1.0
+        elif isinstance(move, Promote):
+            r, c = move.from_rc
+            planes[16, r, c] = 1.0
+            planes[17, r, c] = 1.0
+        elif isinstance(move, BombardAttack):
+            fr, fc = move.from_rc
+            tr, tc = move.target_rc
+            planes[16, fr, fc] = 1.0
+            planes[17, tr, tc] = 1.0
 
     # Board flipping: when Black plays, flip all spatial planes vertically.
     # This makes the CNN always see the current player's pieces at the bottom
