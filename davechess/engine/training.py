@@ -1074,6 +1074,7 @@ class Trainer:
             policy_target_smoothing=float(sp_cfg.get("policy_target_smoothing", 0.0)),
             device=self.device,
             value_scale=float(mcts_cfg.get("value_scale", 1.0)),
+            selfplay_opening_plies=int(sp_cfg.get("selfplay_opening_plies", 0)),
         )
         if use_gumbel and num_workers > 1:
             # Multiprocess Gumbel: workers run Gumbel MCTS on CPU,

@@ -229,6 +229,126 @@ class TestBatchedMCTS:
         assert len(examples) > 0
         assert stats["num_random_games"] == 2
 
+    def test_random_move_engine_returns_uniform_policy(self):
+        """RandomMoveEngine should pick a legal move with uniform policy target."""
+        from davechess.engine.selfplay import RandomMoveEngine
+
+        state = GameState()
+        engine = RandomMoveEngine()
+        move, info = engine.get_move(state, add_noise=False)
+
+        legal = generate_legal_moves(state)
+        flip = state.current_player == Player.BLACK
+        expected_indices = {move_to_policy_index(m, flip=flip) for m in legal}
+
+        assert move in legal
+        assert set(info["policy_target"]) == expected_indices
+        assert info["root_value"] == 0.0
+        assert sum(info["policy_target"].values()) == pytest.approx(1.0)
+        for prob in info["policy_target"].values():
+            assert prob == pytest.approx(1.0 / len(legal))
+
+    def test_run_selfplay_batch_uses_true_random_engine(self, monkeypatch):
+        """Sequential self-play should instantiate the true random opponent."""
+        import davechess.engine.selfplay as selfplay
+
+        captured = []
+
+        class DummyMCTS:
+            def __init__(self, network, **kwargs):
+                self.network = network
+                self.temperature = kwargs.get("temperature", 1.0)
+
+        def fake_play_selfplay_game(mcts_engine, temperature_threshold=30,
+                                    opponent_mcts=None, nn_plays_white=True,
+                                    draw_value_target=0.0, start_state=None):
+            del mcts_engine, temperature_threshold, nn_plays_white
+            del draw_value_target, start_state
+            captured.append(opponent_mcts)
+            return [], {
+                "moves": [],
+                "winner": "draw",
+                "length": 0,
+                "draw_reason": "turn_limit",
+            }
+
+        monkeypatch.setattr(selfplay, "MCTS", DummyMCTS)
+        monkeypatch.setattr(selfplay, "play_selfplay_game", fake_play_selfplay_game)
+
+        examples, stats = selfplay.run_selfplay_batch(
+            network=object(),
+            num_games=2,
+            num_simulations=1,
+            random_opponent_fraction=0.5,
+        )
+
+        assert examples == []
+        assert len(captured) == 2
+        assert isinstance(captured[0], selfplay.RandomMoveEngine)
+        assert captured[1] is None
+        assert stats["num_random_games"] == 1
+
+    def test_parallel_selfplay_uses_true_random_engine(self, monkeypatch):
+        """Parallel self-play should wire true-random opponents into vs_random games."""
+        import davechess.engine.selfplay as selfplay
+
+        captured = []
+
+        class DummyMCTS:
+            def __init__(self, network, **kwargs):
+                self.network = network
+                self.num_simulations = kwargs.get("num_simulations", 1)
+                self.cpuct = kwargs.get("cpuct", 1.5)
+                self.dirichlet_alpha = kwargs.get("dirichlet_alpha", 0.3)
+                self.dirichlet_epsilon = kwargs.get("dirichlet_epsilon", 0.25)
+                self.temperature = kwargs.get("temperature", 1.0)
+                self.device = kwargs.get("device", "cpu")
+                self.value_scale = kwargs.get("value_scale", 1.0)
+
+        class DummyEvaluator:
+            def __init__(self, network, device="cpu"):
+                self.network = network
+                self.device = device
+
+        def fake_play_wave(wave_games, nn_mcts, random_mcts, evaluator,
+                           temperature_threshold, gumbel_search=None,
+                           on_game_finished=None):
+            del nn_mcts, random_mcts, evaluator, temperature_threshold
+            del gumbel_search, on_game_finished
+            captured.extend(g.opponent_engine for g in wave_games)
+            for g in wave_games:
+                g.finished = True
+
+        def fake_finalize_game(g, draw_value_target=0.0, policy_target_smoothing=0.0):
+            del g, draw_value_target, policy_target_smoothing
+            return [], {
+                "moves": [],
+                "winner": "draw",
+                "length": 0,
+                "draw_reason": "turn_limit",
+            }
+
+        monkeypatch.setattr(selfplay, "MCTS", DummyMCTS)
+        monkeypatch.setattr(selfplay, "BatchedEvaluator", DummyEvaluator)
+        monkeypatch.setattr(selfplay, "_play_wave", fake_play_wave)
+        monkeypatch.setattr(selfplay, "_finalize_game", fake_finalize_game)
+
+        examples, stats = selfplay.run_selfplay_batch_parallel(
+            network=object(),
+            num_games=4,
+            num_simulations=1,
+            random_opponent_fraction=0.5,
+            parallel_games=4,
+        )
+
+        assert examples == []
+        assert len(captured) == 4
+        assert isinstance(captured[0], selfplay.RandomMoveEngine)
+        assert isinstance(captured[1], selfplay.RandomMoveEngine)
+        assert captured[2] is None
+        assert captured[3] is None
+        assert stats["num_random_games"] == 2
+
 
 
 class TestVsRandomNoNoise:

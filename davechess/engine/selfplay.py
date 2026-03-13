@@ -24,7 +24,7 @@ from davechess.game.rules import generate_legal_moves, apply_move
 from davechess.engine.network import state_to_planes, move_to_policy_index, POLICY_SIZE, NUM_INPUT_PLANES
 from davechess.engine.mcts import MCTS, BatchedEvaluator
 from davechess.engine.gumbel_mcts import GumbelMCTS, GumbelBatchedSearch
-from davechess.engine.probe_openings import probe_opening_seed_for_game
+from davechess.engine.probe_openings import build_probe_start_state, probe_opening_seed_for_game
 
 
 def build_legal_move_mask(state: GameState,
@@ -72,6 +72,41 @@ def classify_draw_reason(state: GameState) -> str:
     if state.position_counts and max(state.position_counts.values()) >= 3:
         return "repetition"
     return "stalemate_or_other"
+
+
+class RandomMoveEngine:
+    """Opponent that plays uniformly random legal moves.
+
+    Exposes the subset of the MCTS interface used by self-play so
+    `random_opponent_fraction` really means random move selection.
+    """
+
+    def __init__(self):
+        self.temperature = 1.0
+
+    def get_move(self, state: GameState, add_noise: bool = False) -> tuple[Move, dict]:
+        del add_noise  # Interface compatibility with MCTS/GumbelMCTS.
+        legal_moves = generate_legal_moves(state)
+        if not legal_moves:
+            raise ValueError("No legal moves")
+
+        move = random.choice(legal_moves)
+        flip = state.current_player == Player.BLACK
+        uniform_prob = 1.0 / len(legal_moves)
+        policy_target = {
+            move_to_policy_index(m, flip=flip): uniform_prob
+            for m in legal_moves
+        }
+        return move, {
+            "visit_counts": {},
+            "policy_target": policy_target,
+            "root_value": 0.0,
+        }
+
+
+def _make_random_opponent() -> RandomMoveEngine:
+    """Create the true random opponent used by self-play."""
+    return RandomMoveEngine()
 
 
 class ReplayBuffer:
@@ -537,20 +572,23 @@ class StructuredReplayBuffer:
 
 def play_selfplay_game(mcts_engine: MCTS,
                        temperature_threshold: int = 30,
-                       opponent_mcts: MCTS = None,
+                       opponent_mcts=None,
                        nn_plays_white: bool = True,
-                       draw_value_target: float = 0.0) -> tuple[list, dict]:
+                       draw_value_target: float = 0.0,
+                       start_state: Optional[GameState] = None) -> tuple[list, dict]:
     """Play one self-play game and return training examples + game record.
 
     Args:
         mcts_engine: Primary MCTS engine (with neural network).
         temperature_threshold: Move number after which temperature drops.
-        opponent_mcts: Optional second MCTS engine (e.g. random/no-NN).
+        opponent_mcts: Optional second engine (e.g. random legal-move player).
             When provided, mcts_engine plays one side and opponent_mcts
             plays the other. Training examples are only collected from
             the mcts_engine's turns.
         nn_plays_white: When opponent_mcts is set, which side the NN plays.
         draw_value_target: Value target assigned to drawn positions.
+        start_state: Optional starting position (e.g. from opening randomization).
+            If None, uses the standard starting position.
 
     Returns:
         (training_data, game_record) where:
@@ -560,7 +598,7 @@ def play_selfplay_game(mcts_engine: MCTS,
           "winner" ("white"/"black"/"draw"), "length" (int),
           and "draw_reason" (or None for decisive games)
     """
-    state = GameState()
+    state = start_state if start_state is not None else GameState()
     examples: list[tuple[np.ndarray, dict, int, np.ndarray]] = []  # (planes, policy_dict, player, legal_mask)
     game_moves: list[tuple[GameState, Move]] = []  # For DCN logging
     move_count = 0
@@ -646,7 +684,8 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
                        draw_value_target: float = 0.0,
                        device: str = "cpu",
                        policy_target_smoothing: float = 0.0,
-                       value_scale: float = 1.0) -> tuple[list, dict]:
+                       value_scale: float = 1.0,
+                       selfplay_opening_plies: int = 0) -> tuple[list, dict]:
     """Run a batch of self-play games sequentially.
 
     Args:
@@ -657,11 +696,13 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
         temperature_threshold: Move number after which temperature drops.
         dirichlet_alpha: Dirichlet noise concentration parameter.
         dirichlet_epsilon: Fraction of Dirichlet noise to blend with policy.
-        random_opponent_fraction: Fraction of games played vs random MCTS
-            (no neural network) to prevent self-play overfitting.
+        random_opponent_fraction: Fraction of games played vs a true random
+            legal-move opponent to prevent self-play overfitting.
         draw_value_target: Value target assigned to drawn positions.
         device: Torch device string.
         value_scale: Scale factor for NN value predictions in MCTS (0-1).
+        selfplay_opening_plies: Number of random opening plies for position
+            diversity. 0 = standard starting position (default).
 
     Returns:
         (all_examples, stats) where stats has game-level statistics.
@@ -687,13 +728,20 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
 
     game_records = []
 
-    # Random opponent: same search budget, no network (uniform policy, zero value)
+    # Random opponent: true random legal-move selection.
     num_random_games = int(num_games * random_opponent_fraction)
     random_opp = None
     if num_random_games > 0:
-        random_opp = MCTS(None, num_simulations=num_simulations, cpuct=cpuct, device=device)
+        random_opp = _make_random_opponent()
 
     for game_idx in range(num_games):
+        # Opening randomization: each game gets a unique random opening
+        start_state = None
+        if selfplay_opening_plies > 0:
+            import random as _rng
+            opening_seed = _rng.randint(0, 2**31 - 1)
+            start_state = build_probe_start_state(opening_seed, selfplay_opening_plies)
+
         if game_idx < num_random_games:
             nn_plays_white = (game_idx % 2 == 0)
             examples, game_record = play_selfplay_game(
@@ -701,12 +749,14 @@ def run_selfplay_batch(network, num_games: int, num_simulations: int = 200,
                 opponent_mcts=random_opp,
                 nn_plays_white=nn_plays_white,
                 draw_value_target=draw_value_target,
+                start_state=start_state,
             )
             game_type = "vs_random"
         else:
             # Standard self-play
             examples, game_record = play_selfplay_game(
-                mcts, temperature_threshold, draw_value_target=draw_value_target
+                mcts, temperature_threshold, draw_value_target=draw_value_target,
+                start_state=start_state,
             )
             game_type = "selfplay"
 
@@ -765,9 +815,10 @@ class _ActiveGame:
     def __init__(self, game_idx: int, nn_engine: MCTS,
                  opponent_engine: Optional[MCTS],
                  nn_plays_white: bool, temperature_threshold: int,
-                 game_type: str):
+                 game_type: str,
+                 start_state: Optional[GameState] = None):
         self.game_idx = game_idx
-        self.state = GameState()
+        self.state = start_state if start_state is not None else GameState()
         self.nn_engine = nn_engine
         self.opponent_engine = opponent_engine
         self.nn_plays_white = nn_plays_white
@@ -842,7 +893,7 @@ def _apply_game_move(g: _ActiveGame, move: Move, info: dict, is_nn_turn: bool,
 
 
 def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
-               random_mcts: Optional[MCTS], evaluator: BatchedEvaluator,
+               random_mcts, evaluator: BatchedEvaluator,
                temperature_threshold: int,
                gumbel_search: Optional[GumbelBatchedSearch] = None,
                on_game_finished=None):
@@ -852,7 +903,7 @@ def _play_wave(wave_games: list[_ActiveGame], nn_mcts,
     1. Partition active games by engine type (NN vs random).
     2. NN games: Gumbel batched search (if gumbel_search provided) or
        standard MCTS.batched_search().
-    3. Random games: sequential MCTS search (no NN needed).
+    3. Random games: sequential random move selection.
     4. Select moves, update states, check for game end.
     """
     while True:
@@ -964,7 +1015,8 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                                  parallel_games: int = 10,
                                  gumbel_config: Optional[dict] = None,
                                  policy_target_smoothing: float = 0.0,
-                                 value_scale: float = 1.0) -> tuple[list, dict]:
+                                 value_scale: float = 1.0,
+                                 selfplay_opening_plies: int = 0) -> tuple[list, dict]:
     """Run self-play games with batched NN evaluation for GPU efficiency.
 
     Plays multiple games simultaneously, collecting leaf evaluations from
@@ -1019,21 +1071,10 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                    device=device,
                    value_scale=value_scale)
     num_random_games = int(num_games * random_opponent_fraction)
-    # Random opponent: same search config but with no network (uniform policy, zero value)
+    # Random opponent: true random legal-move selection.
     random_opp = None
     if num_random_games > 0:
-        if gumbel_config is not None:
-            random_opp = GumbelMCTS(
-                network=None, num_simulations=num_simulations,
-                max_num_considered_actions=gumbel_config.get("max_num_considered_actions", 48),
-                cpuct=cpuct,
-                gumbel_scale=gumbel_config.get("gumbel_scale", 1.0),
-                maxvisit_init=gumbel_config.get("maxvisit_init", 50.0),
-                value_scale=gumbel_config.get("value_scale", 0.1),
-                device=device,
-            )
-        else:
-            random_opp = MCTS(None, num_simulations=num_simulations, cpuct=cpuct, device=device)
+        random_opp = _make_random_opponent()
     random_mcts = random_opp
 
     games_launched = 0
@@ -1047,6 +1088,12 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
             nn_plays_white = (game_global_idx % 2 == 0)
             opp = random_opp if is_random_game else None
 
+            start_state = None
+            if selfplay_opening_plies > 0:
+                import random as _rng
+                opening_seed = _rng.randint(0, 2**31 - 1)
+                start_state = build_probe_start_state(opening_seed, selfplay_opening_plies)
+
             wave_games.append(_ActiveGame(
                 game_idx=game_global_idx,
                 nn_engine=nn_mcts,
@@ -1054,6 +1101,7 @@ def run_selfplay_batch_parallel(network, num_games: int, num_simulations: int = 
                 nn_plays_white=nn_plays_white,
                 temperature_threshold=temperature_threshold,
                 game_type="vs_random" if is_random_game else "selfplay",
+                start_state=start_state,
             ))
 
         _play_wave(wave_games, nn_mcts, random_mcts, evaluator,
@@ -1120,7 +1168,8 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
                                num_workers: int = 4,
                                gumbel_config: Optional[dict] = None,
                                policy_target_smoothing: float = 0.0,
-                               value_scale: float = 1.0) -> tuple[list, dict]:
+                               value_scale: float = 1.0,
+                               selfplay_opening_plies: int = 0) -> tuple[list, dict]:
     """Run self-play with multiprocess CPU workers and centralized GPU inference.
 
     Each worker process runs MCTS tree traversal on a subset of games.
@@ -1160,6 +1209,7 @@ def run_selfplay_multiprocess(network, num_games: int, num_simulations: int = 20
         "cpuct": cpuct,
         "policy_target_smoothing": policy_target_smoothing,
         "value_scale": value_scale,
+        "selfplay_opening_plies": selfplay_opening_plies,
     }
     if gumbel_config is not None:
         mcts_config["gumbel_config"] = gumbel_config

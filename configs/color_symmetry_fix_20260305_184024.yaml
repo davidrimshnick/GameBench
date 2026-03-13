@@ -11,8 +11,10 @@ network:
                                     # hijacking MCTS Q-values during self-play.
 
 mcts:
-  num_simulations: 512         # 512 sims with Gumbel k=48 ≈ 2.3 sims/action/round.
-  min_selfplay_simulations: 512 # Match base sims — adaptive scaling starts from here
+  num_simulations: 128         # Back to 128 for fast iterations (~16 min vs ~55 min at 512).
+                                # With Gumbel move/target fix (Known Issue #29), on-policy targets
+                                # should produce real learning signal even at lower sim count.
+  min_selfplay_simulations: 128 # Match base sims — adaptive scaling starts from here
   # fixed_selfplay_simulations: 64  # Uncomment to disable adaptive sims entirely
   cpuct: 4.0                   # High cpuct trusts policy prior over noisy Q-values.
                                 # At 2.5, self-play games were 100% draws (repetition/turn-limit)
@@ -26,13 +28,10 @@ mcts:
   temperature_threshold: 30    # Exploit in middlegame/endgame where tactics matter
 
 gumbel:
-  enabled: true                    # Gumbel MCTS with Sequential Halving.
-                                   # k=48 covers all legal moves in most positions (avg 37).
-                                   # 512 sims / 48 actions / 6 rounds ≈ 1.8 sims/action/round.
-  max_num_considered_actions: 48   # Top-k: covers avg 37 legal moves fully, minimal truncation
-  gumbel_scale: 1.0               # Scale of Gumbel noise
-  maxvisit_init: 50.0             # Q-transform: baseline visit scale
-  value_scale: 0.1                # Q-transform: Q-value scaling factor
+  enabled: false                   # Disabled: standard MCTS is simpler and Gumbel has been the
+                                   # source of 4 bugs (#23 truncation, #24 sigma_q collapse,
+                                   # #25 sharpening spiral, #29 off-policy targets). Use standard
+                                   # MCTS to verify the pipeline works end-to-end first.
 
 selfplay:
   num_games_per_iteration: 20  # Fewer games = faster iterations. With 50% vs-random, 10 decisive + 10 draws.

@@ -39,6 +39,7 @@ selfplay:
   parallel_games: 20             # Fallback for single-process mode (multiprocess ignores this)
   draw_value_target: 0.0       # Neutral — -0.1 caused systematic pessimism
   policy_target_smoothing: 0.0 # Disabled for now.
+  selfplay_opening_plies: 4    # Random opening moves for position diversity
 
 training:
   optimizer: muon               # muon = Muon for conv/hidden + SGD for heads/biases/BN

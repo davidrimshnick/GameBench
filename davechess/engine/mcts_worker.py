@@ -21,7 +21,7 @@ from davechess.engine.network import POLICY_SIZE, state_to_planes
 from davechess.engine.mcts import MCTS, MCTSNode
 from davechess.engine.probe_openings import build_probe_start_state
 from davechess.engine.selfplay import (
-    _ActiveGame, _play_wave, _finalize_game,
+    _ActiveGame, _play_wave, _finalize_game, _make_random_opponent,
 )
 from davechess.engine.gpu_server import BatchRequest, BatchResponse, WorkerDone, GameCompleted
 
@@ -192,35 +192,24 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                 value_scale=mcts_config.get("value_scale", 1.0),
             )
 
-        # Random opponent: same Gumbel MCTS config but with no network
-        # (uniform policy, zero value). Tests whether learned network beats
-        # random given identical search budget.
+        # Random opponent: true random legal-move selection.
         random_opp = None
         has_random = any(g["is_random"] for g in game_assignments)
         if has_random:
-            if gumbel_config:
-                from davechess.engine.gumbel_mcts import GumbelMCTS as _GumbelMCTS
-                random_opp = _GumbelMCTS(
-                    network=None,
-                    num_simulations=mcts_config["num_simulations"],
-                    max_num_considered_actions=gumbel_config.get(
-                        "max_num_considered_actions", 48),
-                    cpuct=mcts_config.get("cpuct", 1.5),
-                    gumbel_scale=gumbel_config.get("gumbel_scale", 1.0),
-                    maxvisit_init=gumbel_config.get("maxvisit_init", 50.0),
-                    value_scale=gumbel_config.get("value_scale", 0.1),
-                    device="cpu",
-                )
-            else:
-                random_opp = MCTS(
-                    None, num_simulations=mcts_config["num_simulations"],
-                    cpuct=mcts_config.get("cpuct", 1.5), device="cpu",
-                )
+            random_opp = _make_random_opponent()
         random_mcts = random_opp
+
+        selfplay_opening_plies = mcts_config.get("selfplay_opening_plies", 0)
 
         wave_games: list[_ActiveGame] = []
         for g in game_assignments:
             opp = random_opp if g["is_random"] else None
+            # Opening randomization: each game gets a unique random position
+            start_state = None
+            if selfplay_opening_plies > 0:
+                import random as _rng
+                opening_seed = _rng.randint(0, 2**31 - 1)
+                start_state = build_probe_start_state(opening_seed, selfplay_opening_plies)
             wave_games.append(_ActiveGame(
                 game_idx=g["game_idx"],
                 nn_engine=nn_mcts,
@@ -228,6 +217,7 @@ def worker_entry(worker_id: int, request_queue, response_queue, results_queue,
                 nn_plays_white=g["nn_plays_white"],
                 temperature_threshold=temperature_threshold,
                 game_type="vs_random" if g["is_random"] else "selfplay",
+                start_state=start_state,
             ))
 
         def on_game_finished(g: _ActiveGame):
