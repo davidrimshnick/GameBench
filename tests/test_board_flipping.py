@@ -80,26 +80,18 @@ class TestBoardFlipPlanes:
         planes_b = state_to_planes(state)
         assert planes_b[11, 0, 0] == 1.0
 
-    def test_last_move_flipped_for_black(self):
-        """Last move source/dest planes should be flipped for Black."""
+    def test_shortcut_metadata_planes_are_zeroed(self):
+        """Reserved shortcut planes should stay zero after a move."""
         state = GameState()
-        # White makes a move
         move = MoveStep((1, 0), (2, 0))  # Warrior a2-a3
         legal = generate_legal_moves(state)
-        # Find a legal warrior move
         for m in legal:
             if isinstance(m, MoveStep) and m.from_rc[0] == 1:
                 move = m
                 break
         apply_move(state, move)
-
-        # Now it's Black's turn, last_move was White's move
         planes = state_to_planes(state)
-        # The last move source was at row=from_rc[0], after flip = 7-from_rc[0]
-        flipped_src_row = 7 - move.from_rc[0]
-        flipped_dst_row = 7 - move.to_rc[0]
-        assert planes[16, flipped_src_row, move.from_rc[1]] == 1.0
-        assert planes[17, flipped_dst_row, move.to_rc[1]] == 1.0
+        assert np.count_nonzero(planes[14:18]) == 0
 
 
 class TestMoveEncodingFlip:

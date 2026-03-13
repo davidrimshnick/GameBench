@@ -5,10 +5,8 @@ network:
   num_filters: 256
   input_planes: 18
   board_size: 8
-  value_head_dropout: 0.3          # Prevent value head memorization (Known Issue #27).
-                                    # Without dropout, value head memorizes 15K training positions
-                                    # (loss 0.1) but hallucinates ±0.9 on unseen positions,
-                                    # hijacking MCTS Q-values during self-play.
+  value_head_dropout: 0.3          # Keep dropout, but remove metadata shortcut planes in
+                                    # the encoder so value must learn from board structure.
 
 mcts:
   num_simulations: 128         # 128 sims with ~37 legal moves = ~3.5 visits/move.
@@ -26,21 +24,19 @@ mcts:
   temperature_threshold: 30    # Exploit in middlegame/endgame where tactics matter
 
 gumbel:
-  enabled: true                    # Re-enabled: legal-move masking + value dropout + value_scale
-                                   # should prevent the draw spiral seen at random init before.
-                                   # Sequential Halving concentrates 128 sims on top-16 moves
-                                   # (8 visits each vs 3.5 with standard MCTS).
+  enabled: false                   # Disable during value-head recovery. Top-k concentration
+                                   # narrows the replay distribution too much when value is weak.
   max_num_considered_actions: 16   # Top-k actions for Sequential Halving
   gumbel_scale: 1.0               # Scale of Gumbel noise
   maxvisit_init: 50.0             # Q-transform: baseline visit scale
   value_scale: 0.1                # Q-transform: Q-value scaling factor
 
 selfplay:
-  num_games_per_iteration: 20  # Fewer games = faster iterations. With 50% vs-random, 10 decisive + 10 draws.
-  replay_buffer_size: 20000    # Total (informational only, actual = seed + decisive + draw)
+  num_games_per_iteration: 40  # More fresh positions per iter so value learns broader state coverage.
+  replay_buffer_size: 30000    # Total (informational only, actual = seed + decisive + draw)
   buffer_seed_size: 12000      # Permanent seed partition (checkmates, tactical wins)
-  buffer_decisive_size: 10000  # Circular: self-play decisive positions — ~25% turnover/iter
-  buffer_draw_size: 5000       # Circular: self-play draw positions — ~25% turnover/iter
+  buffer_decisive_size: 20000  # Larger live window reduces value memorization of recent trajectories.
+  buffer_draw_size: 10000      # Match the old 2:1 decisive:draw ratio at a larger scale.
   num_workers: 4               # CPU worker processes for MCTS tree traversal
   min_buffer_size: 1000        # Train immediately on seed games
   random_opponent_fraction: 0.5   # 50% vs random for decisive signal to bootstrap value head
@@ -66,9 +62,8 @@ training:
                                 # concentrates on legal moves. Entropy reg pushed it back to
                                 # uniform, counteracting the little signal that existed.
   draw_sample_weight: 0.4      # Downweight draw positions in loss vs decisive outcomes
-  steps_per_iteration: 400     # ~2 passes through buffer. Was 200 (1 pass) which was too few
-                                # to learn. Was 800 (~5 passes) which overfit without dropout.
-                                # Dropout (0.3) now prevents value head memorization.
+  steps_per_iteration: 200     # Reduce replay reuse. 400 steps over a 15K live buffer was
+                                # effectively repeated memorization of recent trajectories.
   checkpoint_interval: 100
   elo_probe_interval: 999      # Disabled until vs-random is 100%. Each probe wastes ~90min.
   elo_probe_games: 6           # Keep probes under ~1hr at 800 sims
