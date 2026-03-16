@@ -100,7 +100,7 @@ python scripts/generate_and_save_seeds.py --num-games 100 --num-endgames 100 --e
 - **Seeds**: Heuristic games + MCTS endgame curriculum → `checkpoints/smart_seeds.pkl`. Currently disabled (White bias). Stored as W&B artifact.
 - **Warm-start**: Loads `best.pt` if present on fresh start (no step checkpoint)
 - **Adaptive sims**: `adaptive_simulations()` scales with ELO, floor at `mcts.min_selfplay_simulations` (128)
-- **ELO probes**: NN (800 sims) vs MCTSLite-50 (≈300 ELO). Each sim doubling ≈ +180 ELO.
+- **ELO probes**: NN vs reference network, 20 games every 20 iters. Promote at >60% win rate, demote (half-diff) at <40%. Bidirectional to prevent ratchet inflation.
 - **Muon optimizer**: `MuonSGD` — trunk convs get Newton-Schulz orthogonalization; heads/biases/BN get SGD. AMP overflow checked across all params.
 - **Hot-reload**: `training.yaml` re-read each iteration. Network arch preserved, everything else updates live.
 

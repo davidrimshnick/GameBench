@@ -3,7 +3,7 @@
 network:
   num_res_blocks: 10
   num_filters: 256
-  input_planes: 18               # Planes 14-17 zeroed (shortcut metadata removed)
+  input_planes: 18
   board_size: 8
   value_head_dropout: 0.3
 
@@ -47,9 +47,10 @@ training:
   draw_sample_weight: 0.4
   steps_per_iteration: 200
   checkpoint_interval: 100
-  elo_probe_interval: 10
-  elo_probe_games: 10
+  elo_probe_interval: 20
+  elo_probe_games: 20
   elo_probe_max_moves: 200
+  elo_probe_promotion_threshold: 0.60
   adaptive_elo_smoothing: 0.7
   seed_removal_elo: 650
   seed_sample_weight_init: 0.0

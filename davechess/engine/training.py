@@ -795,16 +795,29 @@ class Trainer:
         elo_diff = win_rate_to_elo_diff(win_rate)
         estimated_elo = self.reference_elo + elo_diff
 
-        # Update reference if current is convincingly better (>55%)
+        # Always update ELO estimate bidirectionally based on actual win rate.
+        # Promote reference only when convincingly better (configurable, default 60%).
+        promotion_threshold = float(
+            self.config.get("training", {}).get(
+                "elo_probe_promotion_threshold", 0.60))
         promoted = False
-        if win_rate > 0.55:
+        if win_rate > promotion_threshold:
             self.reference_elo = estimated_elo
             self.save_reference()
             promoted = True
             logger.info(f"Reference updated! New reference ELO: {self.reference_elo:.0f}")
         else:
-            logger.info(f"Reference kept (win_rate={win_rate:.2f} <= 0.55, "
-                        f"ref_elo={self.reference_elo:.0f})")
+            # Bidirectional: adjust reference ELO downward if current is weaker.
+            # Use half the elo_diff so single bad probes don't over-correct.
+            if win_rate < (1.0 - promotion_threshold):
+                demotion_diff = elo_diff * 0.5
+                self.reference_elo = self.reference_elo + demotion_diff
+                logger.info(f"Reference ELO adjusted down: {self.reference_elo:.0f} "
+                            f"(win_rate={win_rate:.2f}, diff={demotion_diff:+.0f})")
+            else:
+                logger.info(f"Reference kept (win_rate={win_rate:.2f}, "
+                            f"threshold={promotion_threshold:.2f}, "
+                            f"ref_elo={self.reference_elo:.0f})")
 
         return {
             "wins": wins,
