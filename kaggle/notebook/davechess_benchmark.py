@@ -98,7 +98,7 @@ if DATASET_DIR is None:
 
 if DATASET_DIR is None:
     # Local development fallback
-    DATASET_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATASET_DIR = os.getcwd()
 
 sys.path.insert(0, DATASET_DIR)
 print(f"[INFO] Dataset dir: {DATASET_DIR}")
