@@ -64,7 +64,7 @@ from rules_text import get_rules_prompt, build_game_state_message
 # %%
 # === Configuration ===
 MCTS_SIMS = 10          # MCTSLite opponent strength (weak, beatable by learning agents)
-MAX_GAME_TURNS = 60     # Cap game length to prevent endless draws
+MAX_GAME_TURNS = 80     # Cap game length (native draw at turn 100)
 MAX_RETRIES = 3         # Illegal move retries before forfeit
 STUDY_BUDGET = 20       # Max tool-use turns during study phase
 PHASE_A_GAMES = 3       # Baseline games (no study)
