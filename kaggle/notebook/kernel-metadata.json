@@ -1,0 +1,15 @@
+{
+  "id": "davidrimshnick/davechess-learning-benchmark",
+  "title": "DaveChess Learning Benchmark",
+  "code_file": "davechess_benchmark.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "dataset_sources": ["davidrimshnick/davechess-benchmark-data"],
+  "competition_sources": ["kaggle-measuring-agi"],
+  "kernel_sources": [],
+  "model_sources": []
+}
