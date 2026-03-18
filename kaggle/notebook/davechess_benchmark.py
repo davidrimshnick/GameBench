@@ -474,6 +474,7 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
                         raw_response = llm.prompt(move_prompt)
                         response_text = str(raw_response)
                     except Exception as e:
+                        print(f"[ERROR] LLM prompt failed (turn {game.state.turn}, attempt {attempt}): {type(e).__name__}: {str(e)[:200]}")
                         game.illegal_attempts += 1
                         continue
 
@@ -628,9 +629,10 @@ Focus on patterns you see across multiple games. Be concise and actionable."""
                 response = llm.prompt(study_prompt)
                 notes = str(response)
                 all_notes.append(notes)
-                # Save notes to workspace
                 write_file(f"study_notes_batch_{batch_idx + 1}.md", notes)
-            except Exception:
+                print(f"[INFO] Study batch {batch_idx + 1}: {len(notes)} chars of notes")
+            except Exception as e:
+                print(f"[ERROR] Study batch {batch_idx + 1} failed: {type(e).__name__}: {str(e)[:200]}")
                 continue
 
     # Create a consolidated strategy document
