@@ -21,8 +21,13 @@ import random
 import re
 import tempfile
 import shutil
+import time
 from dataclasses import dataclass, field
 from typing import Optional
+
+# Force unbuffered stdout so logs appear immediately
+sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
+os.environ["PYTHONUNBUFFERED"] = "1"
 
 _kbench_available = False
 try:
@@ -496,6 +501,8 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
         if game.state.current_player == llm_color:
             # LLM's turn
             game.total_llm_turns += 1
+            print(f"  [MOVE] Turn {game.state.turn}, LLM thinking...", end="", flush=True)
+            _turn_start = time.time()
             legal_dcn = game.get_legal_moves_dcn()
 
             state_msg = build_game_state_message(
@@ -516,7 +523,9 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
                 for attempt in range(MAX_RETRIES):
                     try:
                         # Don't mix schema + tools — just get raw text
+                        _call_start = time.time()
                         raw_response = llm.prompt(move_prompt)
+                        _call_time = time.time() - _call_start
                         response_text = str(raw_response)
                         _tracker.total_calls += 1
                     except Exception as e:
@@ -535,6 +544,8 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
                         if ok:
                             if attempt == 0:
                                 game.legal_first_attempts += 1
+                            _turn_time = time.time() - _turn_start
+                            print(f" {matched_dcn} ({_call_time:.1f}s call, {_turn_time:.1f}s total)", flush=True)
                             success = True
                             break
                         else:
