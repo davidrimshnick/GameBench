@@ -126,16 +126,55 @@ from rules_text import get_rules_prompt, build_game_state_message
 MCTS_SIMS = 10          # MCTSLite opponent strength (weak, beatable by learning agents)
 MAX_GAME_TURNS = 80     # Cap game length (native draw at turn 100)
 MAX_RETRIES = 3         # Illegal move retries before forfeit
-STUDY_BUDGET = 20       # Max tool-use turns during study phase
+STUDY_BUDGET = 20       # Max study batches (10 GM games each)
 PHASE_A_GAMES = 3       # Baseline games (no study)
 PHASE_B_GAMES = 5       # Post-study games
 PHASE_C_GAMES = 6       # Experience learning games
+TOKEN_BUDGET = 10_000_000  # 10M token limit for the entire benchmark
+# Budget allocation: ~10% baseline, ~30% study, ~30% post-study, ~30% experience
+PHASE_A_TOKEN_BUDGET = 1_000_000    # 1M for baseline (no study needed)
+STUDY_TOKEN_BUDGET = 3_000_000      # 3M for studying GM games
+PHASE_B_TOKEN_BUDGET = 3_000_000    # 3M for post-study play
+PHASE_C_TOKEN_BUDGET = 3_000_000    # 3M for experience learning
 
 # Agent memory workspace
 AGENT_WORKSPACE = "/kaggle/working/agent_memory"
 if not os.path.isdir("/kaggle/working"):
     AGENT_WORKSPACE = tempfile.mkdtemp(prefix="davechess_agent_")
 os.makedirs(AGENT_WORKSPACE, exist_ok=True)
+
+
+# === Token Tracking ===
+class TokenTracker:
+    """Track total token usage across all LLM calls."""
+    def __init__(self, budget: int = TOKEN_BUDGET):
+        self.budget = budget
+        self.total_tokens = 0
+        self.total_calls = 0
+
+    def update(self, chat):
+        """Update from a kbench chat's usage stats."""
+        try:
+            usage = chat.usage
+            if usage:
+                self.total_tokens = getattr(usage, 'total_tokens', 0) or 0
+        except Exception:
+            pass
+        self.total_calls += 1
+
+    @property
+    def remaining(self):
+        return max(0, self.budget - self.total_tokens)
+
+    @property
+    def exceeded(self):
+        return self.total_tokens >= self.budget
+
+    def log(self, phase: str):
+        pct = (self.total_tokens / self.budget * 100) if self.budget > 0 else 0
+        print(f"[TOKENS] {phase}: {self.total_tokens:,} / {self.budget:,} ({pct:.1f}%) | calls={self.total_calls}")
+
+_tracker = TokenTracker()
 
 
 # %%
@@ -445,6 +484,11 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
     forfeited = False
 
     while not game.is_over:
+        if _tracker.exceeded:
+            print(f"[TOKENS] Budget exceeded during game, forfeiting.")
+            forfeited = True
+            break
+
         legal_moves = generate_legal_moves(game.state)
         if not legal_moves:
             break
@@ -460,7 +504,8 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
 
             # Build prompt — keep it focused, put move instruction first
             move_prompt = (
-                f"You are playing DaveChess as {color_name}.\n\n"
+                f"You are playing DaveChess as {color_name}.\n"
+                f"Token budget: {_tracker.remaining:,} remaining of {_tracker.budget:,} total.\n\n"
                 f"{state_msg}\n\n"
                 f"Reply with ONLY your chosen move in DCN notation "
                 f"(e.g., {legal_dcn[0]}). Nothing else."
@@ -473,8 +518,10 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
                         # Don't mix schema + tools — just get raw text
                         raw_response = llm.prompt(move_prompt)
                         response_text = str(raw_response)
+                        _tracker.total_calls += 1
                     except Exception as e:
                         print(f"[ERROR] LLM prompt failed (turn {game.state.turn}, attempt {attempt}): {type(e).__name__}: {str(e)[:200]}")
+                        _tracker.total_calls += 1
                         game.illegal_attempts += 1
                         continue
 
@@ -549,6 +596,11 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
 
 def play_phase_a(llm, n_games: int = PHASE_A_GAMES) -> dict:
     """Play baseline games with only rules knowledge. No examples, no tools."""
+    print(f"\n{'='*60}")
+    print(f"PHASE A: Baseline ({n_games} games, rules only)")
+    print(f"{'='*60}")
+    _tracker.log("Phase A start")
+
     rules_prompt = get_rules_prompt()
     system_prompt = (rules_prompt +
                      "\n\nPick the best move from the legal moves list. "
@@ -556,15 +608,23 @@ def play_phase_a(llm, n_games: int = PHASE_A_GAMES) -> dict:
 
     results = []
     for i in range(n_games):
+        if _tracker.exceeded:
+            print(f"[TOKENS] Budget exceeded, skipping remaining Phase A games")
+            break
         llm_is_white = (i % 2 == 0)
         run = play_single_game.run(
             llm=llm, mcts_sims=MCTS_SIMS, system_prompt=system_prompt,
             llm_is_white=llm_is_white, game_seed=1000 + i,
             can_use_memory=False,
         )
-        results.append(run.result)
+        r = run.result
+        results.append(r)
+        print(f"[GAME] Phase A game {i+1}/{n_games}: {r['result']} ({r['llm_color']}, {r['game_length']} turns, {r['illegal_attempts']} illegal)")
+        _tracker.log(f"Phase A game {i+1}")
 
-    return _aggregate_results(results, "Phase A (Baseline)")
+    agg = _aggregate_results(results, "Phase A (Baseline)")
+    print(f"[PHASE A] Win rate: {agg['win_rate']:.0%} | Legal move rate: {agg['legal_move_rate']:.0%}")
+    return agg
 
 
 # %%
@@ -580,6 +640,11 @@ def study_phase(llm, budget: int = STUDY_BUDGET):
     This approach works with any LLM API (no tool calling required).
     The agent's analysis quality determines how well it plays later.
     """
+    print(f"\n{'='*60}")
+    print(f"STUDY PHASE: Analyzing GM games ({budget} batches)")
+    print(f"{'='*60}")
+    _tracker.log("Study start")
+
     rules = get_rules_prompt()
 
     # Feed GM games in batches and ask for analysis
@@ -590,12 +655,19 @@ def study_phase(llm, budget: int = STUDY_BUDGET):
     all_notes = []
 
     for batch_idx in range(n_batches):
+        if _tracker.exceeded:
+            print(f"[TOKENS] Budget exceeded, stopping study at batch {batch_idx}")
+            break
         start = batch_idx * games_per_batch + 1
         games_text = get_gm_games_batch(start, games_per_batch)
 
         if batch_idx == 0:
             # First batch: include rules and full instructions
             study_prompt = f"""{rules}
+
+TOKEN BUDGET: You have {_tracker.remaining:,} tokens remaining out of {_tracker.budget:,} total.
+This budget covers studying, playing baseline games, post-study games, and experience games.
+Be efficient — focus on extracting the most useful strategic insights per token spent.
 
 Here are expert-level DaveChess games (batch {batch_idx + 1}/{n_batches}).
 Study them carefully and write detailed strategic notes.
@@ -630,7 +702,9 @@ Focus on patterns you see across multiple games. Be concise and actionable."""
                 notes = str(response)
                 all_notes.append(notes)
                 write_file(f"study_notes_batch_{batch_idx + 1}.md", notes)
-                print(f"[INFO] Study batch {batch_idx + 1}: {len(notes)} chars of notes")
+                _tracker.total_calls += 1
+                print(f"[STUDY] Batch {batch_idx + 1}/{n_batches}: {len(notes)} chars of notes")
+                _tracker.log(f"Study batch {batch_idx + 1}")
             except Exception as e:
                 print(f"[ERROR] Study batch {batch_idx + 1} failed: {type(e).__name__}: {str(e)[:200]}")
                 continue
@@ -675,8 +749,14 @@ def _load_strategy_notes() -> str:
 
 def play_phase_b(llm, n_games: int = PHASE_B_GAMES) -> dict:
     """Play games after studying. Strategy notes included in prompt."""
+    print(f"\n{'='*60}")
+    print(f"PHASE B: Post-study play ({n_games} games)")
+    print(f"{'='*60}")
+    _tracker.log("Phase B start")
+
     rules_prompt = get_rules_prompt()
     strategy_notes = _load_strategy_notes()
+    print(f"[PHASE B] Strategy notes: {len(strategy_notes)} chars")
 
     system_prompt = rules_prompt
     if strategy_notes:
@@ -688,15 +768,23 @@ def play_phase_b(llm, n_games: int = PHASE_B_GAMES) -> dict:
 
     results = []
     for i in range(n_games):
+        if _tracker.exceeded:
+            print(f"[TOKENS] Budget exceeded, skipping remaining Phase B games")
+            break
         llm_is_white = (i % 2 == 0)
         run = play_single_game.run(
             llm=llm, mcts_sims=MCTS_SIMS, system_prompt=system_prompt,
             llm_is_white=llm_is_white, game_seed=2000 + i,
             can_use_memory=False,
         )
-        results.append(run.result)
+        r = run.result
+        results.append(r)
+        print(f"[GAME] Phase B game {i+1}/{n_games}: {r['result']} ({r['llm_color']}, {r['game_length']} turns, {r['illegal_attempts']} illegal)")
+        _tracker.log(f"Phase B game {i+1}")
 
-    return _aggregate_results(results, "Phase B (Post-study)")
+    agg = _aggregate_results(results, "Phase B (Post-study)")
+    print(f"[PHASE B] Win rate: {agg['win_rate']:.0%} | Legal move rate: {agg['legal_move_rate']:.0%}")
+    return agg
 
 
 # %%
@@ -709,11 +797,19 @@ def play_phase_c(llm, n_games: int = PHASE_C_GAMES) -> dict:
     Updated notes are included in the prompt for subsequent games.
     Measures whether the agent improves through experience.
     """
+    print(f"\n{'='*60}")
+    print(f"PHASE C: Experience learning ({n_games} games + reflection)")
+    print(f"{'='*60}")
+    _tracker.log("Phase C start")
+
     rules_prompt = get_rules_prompt()
     results = []
     experience_notes = _load_strategy_notes()
 
     for i in range(n_games):
+        if _tracker.exceeded:
+            print(f"[TOKENS] Budget exceeded, skipping remaining Phase C games")
+            break
         # Build system prompt with current strategy + experience
         system_prompt = rules_prompt
         if experience_notes:
@@ -730,9 +826,11 @@ def play_phase_c(llm, n_games: int = PHASE_C_GAMES) -> dict:
         )
         game_result = run.result
         results.append(game_result)
+        print(f"[GAME] Phase C game {i+1}/{n_games}: {game_result['result']} ({game_result['llm_color']}, {game_result['game_length']} turns, {game_result['illegal_attempts']} illegal)")
+        _tracker.log(f"Phase C game {i+1}")
 
         # Reflection phase: ask LLM to update strategy based on game
-        if i < n_games - 1:
+        if i < n_games - 1 and not _tracker.exceeded:
             result_word = game_result["result"]
             moves_str = ", ".join(game_result["move_history"][:20])
             reflection_prompt = (
@@ -751,10 +849,15 @@ def play_phase_c(llm, n_games: int = PHASE_C_GAMES) -> dict:
                     updated = str(llm.prompt(reflection_prompt))
                     experience_notes = updated
                     write_file("strategy.md", updated)
+                    _tracker.total_calls += 1
+                    print(f"[REFLECT] After game {i+1}: updated strategy ({len(updated)} chars)")
                 except Exception:
                     pass  # Reflection is optional
 
-    return _aggregate_results(results, "Phase C (Experience)")
+    agg = _aggregate_results(results, "Phase C (Experience)")
+    print(f"[PHASE C] Win rate: {agg['win_rate']:.0%}")
+    _tracker.log("Phase C done")
+    return agg
 
 
 # %%
