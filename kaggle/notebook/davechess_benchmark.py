@@ -32,11 +32,16 @@ try:
 except ImportError:
     try:
         import subprocess
-        subprocess.check_call(["pip", "install", "-q", "kaggle-benchmarks"])
+        subprocess.check_call(["pip", "install", "-q", "--upgrade", "protobuf>=5.29.6"])
+        subprocess.check_call([
+            "pip", "install", "-q",
+            "kaggle_benchmarks @ git+https://github.com/Kaggle/kaggle-benchmarks.git"
+        ])
         import kaggle_benchmarks as kbench
         _kbench_available = True
-        print("[INFO] kaggle_benchmarks installed and loaded")
-    except Exception:
+        print("[INFO] kaggle_benchmarks installed from GitHub and loaded")
+    except Exception as exc:
+        print(f"[WARN] Failed to install kaggle_benchmarks: {exc}")
         pass
 
 if not _kbench_available:
@@ -807,10 +812,48 @@ def davechess_learning_benchmark(llm) -> float:
 
 # %%
 # Run the benchmark
-if _kbench_available and kbench.llm is not None:
-    davechess_learning_benchmark.run(kbench.llm)
-elif hasattr(davechess_learning_benchmark, 'run'):
-    print("[INFO] No LLM configured. Skipping benchmark run.")
+if _kbench_available:
+    # Try to get the default LLM
+    _llm = getattr(kbench, 'llm', None)
+    if _llm is None:
+        # Try loading a model explicitly
+        try:
+            _llm = kbench.llms["google/gemini-2.5-flash"]
+            print(f"[INFO] Loaded model: google/gemini-2.5-flash")
+        except Exception as e1:
+            print(f"[INFO] kbench.llms failed: {e1}")
+            # Try getting MODEL_PROXY_API_KEY from Kaggle secrets
+            try:
+                from kaggle_secrets import UserSecretsClient
+                secrets = UserSecretsClient()
+                proxy_key = secrets.get_secret("MODEL_PROXY_API_KEY")
+                if proxy_key:
+                    os.environ["MODEL_PROXY_API_KEY"] = proxy_key
+                    os.environ.setdefault("MODEL_PROXY_URL", "https://mp.kaggle.net/models/openapi")
+                    os.environ.setdefault("LLM_DEFAULT", "google/gemini-2.5-flash")
+                    print(f"[INFO] Got MODEL_PROXY_API_KEY from Kaggle secrets")
+            except Exception:
+                pass
+
+            # Try loading via kaggle.models if available
+            try:
+                from kaggle_benchmarks.kaggle import models as kmodels
+                _llm = kmodels.load_model("google/gemini-2.5-flash")
+                print(f"[INFO] Loaded model via kaggle.models")
+            except Exception as e2:
+                print(f"[INFO] kaggle.models failed: {e2}")
+                # Print environment for debugging
+                import pprint
+                print("[DEBUG] Env vars with KAGGLE/MODEL/LLM/PROXY:")
+                for k, v in sorted(os.environ.items()):
+                    if any(x in k.upper() for x in ["KAGGLE", "MODEL", "LLM", "PROXY", "OPENAI", "API"]):
+                        print(f"  {k}={v[:50]}{'...' if len(v) > 50 else ''}")
+
+    if _llm is not None:
+        davechess_learning_benchmark.run(_llm)
+    else:
+        print("[INFO] No LLM configured. Skipping benchmark run.")
+        print("[INFO] To run: create notebook at kaggle.com/benchmarks/tasks/new")
 else:
     print("[INFO] Running in local mock mode. Skipping benchmark run.")
 
