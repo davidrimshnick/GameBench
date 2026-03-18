@@ -241,16 +241,27 @@ Branch `kaggle-benchmark` has the Kaggle competition submission for "Measuring P
 - Benchmarks kernels can be PULLED (`kaggle kernels pull`) but not pushed via API
 - The `id_no` from pull metadata does NOT work with save_kernel (returns "Notebook not found")
 
-### Deploying to Benchmarks
-1. Create task at https://www.kaggle.com/benchmarks/tasks/new (one-time, creates the kernel)
-2. Add dataset: `davidrimshnick/davechess-benchmark-data`
-3. In the notebook, use this one-liner to pull latest code from GitHub:
-   ```python
-   !wget -qO /tmp/b.py "https://raw.githubusercontent.com/davidrimshnick/GameBench/master/kaggle/notebook/davechess_benchmark.py" && exec(open("/tmp/b.py").read())
-   ```
-4. Or paste code from `kaggle/notebook/davechess_benchmark.py` directly
-5. Run — SDK + LLM proxy are pre-configured in Benchmarks environment
-6. GitHub issue tracking programmatic access: https://github.com/Kaggle/kaggle-benchmarks/issues/78
+### Deploying to Benchmarks (Working Workflow)
+1. Create kernel via API: `kaggle kernels push -p kaggle/notebook/` (creates regular kernel)
+2. User sets as benchmark in Kaggle UI: **File → Set as Benchmark Task** (one-time)
+3. Push updates via API: `kaggle kernels push` continues to work after setting as benchmark
+4. Kernel runs with Model Proxy (LLM access) + dataset
+5. Check output: `kaggle kernels output davidrimshnick/davechess-learning-benchmark -p /tmp/output`
+
+**Key discovery**: Kernels created via Benchmarks UI (`benchmarks/tasks/new`) cannot be pushed via API. But kernels created via API and then flagged as benchmarks CAN be pushed. This is the workaround.
+
+GitHub issue: https://github.com/Kaggle/kaggle-benchmarks/issues/78
+
+### Iteration Loop
+```bash
+# Edit code locally, then:
+# 1. Convert .py to .ipynb and push
+python3 scripts/kaggle_push.py  # TODO: create this helper
+# 2. Wait and check output
+kaggle kernels status davidrimshnick/davechess-learning-benchmark
+kaggle kernels output davidrimshnick/davechess-learning-benchmark -p /tmp/output
+# 3. Fix issues, repeat
+```
 
 ## Training Monitoring
 
