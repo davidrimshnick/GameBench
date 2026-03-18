@@ -206,6 +206,41 @@ Issues #1-14 are historical fixes from v1/v2 game design and early training. Key
 - `data/gm_games/` — GM game library (DCN)
 - `tests/` — 149 tests: game, mcts, network, benchmark, api endpoints, api session, sdk
 
+## Kaggle Benchmark (Learning Track)
+
+Branch `kaggle-benchmark` has the Kaggle competition submission for "Measuring Progress Toward AGI."
+
+### Dataset
+- `kaggle/davechess-benchmark-data/` — consolidated game engine, rules, ELO, 200 GM games
+- Uploaded to Kaggle: `davidrimshnick/davechess-benchmark-data` (public)
+- `davechess_engine.py`: single-file game engine + MCTSLite (zero deps, 1383 lines)
+- 45 tests: `test_benchmark.py` (19) + `test_kaggle_modules.py` (26)
+
+### Notebook
+- `kaggle/notebook/davechess_benchmark.py` — the benchmark code
+- 3-phase design: baseline → study GM games → experience learning
+- Scoring: 35% study delta + 30% experience delta + 25% final perf + 10% rule comprehension
+- Move extraction: exact match → case-insensitive → regex (no structured output needed)
+
+### Kaggle Tools & API Notes
+- `pip install kaggle` — old CLI, uses `~/.config/kaggle/kaggle.json` (username + key)
+- `pip install kagglehub` — newer SDK, installs `kagglesdk` with benchmarks module
+- `kagglesdk.kernels.services.KernelsApiClient.save_kernel()` — create/update kernels programmatically
+- `kaggle kernels push -p <dir>` — push kernel from `kernel-metadata.json` + code file
+- `kaggle datasets create -p <dir>` — upload dataset from `dataset-metadata.json` + files
+- **Benchmarks notebooks require LLM Model Proxy** (`MODEL_PROXY_API_KEY` + `MODEL_PROXY_URL`)
+- Model Proxy is ONLY available in Benchmarks environment (https://www.kaggle.com/benchmarks/tasks/new)
+- `KAGGLE_DATA_PROXY_TOKEN` does NOT work as `MODEL_PROXY_API_KEY` (401 on all proxy URLs)
+- Regular kernels via `kaggle kernels push` cannot access LLMs — must use Benchmarks UI
+- `kaggle-benchmarks` SDK installs from GitHub: `pip install kaggle_benchmarks @ git+https://github.com/Kaggle/kaggle-benchmarks.git`
+- Requires `protobuf>=5.29.6` upgrade on Kaggle's Python 3.12 environment
+
+### Deploying
+1. Go to https://www.kaggle.com/benchmarks/tasks/new
+2. Add dataset: `davidrimshnick/davechess-benchmark-data`
+3. Paste code from `kaggle/notebook/davechess_benchmark.py`
+4. Run — SDK + LLM proxy are pre-configured in Benchmarks environment
+
 ## Training Monitoring
 
 **CRITICAL: NEVER start training without W&B connected!** If "Broken pipe", `pkill -9 wandb` first. All `wandb.log()` wrapped in `_safe_wandb_log()`.
