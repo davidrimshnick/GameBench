@@ -225,21 +225,32 @@ Branch `kaggle-benchmark` has the Kaggle competition submission for "Measuring P
 ### Kaggle Tools & API Notes
 - `pip install kaggle` — old CLI, uses `~/.config/kaggle/kaggle.json` (username + key)
 - `pip install kagglehub` — newer SDK, installs `kagglesdk` with benchmarks module
-- `kagglesdk.kernels.services.KernelsApiClient.save_kernel()` — create/update kernels programmatically
 - `kaggle kernels push -p <dir>` — push kernel from `kernel-metadata.json` + code file
+- `kaggle kernels pull <user/slug> -p <dir> -m` — pull kernel source + metadata
 - `kaggle datasets create -p <dir>` — upload dataset from `dataset-metadata.json` + files
-- **Benchmarks notebooks require LLM Model Proxy** (`MODEL_PROXY_API_KEY` + `MODEL_PROXY_URL`)
-- Model Proxy is ONLY available in Benchmarks environment (https://www.kaggle.com/benchmarks/tasks/new)
-- `KAGGLE_DATA_PROXY_TOKEN` does NOT work as `MODEL_PROXY_API_KEY` (401 on all proxy URLs)
-- Regular kernels via `kaggle kernels push` cannot access LLMs — must use Benchmarks UI
-- `kaggle-benchmarks` SDK installs from GitHub: `pip install kaggle_benchmarks @ git+https://github.com/Kaggle/kaggle-benchmarks.git`
-- Requires `protobuf>=5.29.6` upgrade on Kaggle's Python 3.12 environment
+- `kaggle-benchmarks` SDK: `pip install kaggle_benchmarks @ git+https://github.com/Kaggle/kaggle-benchmarks.git` (requires Python 3.11+, `protobuf>=5.29.6`)
+- Local Python 3.12 via pyenv: `~/.pyenv/versions/3.12.13/bin/python3`
+- OAuth: `kagglesdk.KaggleOAuth` for browser-based auth flow, tokens at `/tmp/kaggle_oauth_tokens.json`
 
-### Deploying
-1. Go to https://www.kaggle.com/benchmarks/tasks/new
+### Benchmarks Notebooks (IMPORTANT)
+- **Benchmarks kernels are a separate namespace** — `kaggle kernels push` CANNOT write to them (returns "Notebook not found")
+- Regular kernels (`kaggle kernels push`) lack Model Proxy access (`MODEL_PROXY_API_KEY`)
+- Benchmarks kernels use docker image `gcr.io/kaggle-private-byod/personal-benchmarks-new`
+- `KAGGLE_DATA_PROXY_TOKEN` does NOT work as `MODEL_PROXY_API_KEY` (different service, 401)
+- OAuth tokens (`resources.admin:*`) also don't work for Model Proxy (401)
+- Benchmarks kernels can be PULLED (`kaggle kernels pull`) but not pushed via API
+- The `id_no` from pull metadata does NOT work with save_kernel (returns "Notebook not found")
+
+### Deploying to Benchmarks
+1. Create task at https://www.kaggle.com/benchmarks/tasks/new (one-time, creates the kernel)
 2. Add dataset: `davidrimshnick/davechess-benchmark-data`
-3. Paste code from `kaggle/notebook/davechess_benchmark.py`
-4. Run — SDK + LLM proxy are pre-configured in Benchmarks environment
+3. In the notebook, use this one-liner to pull latest code from GitHub:
+   ```python
+   !wget -qO /tmp/b.py "https://raw.githubusercontent.com/davidrimshnick/GameBench/master/kaggle/notebook/davechess_benchmark.py" && exec(open("/tmp/b.py").read())
+   ```
+4. Or paste code from `kaggle/notebook/davechess_benchmark.py` directly
+5. Run — SDK + LLM proxy are pre-configured in Benchmarks environment
+6. GitHub issue tracking programmatic access: https://github.com/Kaggle/kaggle-benchmarks/issues/78
 
 ## Training Monitoring
 
