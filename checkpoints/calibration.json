@@ -1,9 +1,29 @@
 {
   "levels": [
-    {"sim_count": 0, "elo": 400, "rd": 100.0},
-    {"sim_count": 5, "elo": 700, "rd": 100.0},
-    {"sim_count": 10, "elo": 900, "rd": 100.0},
-    {"sim_count": 25, "elo": 1200, "rd": 100.0},
-    {"sim_count": 50, "elo": 1500, "rd": 100.0}
+    {
+      "sim_count": 0,
+      "elo": 746,
+      "rd": 93.6
+    },
+    {
+      "sim_count": 5,
+      "elo": 1074,
+      "rd": 73.1
+    },
+    {
+      "sim_count": 10,
+      "elo": 1127,
+      "rd": 72.2
+    },
+    {
+      "sim_count": 25,
+      "elo": 1278,
+      "rd": 71.6
+    },
+    {
+      "sim_count": 50,
+      "elo": 1333,
+      "rd": 71.2
+    }
   ]
 }
