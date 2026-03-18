@@ -390,6 +390,47 @@ class DaveChessGame:
 # %%
 # === Single Game Task ===
 
+def _extract_move_from_response(response_text: str, legal_dcn: list[str]) -> str | None:
+    """Extract a DCN move from LLM response text using multiple strategies.
+
+    Returns the matched legal DCN string, or None if no match found.
+    """
+    text = str(response_text).strip()
+
+    # Strategy 1: exact match against legal moves
+    for dcn in legal_dcn:
+        if dcn in text:
+            return dcn
+
+    # Strategy 2: case-insensitive match
+    text_lower = text.lower()
+    for dcn in legal_dcn:
+        if dcn.lower() in text_lower:
+            return dcn
+
+    # Strategy 3: regex for DCN patterns
+    # Move: Wd2-d3, Rb1xd3
+    # Promote: Wa1>R
+    # Bombard: Bc3~e3
+    patterns = [
+        r'[CWRBL][a-h][1-8][-x][a-h][1-8]',  # Move/capture
+        r'[CWRBL][a-h][1-8]>[RBL]',            # Promote
+        r'B[a-h][1-8]~[a-h][1-8]',             # Bombard
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            candidate = match.group()
+            # Uppercase the piece char
+            candidate = candidate[0].upper() + candidate[1:]
+            # Check against legal moves (case-insensitive)
+            for dcn in legal_dcn:
+                if dcn.lower() == candidate.lower():
+                    return dcn
+
+    return None
+
+
 @kbench.task(name="DaveChess single game", store_task=False, store_run=False)
 def play_single_game(llm, mcts_sims: int, system_prompt: str,
                      llm_is_white: bool, game_seed: int,
@@ -411,49 +452,55 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
         if game.state.current_player == llm_color:
             # LLM's turn
             game.total_llm_turns += 1
+            legal_dcn = game.get_legal_moves_dcn()
+
             state_msg = build_game_state_message(
                 game.state, game.move_history_dcn, legal_moves
             )
 
-            turn_prompt = f"{system_prompt}\n\nYou are playing as {color_name}.\n\n{state_msg}"
-
-            tools = MEMORY_TOOLS if can_use_memory else []
+            # Build prompt — keep it focused, put move instruction first
+            move_prompt = (
+                f"You are playing DaveChess as {color_name}.\n\n"
+                f"{state_msg}\n\n"
+                f"Reply with ONLY your chosen move in DCN notation "
+                f"(e.g., {legal_dcn[0]}). Nothing else."
+            )
 
             with kbench.chats.new(f"Turn {game.state.turn}"):
                 success = False
                 for attempt in range(MAX_RETRIES):
                     try:
-                        if tools:
-                            response = llm.prompt(turn_prompt, schema=DaveChessMove,
-                                                  tools=tools)
-                        else:
-                            response = llm.prompt(turn_prompt, schema=DaveChessMove)
-                    except Exception:
-                        # Fallback: try to extract move from raw text
-                        try:
-                            raw = llm.prompt(turn_prompt)
-                            dcn_match = re.search(r'[CWRBL][a-h][1-8][-x>~][a-hRBL1-8]+', str(raw))
-                            if dcn_match:
-                                response = DaveChessMove(move=dcn_match.group())
-                            else:
-                                game.illegal_attempts += 1
-                                continue
-                        except Exception:
-                            game.illegal_attempts += 1
-                            continue
+                        # Don't mix schema + tools — just get raw text
+                        raw_response = llm.prompt(move_prompt)
+                        response_text = str(raw_response)
+                    except Exception as e:
+                        game.illegal_attempts += 1
+                        continue
 
-                    ok, err = game.try_llm_move(response.move)
-                    if ok:
-                        if attempt == 0:
-                            game.legal_first_attempts += 1
-                        success = True
-                        break
+                    # Extract move from response
+                    matched_dcn = _extract_move_from_response(
+                        response_text, legal_dcn
+                    )
+
+                    if matched_dcn is not None:
+                        ok, err = game.try_llm_move(matched_dcn)
+                        if ok:
+                            if attempt == 0:
+                                game.legal_first_attempts += 1
+                            success = True
+                            break
+                        else:
+                            game.illegal_attempts += 1
                     else:
                         game.illegal_attempts += 1
-                        turn_prompt = (
-                            f"Your move '{response.move}' was illegal: {err}\n"
-                            f"Pick a legal move from the list. Respond with just the move."
-                        )
+
+                    # Retry with clearer prompt
+                    move_prompt = (
+                        f"That was not a valid move. "
+                        f"Choose ONE move from this list and reply with ONLY that move:\n"
+                        f"{', '.join(legal_dcn[:20])}\n"
+                        f"Reply with just the move, nothing else."
+                    )
 
                 if not success:
                     forfeited = True
@@ -525,69 +572,117 @@ def play_phase_a(llm, n_games: int = PHASE_A_GAMES) -> dict:
 def study_phase(llm, budget: int = STUDY_BUDGET):
     """Give agent time to study GM games and build knowledge structures.
 
-    The agent has access to:
-    - 200 expert games (get_gm_game, get_gm_games_batch)
-    - File I/O (write_file, read_file, list_files)
-    - Python execution (run_python_script)
+    The agent receives batches of GM games and is asked to analyze them
+    and produce strategy notes. The notes are saved to the workspace
+    so the agent can consult them during play.
 
-    The agent decides how to use these tools. It might:
-    - Write strategy notes
-    - Analyze games statistically
-    - Build opening/pattern databases
-    - Create Python analysis scripts
-    - Or anything else
+    This approach works with any LLM API (no tool calling required).
+    The agent's analysis quality determines how well it plays later.
     """
     rules = get_rules_prompt()
-    study_prompt = f"""{rules}
 
-You have access to 200 expert-level DaveChess games and general-purpose tools.
-Your goal: study these games and prepare to play well.
+    # Feed GM games in batches and ask for analysis
+    games_per_batch = 10
+    total_games = count_gm_games()
+    n_batches = min(budget, total_games // games_per_batch)
 
-Available tools:
-- get_gm_game(index): Get game 1-200 in DCN notation
-- get_gm_games_batch(start, count): Get up to 20 games at once
-- count_gm_games(): Returns 200
-- write_file(path, content): Save notes/analysis to your workspace
-- read_file(path): Read files from your workspace
-- list_files(): See what's in your workspace
-- run_python_script(code): Run Python analysis (davechess_engine is importable)
+    all_notes = []
 
-You have {budget} turns to study. Build whatever knowledge structures
-you think will help you play better. When done, say "DONE STUDYING".
+    for batch_idx in range(n_batches):
+        start = batch_idx * games_per_batch + 1
+        games_text = get_gm_games_batch(start, games_per_batch)
 
-Study strategically: look for opening patterns, common tactics,
-resource/promotion strategies, and winning endgame patterns."""
+        if batch_idx == 0:
+            # First batch: include rules and full instructions
+            study_prompt = f"""{rules}
 
-    for turn in range(budget):
-        with kbench.chats.new(f"Study turn {turn + 1}/{budget}"):
+Here are expert-level DaveChess games (batch {batch_idx + 1}/{n_batches}).
+Study them carefully and write detailed strategic notes.
+
+{games_text}
+
+Analyze these games. Write notes covering:
+1. Common opening moves and strategies
+2. How players use Gold nodes for resource accumulation
+3. Promotion timing and piece choices (Rider vs Bombard vs Lancer)
+4. Tactical patterns (captures, forks, checkmate threats)
+5. Winning strategies you observe
+
+Write your analysis as concise, actionable strategy notes that will help you play well."""
+        else:
+            # Subsequent batches: build on previous notes
+            prev_notes = "\n".join(all_notes[-2:])  # Last 2 analyses
+            study_prompt = f"""Here are more expert DaveChess games (batch {batch_idx + 1}/{n_batches}).
+
+Your previous notes:
+{prev_notes}
+
+New games to study:
+{games_text}
+
+Update and refine your strategic notes based on these new games.
+Focus on patterns you see across multiple games. Be concise and actionable."""
+
+        with kbench.chats.new(f"Study turn {batch_idx + 1}/{n_batches}"):
             try:
-                response = llm.prompt(study_prompt, tools=AGENT_TOOLS)
-                response_text = str(response).lower()
-                if "done studying" in response_text:
-                    break
+                response = llm.prompt(study_prompt)
+                notes = str(response)
+                all_notes.append(notes)
+                # Save notes to workspace
+                write_file(f"study_notes_batch_{batch_idx + 1}.md", notes)
             except Exception:
                 continue
 
-            # Update prompt to acknowledge progress
-            study_prompt = (
-                f"Continue studying. You have {budget - turn - 1} turns remaining. "
-                f"Use tools to analyze more games or refine your notes. "
-                f"Say 'DONE STUDYING' when ready to play."
-            )
+    # Create a consolidated strategy document
+    if all_notes:
+        summary_prompt = (
+            "You've studied multiple batches of expert DaveChess games. "
+            "Here are your batch notes:\n\n" +
+            "\n---\n".join(all_notes) +
+            "\n\nWrite a FINAL consolidated strategy guide. "
+            "Include: opening principles, mid-game tactics, resource/promotion strategy, "
+            "and endgame patterns. Be concise — this will be your reference during play."
+        )
+        with kbench.chats.new("Study consolidation"):
+            try:
+                final_notes = str(llm.prompt(summary_prompt))
+                write_file("strategy.md", final_notes)
+            except Exception:
+                # Save whatever we have
+                write_file("strategy.md", "\n---\n".join(all_notes))
 
 
 # %%
 # === Phase B: Post-study (can consult memory) ===
 
+def _load_strategy_notes() -> str:
+    """Load the agent's strategy notes from workspace."""
+    notes = read_file("strategy.md")
+    if "not found" in notes.lower():
+        # Try batch notes
+        all_notes = []
+        for i in range(1, 30):
+            n = read_file(f"study_notes_batch_{i}.md")
+            if "not found" not in n.lower():
+                all_notes.append(n)
+            else:
+                break
+        notes = "\n---\n".join(all_notes) if all_notes else ""
+    return notes
+
+
 def play_phase_b(llm, n_games: int = PHASE_B_GAMES) -> dict:
-    """Play games after studying. Agent can consult its notes."""
+    """Play games after studying. Strategy notes included in prompt."""
     rules_prompt = get_rules_prompt()
-    system_prompt = (
-        rules_prompt +
-        "\n\nYou have studied expert games and may have notes in your workspace. "
-        "You can use read_file() and list_files() to consult your notes. "
-        "Pick the best move from the legal moves list."
-    )
+    strategy_notes = _load_strategy_notes()
+
+    system_prompt = rules_prompt
+    if strategy_notes:
+        # Truncate notes to avoid context overflow
+        max_notes = 3000
+        if len(strategy_notes) > max_notes:
+            strategy_notes = strategy_notes[:max_notes] + "\n...(truncated)"
+        system_prompt += f"\n\n# Your Strategy Notes\n{strategy_notes}"
 
     results = []
     for i in range(n_games):
@@ -595,7 +690,7 @@ def play_phase_b(llm, n_games: int = PHASE_B_GAMES) -> dict:
         run = play_single_game.run(
             llm=llm, mcts_sims=MCTS_SIMS, system_prompt=system_prompt,
             llm_is_white=llm_is_white, game_seed=2000 + i,
-            can_use_memory=True,
+            can_use_memory=False,
         )
         results.append(run.result)
 
@@ -608,47 +703,52 @@ def play_phase_b(llm, n_games: int = PHASE_B_GAMES) -> dict:
 def play_phase_c(llm, n_games: int = PHASE_C_GAMES) -> dict:
     """Play games with reflection between each game.
 
-    After each game, the agent can update its notes/strategy.
+    After each game, the agent reflects and updates its strategy notes.
+    Updated notes are included in the prompt for subsequent games.
     Measures whether the agent improves through experience.
     """
     rules_prompt = get_rules_prompt()
     results = []
+    experience_notes = _load_strategy_notes()
 
     for i in range(n_games):
-        # Play a game
-        system_prompt = (
-            rules_prompt +
-            "\n\nYou have studied expert games and played previous games. "
-            "Consult your notes (read_file, list_files) for strategy. "
-            "Pick the best move from the legal moves list."
-        )
+        # Build system prompt with current strategy + experience
+        system_prompt = rules_prompt
+        if experience_notes:
+            notes_truncated = experience_notes[:3000]
+            if len(experience_notes) > 3000:
+                notes_truncated += "\n...(truncated)"
+            system_prompt += f"\n\n# Your Strategy Notes\n{notes_truncated}"
 
         llm_is_white = (i % 2 == 0)
         run = play_single_game.run(
             llm=llm, mcts_sims=MCTS_SIMS, system_prompt=system_prompt,
             llm_is_white=llm_is_white, game_seed=3000 + i,
-            can_use_memory=True,
+            can_use_memory=False,
         )
         game_result = run.result
         results.append(game_result)
 
-        # Reflection phase: agent can update its strategy
-        if i < n_games - 1:  # No need to reflect after the last game
+        # Reflection phase: ask LLM to update strategy based on game
+        if i < n_games - 1:
             result_word = game_result["result"]
             moves_str = ", ".join(game_result["move_history"][:20])
             reflection_prompt = (
-                f"Game {i + 1} result: {result_word}. "
-                f"You played as {game_result['llm_color']}. "
-                f"Game lasted {game_result['game_length']} turns. "
-                f"Illegal move attempts: {game_result['illegal_attempts']}. "
+                f"You just played DaveChess game {i + 1}.\n"
+                f"Result: {result_word}. Played as: {game_result['llm_color']}. "
+                f"Length: {game_result['game_length']} turns. "
+                f"Illegal attempts: {game_result['illegal_attempts']}.\n"
                 f"Moves: {moves_str}{'...' if len(game_result['move_history']) > 20 else ''}\n\n"
-                f"Reflect on this game. Update your notes and strategy. "
-                f"Use write_file() to revise your approach. "
-                f"What patterns did you notice? What would you do differently?"
+                f"Your current strategy notes:\n{experience_notes[:2000]}\n\n"
+                f"Based on this game, write UPDATED strategy notes. "
+                f"What worked? What failed? What will you do differently? "
+                f"Be concise and actionable."
             )
             with kbench.chats.new(f"Reflection after game {i + 1}"):
                 try:
-                    llm.prompt(reflection_prompt, tools=AGENT_TOOLS)
+                    updated = str(llm.prompt(reflection_prompt))
+                    experience_notes = updated
+                    write_file("strategy.md", updated)
                 except Exception:
                     pass  # Reflection is optional
 
