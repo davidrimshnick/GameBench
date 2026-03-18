@@ -208,7 +208,8 @@ Issues #1-14 are historical fixes from v1/v2 game design and early training. Key
 
 ## Kaggle Benchmark (Learning Track)
 
-Branch `kaggle-benchmark` has the Kaggle competition submission for "Measuring Progress Toward AGI."
+Kaggle competition submission for "Measuring Progress Toward AGI" — **Learning** track.
+Deadline: April 16, 2026. Kernel: https://www.kaggle.com/code/davidrimshnick/davechess-learning-benchmark
 
 ### Dataset
 - `kaggle/davechess-benchmark-data/` — consolidated game engine, rules, ELO, 200 GM games
@@ -217,10 +218,13 @@ Branch `kaggle-benchmark` has the Kaggle competition submission for "Measuring P
 - 45 tests: `test_benchmark.py` (19) + `test_kaggle_modules.py` (26)
 
 ### Notebook
-- `kaggle/notebook/davechess_benchmark.py` — the benchmark code
+- `kaggle/notebook/davechess_benchmark.py` — the benchmark code (convert to .ipynb for push)
 - 3-phase design: baseline → study GM games → experience learning
+- 10M token budget with per-phase allocation and budget-aware prompts
 - Scoring: 35% study delta + 30% experience delta + 25% final perf + 10% rule comprehension
 - Move extraction: exact match → case-insensitive → regex (no structured output needed)
+- Per-move timing logs with `[MOVE]`, `[GAME]`, `[STUDY]`, `[TOKENS]` prefixes
+- Local testing: `~/.pyenv/versions/3.12.13/bin/python3` with Gemini API key (needs `seed` param patched)
 
 ### Kaggle Tools & API Notes
 - `pip install kaggle` — old CLI, uses `~/.config/kaggle/kaggle.json` (username + key)
@@ -233,10 +237,11 @@ Branch `kaggle-benchmark` has the Kaggle competition submission for "Measuring P
 - OAuth: `kagglesdk.KaggleOAuth` for browser-based auth flow, tokens at `/tmp/kaggle_oauth_tokens.json`
 
 ### Benchmarks Notebooks (IMPORTANT)
-- **Benchmarks kernels are a separate namespace** — `kaggle kernels push` CANNOT write to them (returns "Notebook not found")
-- Regular kernels (`kaggle kernels push`) lack Model Proxy access (`MODEL_PROXY_API_KEY`)
-- Benchmarks kernels use docker image `gcr.io/kaggle-private-byod/personal-benchmarks-new`
+- Kernels created via Benchmarks UI (`benchmarks/tasks/new`) CANNOT be pushed via API ("Notebook not found")
+- **Workaround**: Create kernel via API, then user sets **File → Set as Benchmark Task** in Kaggle UI (one-time)
+- After setting as benchmark, `kaggle kernels push` continues to work AND the kernel has Model Proxy access
 - `KAGGLE_DATA_PROXY_TOKEN` does NOT work as `MODEL_PROXY_API_KEY` (different service, 401)
+- Benchmarks docker image: `gcr.io/kaggle-private-byod/personal-benchmarks-new`
 - OAuth tokens (`resources.admin:*`) also don't work for Model Proxy (401)
 - Benchmarks kernels can be PULLED (`kaggle kernels pull`) but not pushed via API
 - The `id_no` from pull metadata does NOT work with save_kernel (returns "Notebook not found")
