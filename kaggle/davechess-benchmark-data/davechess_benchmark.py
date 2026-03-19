@@ -128,7 +128,7 @@ from rules_text import get_rules_prompt, build_game_state_message
 
 # %%
 # === Configuration ===
-MCTS_SIMS = 10          # MCTSLite opponent strength (weak, beatable by learning agents)
+MCTS_SIMS = 100         # MCTSLite opponent strength
 MAX_GAME_TURNS = 80     # Cap game length (native draw at turn 100)
 MAX_RETRIES = 3         # Illegal move retries before forfeit
 STUDY_BUDGET = 20       # Max study batches (10 GM games each)
@@ -151,20 +151,23 @@ os.makedirs(AGENT_WORKSPACE, exist_ok=True)
 
 # === Token Tracking ===
 class TokenTracker:
-    """Track total token usage across all LLM calls."""
+    """Track total token usage across all LLM calls.
+
+    Estimates tokens from text length since Model Proxy doesn't return usage.
+    Rough estimate: 1 token ≈ 4 chars for English text.
+    """
+    CHARS_PER_TOKEN = 4
+
     def __init__(self, budget: int = TOKEN_BUDGET):
         self.budget = budget
         self.total_tokens = 0
         self.total_calls = 0
 
-    def update(self, chat):
-        """Update from a kbench chat's usage stats."""
-        try:
-            usage = chat.usage
-            if usage:
-                self.total_tokens = getattr(usage, 'total_tokens', 0) or 0
-        except Exception:
-            pass
+    def add(self, prompt_text: str, response_text: str):
+        """Estimate and add tokens from a prompt/response pair."""
+        prompt_tokens = len(prompt_text) // self.CHARS_PER_TOKEN
+        response_tokens = len(response_text) // self.CHARS_PER_TOKEN
+        self.total_tokens += prompt_tokens + response_tokens
         self.total_calls += 1
 
     @property
@@ -177,7 +180,7 @@ class TokenTracker:
 
     def log(self, phase: str):
         pct = (self.total_tokens / self.budget * 100) if self.budget > 0 else 0
-        print(f"[TOKENS] {phase}: {self.total_tokens:,} / {self.budget:,} ({pct:.1f}%) | calls={self.total_calls}")
+        print(f"[TOKENS] {phase}: {self.total_tokens:,} / {self.budget:,} ({pct:.1f}%) | calls={self.total_calls}", flush=True)
 
 _tracker = TokenTracker()
 
@@ -527,10 +530,10 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
                         raw_response = llm.prompt(move_prompt)
                         _call_time = time.time() - _call_start
                         response_text = str(raw_response)
-                        _tracker.total_calls += 1
+                        _tracker.add(move_prompt, response_text)
                     except Exception as e:
                         print(f"[ERROR] LLM prompt failed (turn {game.state.turn}, attempt {attempt}): {type(e).__name__}: {str(e)[:200]}")
-                        _tracker.total_calls += 1
+                        _tracker.add(move_prompt, "")
                         game.illegal_attempts += 1
                         continue
 
@@ -713,7 +716,7 @@ Focus on patterns you see across multiple games. Be concise and actionable."""
                 notes = str(response)
                 all_notes.append(notes)
                 write_file(f"study_notes_batch_{batch_idx + 1}.md", notes)
-                _tracker.total_calls += 1
+                _tracker.add(study_prompt, notes)
                 print(f"[STUDY] Batch {batch_idx + 1}/{n_batches}: {len(notes)} chars of notes")
                 _tracker.log(f"Study batch {batch_idx + 1}")
             except Exception as e:
@@ -860,7 +863,7 @@ def play_phase_c(llm, n_games: int = PHASE_C_GAMES) -> dict:
                     updated = str(llm.prompt(reflection_prompt))
                     experience_notes = updated
                     write_file("strategy.md", updated)
-                    _tracker.total_calls += 1
+                    _tracker.add(reflection_prompt, updated)
                     print(f"[REFLECT] After game {i+1}: updated strategy ({len(updated)} chars)")
                 except Exception:
                     pass  # Reflection is optional
