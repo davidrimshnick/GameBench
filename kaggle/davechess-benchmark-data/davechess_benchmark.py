@@ -145,12 +145,12 @@ if USE_NN_OPPONENT:
 MCTS_SIMS = 100         # MCTSLite opponent strength (fallback)
 NN_SIMS = 10            # Neural network MCTS sims (primary opponent)
 USE_NN_OPPONENT = True  # Use trained NN as opponent (falls back to MCTSLite if unavailable)
-MAX_GAME_TURNS = 80     # Cap game length (native draw at turn 100)
+MAX_GAME_TURNS = 50     # Cap game length (draw if no checkmate)
 MAX_RETRIES = 3         # Illegal move retries before forfeit
-STUDY_BUDGET = 20       # Max study batches (10 GM games each)
-PHASE_A_GAMES = 3       # Baseline games (no study)
-PHASE_B_GAMES = 5       # Post-study games
-PHASE_C_GAMES = 6       # Experience learning games
+STUDY_BUDGET = 5        # Max study batches (10 GM games each)
+PHASE_A_GAMES = 10      # Baseline games (no study)
+PHASE_B_GAMES = 10      # Post-study games
+PHASE_C_GAMES = 10      # Experience learning games
 TOKEN_BUDGET = 10_000_000  # 10M token limit for the entire benchmark
 # Budget allocation: ~10% baseline, ~30% study, ~30% post-study, ~30% experience
 PHASE_A_TOKEN_BUDGET = 1_000_000    # 1M for baseline (no study needed)
@@ -654,7 +654,7 @@ def play_phase_a(llm, n_games: int = PHASE_A_GAMES) -> dict:
         _tracker.log(f"Phase A game {i+1}")
 
     agg = _aggregate_results(results, "Phase A (Baseline)")
-    print(f"[PHASE A] Win rate: {agg['win_rate']:.0%} | Legal move rate: {agg['legal_move_rate']:.0%}")
+    print(f"[PHASE A] Win rate: {agg['win_rate']:.0%} | ELO: {agg['elo_estimate']} | Legal move rate: {agg['legal_move_rate']:.0%}", flush=True)
     return agg
 
 
@@ -814,7 +814,7 @@ def play_phase_b(llm, n_games: int = PHASE_B_GAMES) -> dict:
         _tracker.log(f"Phase B game {i+1}")
 
     agg = _aggregate_results(results, "Phase B (Post-study)")
-    print(f"[PHASE B] Win rate: {agg['win_rate']:.0%} | Legal move rate: {agg['legal_move_rate']:.0%}")
+    print(f"[PHASE B] Win rate: {agg['win_rate']:.0%} | ELO: {agg['elo_estimate']} | Legal move rate: {agg['legal_move_rate']:.0%}", flush=True)
     return agg
 
 
@@ -886,7 +886,7 @@ def play_phase_c(llm, n_games: int = PHASE_C_GAMES) -> dict:
                     pass  # Reflection is optional
 
     agg = _aggregate_results(results, "Phase C (Experience)")
-    print(f"[PHASE C] Win rate: {agg['win_rate']:.0%}")
+    print(f"[PHASE C] Win rate: {agg['win_rate']:.0%} | ELO: {agg['elo_estimate']}", flush=True)
     _tracker.log("Phase C done")
     return agg
 
@@ -906,6 +906,16 @@ def _aggregate_results(results: list[dict], phase_name: str) -> dict:
     legal_rates = [r["legal_move_rate"] for r in results if r["legal_move_rate"] > 0]
     avg_legal_rate = sum(legal_rates) / len(legal_rates) if legal_rates else 0.0
 
+    # Estimate ELO relative to opponent (NN-10 = 1000)
+    import math
+    OPPONENT_ELO = 1000
+    if win_rate >= 1.0:
+        elo_estimate = OPPONENT_ELO + 400
+    elif win_rate <= 0.0:
+        elo_estimate = OPPONENT_ELO - 400
+    else:
+        elo_estimate = OPPONENT_ELO - 400 * math.log10(1.0 / win_rate - 1.0)
+
     return {
         "phase": phase_name,
         "games": total,
@@ -914,6 +924,7 @@ def _aggregate_results(results: list[dict], phase_name: str) -> dict:
         "draws": draws,
         "forfeits": forfeits,
         "win_rate": win_rate,
+        "elo_estimate": round(elo_estimate),
         "legal_move_rate": avg_legal_rate,
         "results": results,
     }
