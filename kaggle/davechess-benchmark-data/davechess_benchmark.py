@@ -126,9 +126,25 @@ from davechess_engine import (
 )
 from rules_text import get_rules_prompt, build_game_state_message
 
+# Try loading NN opponent
+_nn_opponent = None
+if USE_NN_OPPONENT:
+    try:
+        from nn_opponent import load_nn_opponent
+        weights_path = os.path.join(DATASET_DIR, "model_weights.npz")
+        if os.path.isfile(weights_path):
+            _nn_opponent = load_nn_opponent(weights_path, num_simulations=NN_SIMS)
+            print(f"[INFO] Neural network opponent loaded ({NN_SIMS} sims)")
+        else:
+            print(f"[INFO] model_weights.npz not found, using MCTSLite")
+    except Exception as e:
+        print(f"[INFO] NN opponent failed to load: {e}, using MCTSLite")
+
 # %%
 # === Configuration ===
-MCTS_SIMS = 100         # MCTSLite opponent strength
+MCTS_SIMS = 100         # MCTSLite opponent strength (fallback)
+NN_SIMS = 10            # Neural network MCTS sims (primary opponent)
+USE_NN_OPPONENT = True  # Use trained NN as opponent (falls back to MCTSLite if unavailable)
 MAX_GAME_TURNS = 80     # Cap game length (native draw at turn 100)
 MAX_RETRIES = 3         # Illegal move retries before forfeit
 STUDY_BUDGET = 20       # Max study batches (10 GM games each)
@@ -355,11 +371,12 @@ class DaveChessMove:
 
 
 class DaveChessGame:
-    """Manages a single DaveChess game: LLM vs MCTSLite."""
+    """Manages a single DaveChess game: LLM vs opponent (NN or MCTSLite)."""
 
     def __init__(self, mcts_sims: int = MCTS_SIMS, seed: int = 0):
         self.state = GameState()
-        self.mcts = MCTSLite(num_simulations=mcts_sims)
+        self.opponent = _nn_opponent if _nn_opponent is not None else MCTSLite(num_simulations=mcts_sims)
+        self.opponent_type = "NN" if _nn_opponent is not None else "MCTSLite"
         self.move_history_dcn: list[str] = []
         self.illegal_attempts = 0
         self.legal_first_attempts = 0
@@ -403,9 +420,9 @@ class DaveChessGame:
         self.move_history_dcn.append(dcn_str)
         return True, ""
 
-    def play_mcts_move(self) -> str:
-        """Have MCTSLite play a move. Returns DCN string."""
-        move = self.mcts.search(self.state)
+    def play_opponent_move(self) -> str:
+        """Have opponent (NN or MCTSLite) play a move. Returns DCN string."""
+        move = self.opponent.search(self.state)
         dcn = move_to_dcn(self.state, move)
         apply_move(self.state, move)
         self.move_history_dcn.append(dcn)
@@ -570,7 +587,7 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
         else:
             # MCTSLite opponent's turn
             try:
-                game.play_mcts_move()
+                game.play_opponent_move()
             except ValueError:
                 break  # No legal moves for opponent
 
