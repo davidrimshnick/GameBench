@@ -126,9 +126,10 @@ from davechess_engine import (
 )
 from rules_text import get_rules_prompt, build_game_state_message
 
-# Try loading NN opponent
+# Try loading NN opponent (config defined below, but we need it here)
+_USE_NN = True
 _nn_opponent = None
-if USE_NN_OPPONENT:
+if _USE_NN:
     try:
         from nn_opponent import load_nn_opponent
         weights_path = os.path.join(DATASET_DIR, "model_weights.npz")
