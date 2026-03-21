@@ -126,26 +126,18 @@ from davechess_engine import (
 )
 from rules_text import get_rules_prompt, build_game_state_message
 
-# Try loading NN opponent
+# Load NN opponent — fail loudly if missing
 _NN_SIMS = 10
-_nn_opponent = None
-if True:
-    try:
-        from nn_opponent import load_nn_opponent
-        weights_path = os.path.join(DATASET_DIR, "model_weights.npz")
-        if os.path.isfile(weights_path):
-            _nn_opponent = load_nn_opponent(weights_path, num_simulations=_NN_SIMS)
-            print(f"[INFO] Neural network opponent loaded ({_NN_SIMS} sims)")
-        else:
-            print(f"[INFO] model_weights.npz not found, using MCTSLite")
-    except Exception as e:
-        print(f"[INFO] NN opponent failed to load: {e}, using MCTSLite")
+from nn_opponent import load_nn_opponent
+weights_path = os.path.join(DATASET_DIR, "model_weights.npz")
+if not os.path.isfile(weights_path):
+    raise FileNotFoundError(f"model_weights.npz not found at {weights_path}")
+_nn_opponent = load_nn_opponent(weights_path, num_simulations=_NN_SIMS)
+print(f"[INFO] Neural network opponent loaded ({_NN_SIMS} sims)")
 
 # %%
 # === Configuration ===
-MCTS_SIMS = 100         # MCTSLite opponent strength (fallback)
-NN_SIMS = 10            # Neural network MCTS sims (primary opponent)
-USE_NN_OPPONENT = True  # Use trained NN as opponent (falls back to MCTSLite if unavailable)
+MCTS_SIMS = 100         # Unused — kept for reference
 MAX_GAME_TURNS = 200    # Hard cap (native draw at turn 100)
 GAME_TIME_LIMIT = 600   # 10 minutes per game — lose on timeout (like chess clock)
 MAX_RETRIES = 3         # Illegal move retries before forfeit
@@ -377,8 +369,8 @@ class DaveChessGame:
 
     def __init__(self, mcts_sims: int = MCTS_SIMS, seed: int = 0):
         self.state = GameState()
-        self.opponent = _nn_opponent if _nn_opponent is not None else MCTSLite(num_simulations=mcts_sims)
-        self.opponent_type = "NN" if _nn_opponent is not None else "MCTSLite"
+        self.opponent = _nn_opponent
+        self.opponent_type = "NN"
         self.move_history_dcn: list[str] = []
         self.illegal_attempts = 0
         self.legal_first_attempts = 0
