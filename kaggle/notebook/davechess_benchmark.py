@@ -126,16 +126,16 @@ from davechess_engine import (
 )
 from rules_text import get_rules_prompt, build_game_state_message
 
-# Try loading NN opponent (config defined below, but we need it here)
-_USE_NN = True
+# Try loading NN opponent
+_NN_SIMS = 10
 _nn_opponent = None
-if _USE_NN:
+if True:
     try:
         from nn_opponent import load_nn_opponent
         weights_path = os.path.join(DATASET_DIR, "model_weights.npz")
         if os.path.isfile(weights_path):
-            _nn_opponent = load_nn_opponent(weights_path, num_simulations=NN_SIMS)
-            print(f"[INFO] Neural network opponent loaded ({NN_SIMS} sims)")
+            _nn_opponent = load_nn_opponent(weights_path, num_simulations=_NN_SIMS)
+            print(f"[INFO] Neural network opponent loaded ({_NN_SIMS} sims)")
         else:
             print(f"[INFO] model_weights.npz not found, using MCTSLite")
     except Exception as e:
@@ -146,12 +146,12 @@ if _USE_NN:
 MCTS_SIMS = 100         # MCTSLite opponent strength (fallback)
 NN_SIMS = 10            # Neural network MCTS sims (primary opponent)
 USE_NN_OPPONENT = True  # Use trained NN as opponent (falls back to MCTSLite if unavailable)
-MAX_GAME_TURNS = 50     # Cap game length (draw if no checkmate)
+MAX_GAME_TURNS = 40     # Cap game length (draw if no checkmate)
 MAX_RETRIES = 3         # Illegal move retries before forfeit
 STUDY_BUDGET = 5        # Max study batches (10 GM games each)
-PHASE_A_GAMES = 10      # Baseline games (no study)
-PHASE_B_GAMES = 10      # Post-study games
-PHASE_C_GAMES = 10      # Experience learning games
+PHASE_A_GAMES = 7       # Baseline games (no study)
+PHASE_B_GAMES = 7       # Post-study games
+PHASE_C_GAMES = 7       # Experience learning games
 TOKEN_BUDGET = 10_000_000  # 10M token limit for the entire benchmark
 # Budget allocation: ~10% baseline, ~30% study, ~30% post-study, ~30% experience
 PHASE_A_TOKEN_BUDGET = 1_000_000    # 1M for baseline (no study needed)
