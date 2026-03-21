@@ -146,7 +146,8 @@ if True:
 MCTS_SIMS = 100         # MCTSLite opponent strength (fallback)
 NN_SIMS = 10            # Neural network MCTS sims (primary opponent)
 USE_NN_OPPONENT = True  # Use trained NN as opponent (falls back to MCTSLite if unavailable)
-MAX_GAME_TURNS = 40     # Cap game length (draw if no checkmate)
+MAX_GAME_TURNS = 200    # Hard cap (native draw at turn 100)
+GAME_TIME_LIMIT = 600   # 10 minutes per game — lose on timeout (like chess clock)
 MAX_RETRIES = 3         # Illegal move retries before forfeit
 STUDY_BUDGET = 5        # Max study batches (10 GM games each)
 PHASE_A_GAMES = 7       # Baseline games (no study)
@@ -383,6 +384,7 @@ class DaveChessGame:
         self.legal_first_attempts = 0
         self.total_llm_turns = 0
         self._seed = seed
+        self._llm_time_used = 0.0  # Only LLM thinking time counts
         random.seed(seed)
 
     def get_legal_moves_dcn(self) -> list[str]:
@@ -442,6 +444,10 @@ class DaveChessGame:
     @property
     def is_over(self) -> bool:
         return self.state.done or self.state.turn > MAX_GAME_TURNS
+
+    @property
+    def timed_out(self) -> bool:
+        return self._llm_time_used >= GAME_TIME_LIMIT
 
     @property
     def result_str(self) -> str:
@@ -508,11 +514,17 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
     llm_color = Player.WHITE if llm_is_white else Player.BLACK
     color_name = "White" if llm_is_white else "Black"
     forfeited = False
+    timed_out = False
 
     while not game.is_over:
         if _tracker.exceeded:
             print(f"[TOKENS] Budget exceeded during game, forfeiting.")
             forfeited = True
+            break
+
+        if game.timed_out:
+            print(f"  [TIMEOUT] LLM used {game._llm_time_used:.0f}s >= {GAME_TIME_LIMIT}s — loss on time", flush=True)
+            timed_out = True
             break
 
         legal_moves = generate_legal_moves(game.state)
@@ -522,7 +534,8 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
         if game.state.current_player == llm_color:
             # LLM's turn
             game.total_llm_turns += 1
-            print(f"  [MOVE] Turn {game.state.turn}, LLM thinking...", end="", flush=True)
+            remaining = GAME_TIME_LIMIT - game._llm_time_used
+            print(f"  [MOVE] Turn {game.state.turn}, LLM thinking ({remaining:.0f}s left)...", end="", flush=True)
             _turn_start = time.time()
             legal_dcn = game.get_legal_moves_dcn()
 
@@ -531,9 +544,11 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
             )
 
             # Build prompt — keep it focused, put move instruction first
+            time_left = GAME_TIME_LIMIT - game._llm_time_used
             move_prompt = (
                 f"You are playing DaveChess as {color_name}.\n"
-                f"Token budget: {_tracker.remaining:,} remaining of {_tracker.budget:,} total.\n\n"
+                f"Game clock: {time_left:.0f}s remaining (you lose on timeout).\n"
+                f"Token budget: {_tracker.remaining:,} remaining.\n\n"
                 f"{state_msg}\n\n"
                 f"Reply with ONLY your chosen move in DCN notation "
                 f"(e.g., {legal_dcn[0]}). Nothing else."
@@ -566,6 +581,7 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
                             if attempt == 0:
                                 game.legal_first_attempts += 1
                             _turn_time = time.time() - _turn_start
+                            game._llm_time_used += _turn_time
                             print(f" {matched_dcn} ({_call_time:.1f}s call, {_turn_time:.1f}s total)", flush=True)
                             success = True
                             break
@@ -583,6 +599,7 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
                     )
 
                 if not success:
+                    game._llm_time_used += time.time() - _turn_start
                     forfeited = True
                     break
         else:
@@ -593,7 +610,10 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
                 break  # No legal moves for opponent
 
     # Determine result
-    if forfeited:
+    if timed_out:
+        result = "loss"
+        llm_won = False
+    elif forfeited:
         result = "forfeit"
         llm_won = False
     elif game.result_str == "draw":
@@ -619,6 +639,8 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
         "illegal_attempts": game.illegal_attempts,
         "legal_move_rate": legal_rate,
         "forfeited": forfeited,
+        "timed_out": timed_out,
+        "time_used": round(game._llm_time_used, 1),
         "move_history": game.move_history_dcn,
     }
 
@@ -651,7 +673,7 @@ def play_phase_a(llm, n_games: int = PHASE_A_GAMES) -> dict:
         )
         r = run.result
         results.append(r)
-        print(f"[GAME] Phase A game {i+1}/{n_games}: {r['result']} ({r['llm_color']}, {r['game_length']} turns, {r['illegal_attempts']} illegal)")
+        print(f"[GAME] Phase A game {i+1}/{n_games}: {r['result']} ({r['llm_color']}, {r['game_length']} turns, {r['illegal_attempts']} illegal, {r['time_used']}s)", flush=True)
         _tracker.log(f"Phase A game {i+1}")
 
     agg = _aggregate_results(results, "Phase A (Baseline)")
@@ -811,7 +833,7 @@ def play_phase_b(llm, n_games: int = PHASE_B_GAMES) -> dict:
         )
         r = run.result
         results.append(r)
-        print(f"[GAME] Phase B game {i+1}/{n_games}: {r['result']} ({r['llm_color']}, {r['game_length']} turns, {r['illegal_attempts']} illegal)")
+        print(f"[GAME] Phase B game {i+1}/{n_games}: {r['result']} ({r['llm_color']}, {r['game_length']} turns, {r['illegal_attempts']} illegal, {r['time_used']}s)", flush=True)
         _tracker.log(f"Phase B game {i+1}")
 
     agg = _aggregate_results(results, "Phase B (Post-study)")
@@ -858,7 +880,7 @@ def play_phase_c(llm, n_games: int = PHASE_C_GAMES) -> dict:
         )
         game_result = run.result
         results.append(game_result)
-        print(f"[GAME] Phase C game {i+1}/{n_games}: {game_result['result']} ({game_result['llm_color']}, {game_result['game_length']} turns, {game_result['illegal_attempts']} illegal)")
+        print(f"[GAME] Phase C game {i+1}/{n_games}: {game_result['result']} ({game_result['llm_color']}, {game_result['game_length']} turns, {game_result['illegal_attempts']} illegal, {game_result['time_used']}s)", flush=True)
         _tracker.log(f"Phase C game {i+1}")
 
         # Reflection phase: ask LLM to update strategy based on game
