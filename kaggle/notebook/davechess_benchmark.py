@@ -160,7 +160,7 @@ from rules_text import get_rules_prompt, build_game_state_message
 #   temp=0.1, blunder=0.0  → strongest (always picks NN's top move)
 #   temp=1.5, blunder=0.15 → moderate (samples from policy, 15% random)
 #   temp=3.0, blunder=0.3  → weak (flat policy, 30% random)
-_NN_TEMP = 2.0       # Policy temperature (higher = weaker, 0.1 = strongest)
+_NN_TEMP = 4.0       # Policy temperature (higher = weaker, 0.1 = strongest)
 from nn_opponent import load_nn_opponent
 weights_path = os.path.join(DATASET_DIR, "model_weights.npz")
 if not os.path.isfile(weights_path):
