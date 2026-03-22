@@ -5,12 +5,16 @@
 #
 # DaveChess is a custom board game absent from all LLM training data. This
 # benchmark measures whether an AI system can **learn** a novel strategic game
-# by studying expert examples and improving through experience.
+# by studying expert examples and improving through practice.
 #
-# **Key design**: Agents get general-purpose tools (file I/O, Python execution)
-# and 200 expert games. The benchmark does NOT prescribe how to learn — agents
-# that build effective external memory structures (notes, databases, analysis
-# scripts) will outperform those limited to in-context learning.
+# **3-Phase Design:**
+# - **Phase 1 (Baseline)**: Play scored games with rules only — no study, no tools
+# - **Phase 2 (Learning)**: Free learning period — study GM games, play practice
+#   games, reflect, write analysis scripts (NOT scored)
+# - **Phase 3 (Evaluation)**: Play scored games with strategy notes available
+#
+# **Score** = Evaluation ELO - Baseline ELO (learning delta), plus bonuses for
+# absolute performance, rule comprehension, and study quality.
 
 # %%
 import os
@@ -28,6 +32,31 @@ from typing import Optional
 # Force unbuffered stdout so logs appear immediately
 sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
 os.environ["PYTHONUNBUFFERED"] = "1"
+
+# Live status updates via GitHub Gist
+_GIST_ID = "ef9d8f814976e3698032db6f9c0a02cd"
+_GIST_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+_status_lines: list[str] = []
+
+def _post_status(line: str):
+    """Log status line + push to GitHub Gist for live monitoring."""
+    _status_lines.append(f"{time.strftime('%H:%M:%S')} {line}")
+    print(line, flush=True)
+    # Push to gist (best-effort, don't break benchmark on failure)
+    if _GIST_TOKEN:
+        try:
+            import urllib.request
+            content = "DaveChess Benchmark Live Status\n" + "=" * 40 + "\n"
+            content += "\n".join(_status_lines[-50:])
+            data = json.dumps({"files": {"kaggle_benchmark_status.txt": {"content": content}}}).encode()
+            req = urllib.request.Request(
+                f"https://api.github.com/gists/{_GIST_ID}",
+                data=data, method="PATCH",
+                headers={"Authorization": f"token {_GIST_TOKEN}",
+                         "Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=5)
+        except Exception:
+            pass
 
 _kbench_available = False
 try:
@@ -145,16 +174,11 @@ MCTS_SIMS = 100         # Unused — kept for reference
 MAX_GAME_TURNS = 200    # Hard cap (native draw at turn 100)
 GAME_TIME_LIMIT = 600   # 10 minutes per game — lose on timeout (like chess clock)
 MAX_RETRIES = 3         # Illegal move retries before forfeit
-STUDY_BUDGET = 5        # Max study batches (10 GM games each)
-PHASE_A_GAMES = 7       # Baseline games (no study)
-PHASE_B_GAMES = 7       # Post-study games
-PHASE_C_GAMES = 7       # Experience learning games
+BASELINE_GAMES = 7      # Phase 1: baseline games (scored)
+EVAL_GAMES = 7          # Phase 3: evaluation games (scored)
+STUDY_BUDGET = 5        # Learning phase: GM game study batches
+PRACTICE_GAMES = 3      # Learning phase: practice games (not scored)
 TOKEN_BUDGET = 10_000_000  # 10M token limit for the entire benchmark
-# Budget allocation: ~10% baseline, ~30% study, ~30% post-study, ~30% experience
-PHASE_A_TOKEN_BUDGET = 1_000_000    # 1M for baseline (no study needed)
-STUDY_TOKEN_BUDGET = 3_000_000      # 3M for studying GM games
-PHASE_B_TOKEN_BUDGET = 3_000_000    # 3M for post-study play
-PHASE_C_TOKEN_BUDGET = 3_000_000    # 3M for experience learning
 
 # Agent memory workspace
 AGENT_WORKSPACE = "/kaggle/working/agent_memory"
@@ -642,14 +666,17 @@ def play_single_game(llm, mcts_sims: int, system_prompt: str,
 
 
 # %%
-# === Phase A: Baseline (rules only, no study, no tools) ===
+# === Phase 1: Baseline (rules only, no study, no tools — SCORED) ===
 
-def play_phase_a(llm, n_games: int = PHASE_A_GAMES) -> dict:
-    """Play baseline games with only rules knowledge. No examples, no tools."""
+def play_baseline(llm, n_games: int = BASELINE_GAMES) -> dict:
+    """Play baseline games with only rules knowledge. No examples, no tools.
+
+    These games are SCORED — they establish the pre-learning performance level.
+    """
     print(f"\n{'='*60}")
-    print(f"PHASE A: Baseline ({n_games} games, rules only)")
+    print(f"PHASE 1: BASELINE ({n_games} scored games, rules only)")
     print(f"{'='*60}")
-    _tracker.log("Phase A start")
+    _tracker.log("Phase 1 (Baseline) start")
 
     rules_prompt = get_rules_prompt()
     system_prompt = (rules_prompt +
@@ -659,7 +686,7 @@ def play_phase_a(llm, n_games: int = PHASE_A_GAMES) -> dict:
     results = []
     for i in range(n_games):
         if _tracker.exceeded:
-            print(f"[TOKENS] Budget exceeded, skipping remaining Phase A games")
+            print(f"[TOKENS] Budget exceeded, skipping remaining baseline games")
             break
         llm_is_white = (i % 2 == 0)
         run = play_single_game.run(
@@ -669,117 +696,16 @@ def play_phase_a(llm, n_games: int = PHASE_A_GAMES) -> dict:
         )
         r = run.result
         results.append(r)
-        print(f"[GAME] Phase A game {i+1}/{n_games}: {r['result']} ({r['llm_color']}, {r['game_length']} turns, {r['illegal_attempts']} illegal, {r['time_used']}s)", flush=True)
-        _tracker.log(f"Phase A game {i+1}")
+        _post_status(f"[GAME] Baseline game {i+1}/{n_games}: {r['result']} ({r['llm_color']}, {r['game_length']} turns, {r['illegal_attempts']} illegal, {r['time_used']}s)")
+        _tracker.log(f"Baseline game {i+1}")
 
-    agg = _aggregate_results(results, "Phase A (Baseline)")
-    print(f"[PHASE A] Win rate: {agg['win_rate']:.0%} | ELO: {agg['elo_estimate']} | Legal move rate: {agg['legal_move_rate']:.0%}", flush=True)
+    agg = _aggregate_results(results, "Phase 1 (Baseline)")
+    _post_status(f"[BASELINE] Win rate: {agg['win_rate']:.0%} | ELO: {agg['elo_estimate']} | Legal move rate: {agg['legal_move_rate']:.0%}")
     return agg
 
 
 # %%
-# === Study Phase: Agent studies GM games with tools ===
-
-def study_phase(llm, budget: int = STUDY_BUDGET):
-    """Give agent time to study GM games and build knowledge structures.
-
-    The agent receives batches of GM games and is asked to analyze them
-    and produce strategy notes. The notes are saved to the workspace
-    so the agent can consult them during play.
-
-    This approach works with any LLM API (no tool calling required).
-    The agent's analysis quality determines how well it plays later.
-    """
-    print(f"\n{'='*60}")
-    print(f"STUDY PHASE: Analyzing GM games ({budget} batches)")
-    print(f"{'='*60}")
-    _tracker.log("Study start")
-
-    rules = get_rules_prompt()
-
-    # Feed GM games in batches and ask for analysis
-    games_per_batch = 10
-    total_games = count_gm_games()
-    n_batches = min(budget, total_games // games_per_batch)
-
-    all_notes = []
-
-    for batch_idx in range(n_batches):
-        if _tracker.exceeded:
-            print(f"[TOKENS] Budget exceeded, stopping study at batch {batch_idx}")
-            break
-        start = batch_idx * games_per_batch + 1
-        games_text = get_gm_games_batch(start, games_per_batch)
-
-        if batch_idx == 0:
-            # First batch: include rules and full instructions
-            study_prompt = f"""{rules}
-
-TOKEN BUDGET: You have {_tracker.remaining:,} tokens remaining out of {_tracker.budget:,} total.
-This budget covers studying, playing baseline games, post-study games, and experience games.
-Be efficient — focus on extracting the most useful strategic insights per token spent.
-
-Here are expert-level DaveChess games (batch {batch_idx + 1}/{n_batches}).
-Study them carefully and write detailed strategic notes.
-
-{games_text}
-
-Analyze these games. Write notes covering:
-1. Common opening moves and strategies
-2. How players use Gold nodes for resource accumulation
-3. Promotion timing and piece choices (Rider vs Bombard vs Lancer)
-4. Tactical patterns (captures, forks, checkmate threats)
-5. Winning strategies you observe
-
-Write your analysis as concise, actionable strategy notes that will help you play well."""
-        else:
-            # Subsequent batches: build on previous notes
-            prev_notes = "\n".join(all_notes[-2:])  # Last 2 analyses
-            study_prompt = f"""Here are more expert DaveChess games (batch {batch_idx + 1}/{n_batches}).
-
-Your previous notes:
-{prev_notes}
-
-New games to study:
-{games_text}
-
-Update and refine your strategic notes based on these new games.
-Focus on patterns you see across multiple games. Be concise and actionable."""
-
-        with kbench.chats.new(f"Study turn {batch_idx + 1}/{n_batches}"):
-            try:
-                response = llm.prompt(study_prompt)
-                notes = str(response)
-                all_notes.append(notes)
-                write_file(f"study_notes_batch_{batch_idx + 1}.md", notes)
-                _tracker.add(study_prompt, notes)
-                print(f"[STUDY] Batch {batch_idx + 1}/{n_batches}: {len(notes)} chars of notes")
-                _tracker.log(f"Study batch {batch_idx + 1}")
-            except Exception as e:
-                print(f"[ERROR] Study batch {batch_idx + 1} failed: {type(e).__name__}: {str(e)[:200]}")
-                continue
-
-    # Create a consolidated strategy document
-    if all_notes:
-        summary_prompt = (
-            "You've studied multiple batches of expert DaveChess games. "
-            "Here are your batch notes:\n\n" +
-            "\n---\n".join(all_notes) +
-            "\n\nWrite a FINAL consolidated strategy guide. "
-            "Include: opening principles, mid-game tactics, resource/promotion strategy, "
-            "and endgame patterns. Be concise — this will be your reference during play."
-        )
-        with kbench.chats.new("Study consolidation"):
-            try:
-                final_notes = str(llm.prompt(summary_prompt))
-                write_file("strategy.md", final_notes)
-            except Exception:
-                # Save whatever we have
-                write_file("strategy.md", "\n---\n".join(all_notes))
-
-
-# %%
-# === Phase B: Post-study (can consult memory) ===
+# === Phase 2: Learning (study + practice + reflect — NOT scored) ===
 
 def _load_strategy_notes() -> str:
     """Load the agent's strategy notes from workspace."""
@@ -797,70 +723,114 @@ def _load_strategy_notes() -> str:
     return notes
 
 
-def play_phase_b(llm, n_games: int = PHASE_B_GAMES) -> dict:
-    """Play games after studying. Strategy notes included in prompt."""
-    print(f"\n{'='*60}")
-    print(f"PHASE B: Post-study play ({n_games} games)")
-    print(f"{'='*60}")
-    _tracker.log("Phase B start")
+def learning_phase(llm, study_budget: int = STUDY_BUDGET,
+                   practice_games: int = PRACTICE_GAMES) -> dict:
+    """Free learning period: study GM games, play practice games, reflect.
 
-    rules_prompt = get_rules_prompt()
-    strategy_notes = _load_strategy_notes()
-    print(f"[PHASE B] Strategy notes: {len(strategy_notes)} chars")
+    This phase is NOT scored. The agent can:
+    - Study GM games in batches of 10
+    - Play practice games against the opponent (results don't count)
+    - Reflect on practice games and update strategy notes
 
-    system_prompt = rules_prompt
-    if strategy_notes:
-        # Truncate notes to avoid context overflow
-        max_notes = 3000
-        if len(strategy_notes) > max_notes:
-            strategy_notes = strategy_notes[:max_notes] + "\n...(truncated)"
-        system_prompt += f"\n\n# Your Strategy Notes\n{strategy_notes}"
-
-    results = []
-    for i in range(n_games):
-        if _tracker.exceeded:
-            print(f"[TOKENS] Budget exceeded, skipping remaining Phase B games")
-            break
-        llm_is_white = (i % 2 == 0)
-        run = play_single_game.run(
-            llm=llm, mcts_sims=MCTS_SIMS, system_prompt=system_prompt,
-            llm_is_white=llm_is_white, game_seed=2000 + i,
-            can_use_memory=False,
-        )
-        r = run.result
-        results.append(r)
-        print(f"[GAME] Phase B game {i+1}/{n_games}: {r['result']} ({r['llm_color']}, {r['game_length']} turns, {r['illegal_attempts']} illegal, {r['time_used']}s)", flush=True)
-        _tracker.log(f"Phase B game {i+1}")
-
-    agg = _aggregate_results(results, "Phase B (Post-study)")
-    print(f"[PHASE B] Win rate: {agg['win_rate']:.0%} | ELO: {agg['elo_estimate']} | Legal move rate: {agg['legal_move_rate']:.0%}", flush=True)
-    return agg
-
-
-# %%
-# === Phase C: Experience learning (play + reflect loop) ===
-
-def play_phase_c(llm, n_games: int = PHASE_C_GAMES) -> dict:
-    """Play games with reflection between each game.
-
-    After each game, the agent reflects and updates its strategy notes.
-    Updated notes are included in the prompt for subsequent games.
-    Measures whether the agent improves through experience.
+    Returns dict with learning phase statistics (for diagnostics only).
     """
     print(f"\n{'='*60}")
-    print(f"PHASE C: Experience learning ({n_games} games + reflection)")
+    print(f"PHASE 2: LEARNING ({study_budget} study batches, "
+          f"{practice_games} practice games)")
     print(f"{'='*60}")
-    _tracker.log("Phase C start")
+    _tracker.log("Phase 2 (Learning) start")
 
-    rules_prompt = get_rules_prompt()
-    results = []
-    experience_notes = _load_strategy_notes()
+    rules = get_rules_prompt()
 
-    for i in range(n_games):
+    # --- Step 1: Study GM games ---
+    games_per_batch = 10
+    total_games = count_gm_games()
+    n_batches = min(study_budget, total_games // games_per_batch)
+    all_notes = []
+
+    for batch_idx in range(n_batches):
         if _tracker.exceeded:
-            print(f"[TOKENS] Budget exceeded, skipping remaining Phase C games")
+            print(f"[TOKENS] Budget exceeded, stopping study at batch {batch_idx}")
             break
-        # Build system prompt with current strategy + experience
+        start = batch_idx * games_per_batch + 1
+        games_text = get_gm_games_batch(start, games_per_batch)
+
+        if batch_idx == 0:
+            study_prompt = f"""{rules}
+
+TOKEN BUDGET: You have {_tracker.remaining:,} tokens remaining out of {_tracker.budget:,} total.
+This budget covers study, practice, and evaluation games. Be efficient.
+
+Here are expert-level DaveChess games (batch {batch_idx + 1}/{n_batches}).
+Study them carefully and write detailed strategic notes.
+
+{games_text}
+
+Analyze these games. Write notes covering:
+1. Common opening moves and strategies
+2. How players use Gold nodes for resource accumulation
+3. Promotion timing and piece choices (Rider vs Bombard vs Lancer)
+4. Tactical patterns (captures, forks, checkmate threats)
+5. Winning strategies you observe
+
+Write your analysis as concise, actionable strategy notes that will help you play well."""
+        else:
+            prev_notes = "\n".join(all_notes[-2:])
+            study_prompt = f"""Here are more expert DaveChess games (batch {batch_idx + 1}/{n_batches}).
+
+Your previous notes:
+{prev_notes}
+
+New games to study:
+{games_text}
+
+Update and refine your strategic notes based on these new games.
+Focus on patterns you see across multiple games. Be concise and actionable."""
+
+        with kbench.chats.new(f"Study batch {batch_idx + 1}/{n_batches}"):
+            try:
+                response = llm.prompt(study_prompt)
+                notes = str(response)
+                all_notes.append(notes)
+                write_file(f"study_notes_batch_{batch_idx + 1}.md", notes)
+                _tracker.add(study_prompt, notes)
+                _post_status(f"[STUDY] Batch {batch_idx + 1}/{n_batches}: {len(notes)} chars of notes")
+                _tracker.log(f"Study batch {batch_idx + 1}")
+            except Exception as e:
+                print(f"[ERROR] Study batch {batch_idx + 1} failed: "
+                      f"{type(e).__name__}: {str(e)[:200]}")
+                continue
+
+    # Consolidate study notes into strategy.md
+    if all_notes:
+        summary_prompt = (
+            "You've studied multiple batches of expert DaveChess games. "
+            "Here are your batch notes:\n\n" +
+            "\n---\n".join(all_notes) +
+            "\n\nWrite a FINAL consolidated strategy guide. "
+            "Include: opening principles, mid-game tactics, resource/promotion "
+            "strategy, and endgame patterns. Be concise — this will be your "
+            "reference during play."
+        )
+        with kbench.chats.new("Study consolidation"):
+            try:
+                final_notes = str(llm.prompt(summary_prompt))
+                write_file("strategy.md", final_notes)
+                _tracker.add(summary_prompt, final_notes)
+            except Exception:
+                write_file("strategy.md", "\n---\n".join(all_notes))
+
+    # --- Step 2: Practice games (NOT scored) ---
+    practice_results = []
+    experience_notes = _load_strategy_notes()
+    rules_prompt = get_rules_prompt()
+
+    for i in range(practice_games):
+        if _tracker.exceeded:
+            print(f"[TOKENS] Budget exceeded, skipping remaining practice games")
+            break
+
+        # Build system prompt with current strategy notes
         system_prompt = rules_prompt
         if experience_notes:
             notes_truncated = experience_notes[:3000]
@@ -871,42 +841,114 @@ def play_phase_c(llm, n_games: int = PHASE_C_GAMES) -> dict:
         llm_is_white = (i % 2 == 0)
         run = play_single_game.run(
             llm=llm, mcts_sims=MCTS_SIMS, system_prompt=system_prompt,
-            llm_is_white=llm_is_white, game_seed=3000 + i,
+            llm_is_white=llm_is_white, game_seed=2000 + i,
             can_use_memory=False,
         )
         game_result = run.result
-        results.append(game_result)
-        print(f"[GAME] Phase C game {i+1}/{n_games}: {game_result['result']} ({game_result['llm_color']}, {game_result['game_length']} turns, {game_result['illegal_attempts']} illegal, {game_result['time_used']}s)", flush=True)
-        _tracker.log(f"Phase C game {i+1}")
+        practice_results.append(game_result)
+        _post_status(
+            f"[PRACTICE] Game {i+1}/{practice_games}: {game_result['result']} "
+            f"({game_result['llm_color']}, {game_result['game_length']} turns, "
+            f"{game_result['illegal_attempts']} illegal, {game_result['time_used']}s)")
+        _tracker.log(f"Practice game {i+1}")
 
-        # Reflection phase: ask LLM to update strategy based on game
-        if i < n_games - 1 and not _tracker.exceeded:
+        # Reflect after each practice game and update strategy
+        if not _tracker.exceeded:
             result_word = game_result["result"]
             moves_str = ", ".join(game_result["move_history"][:20])
             reflection_prompt = (
-                f"You just played DaveChess game {i + 1}.\n"
+                f"You just played a PRACTICE DaveChess game ({i + 1}/{practice_games}).\n"
                 f"Result: {result_word}. Played as: {game_result['llm_color']}. "
                 f"Length: {game_result['game_length']} turns. "
                 f"Illegal attempts: {game_result['illegal_attempts']}.\n"
-                f"Moves: {moves_str}{'...' if len(game_result['move_history']) > 20 else ''}\n\n"
+                f"Moves: {moves_str}"
+                f"{'...' if len(game_result['move_history']) > 20 else ''}\n\n"
                 f"Your current strategy notes:\n{experience_notes[:2000]}\n\n"
                 f"Based on this game, write UPDATED strategy notes. "
                 f"What worked? What failed? What will you do differently? "
                 f"Be concise and actionable."
             )
-            with kbench.chats.new(f"Reflection after game {i + 1}"):
+            with kbench.chats.new(f"Reflect after practice {i + 1}"):
                 try:
                     updated = str(llm.prompt(reflection_prompt))
                     experience_notes = updated
                     write_file("strategy.md", updated)
                     _tracker.add(reflection_prompt, updated)
-                    print(f"[REFLECT] After game {i+1}: updated strategy ({len(updated)} chars)")
+                    _post_status(
+                        f"[REFLECT] After practice {i+1}: updated strategy "
+                        f"({len(updated)} chars)")
                 except Exception:
-                    pass  # Reflection is optional
+                    pass  # Reflection is best-effort
 
-    agg = _aggregate_results(results, "Phase C (Experience)")
-    print(f"[PHASE C] Win rate: {agg['win_rate']:.0%} | ELO: {agg['elo_estimate']}", flush=True)
-    _tracker.log("Phase C done")
+    # Summarize learning phase (for diagnostics, not scoring)
+    practice_wins = sum(1 for r in practice_results if r["result"] == "win")
+    practice_total = len(practice_results)
+    strategy_len = len(_load_strategy_notes())
+
+    learning_stats = {
+        "study_batches": len(all_notes),
+        "practice_games": practice_total,
+        "practice_wins": practice_wins,
+        "practice_win_rate": practice_wins / practice_total if practice_total > 0 else 0.0,
+        "strategy_notes_chars": strategy_len,
+    }
+
+    _post_status(
+        f"[LEARNING] Study: {len(all_notes)} batches | "
+        f"Practice: {practice_wins}/{practice_total} wins | "
+        f"Strategy: {strategy_len} chars")
+    _tracker.log("Phase 2 (Learning) done")
+    return learning_stats
+
+
+# %%
+# === Phase 3: Evaluation (strategy notes available — SCORED) ===
+
+def play_evaluation(llm, n_games: int = EVAL_GAMES) -> dict:
+    """Play evaluation games after the learning phase. Strategy notes included.
+
+    These games are SCORED — they measure post-learning performance.
+    The learning delta (eval ELO - baseline ELO) is the primary metric.
+    """
+    print(f"\n{'='*60}")
+    print(f"PHASE 3: EVALUATION ({n_games} scored games, with strategy notes)")
+    print(f"{'='*60}")
+    _tracker.log("Phase 3 (Evaluation) start")
+
+    rules_prompt = get_rules_prompt()
+    strategy_notes = _load_strategy_notes()
+    _post_status(f"[EVAL] Strategy notes: {len(strategy_notes)} chars")
+
+    system_prompt = rules_prompt
+    if strategy_notes:
+        max_notes = 3000
+        if len(strategy_notes) > max_notes:
+            strategy_notes = strategy_notes[:max_notes] + "\n...(truncated)"
+        system_prompt += f"\n\n# Your Strategy Notes\n{strategy_notes}"
+
+    results = []
+    for i in range(n_games):
+        if _tracker.exceeded:
+            print(f"[TOKENS] Budget exceeded, skipping remaining eval games")
+            break
+        llm_is_white = (i % 2 == 0)
+        run = play_single_game.run(
+            llm=llm, mcts_sims=MCTS_SIMS, system_prompt=system_prompt,
+            llm_is_white=llm_is_white, game_seed=3000 + i,
+            can_use_memory=False,
+        )
+        r = run.result
+        results.append(r)
+        _post_status(
+            f"[GAME] Eval game {i+1}/{n_games}: {r['result']} "
+            f"({r['llm_color']}, {r['game_length']} turns, "
+            f"{r['illegal_attempts']} illegal, {r['time_used']}s)")
+        _tracker.log(f"Eval game {i+1}")
+
+    agg = _aggregate_results(results, "Phase 3 (Evaluation)")
+    _post_status(
+        f"[EVAL] Win rate: {agg['win_rate']:.0%} | ELO: {agg['elo_estimate']} | "
+        f"Legal move rate: {agg['legal_move_rate']:.0%}")
     return agg
 
 
@@ -949,39 +991,45 @@ def _aggregate_results(results: list[dict], phase_name: str) -> dict:
     }
 
 
-def compute_learning_score(phase_a: dict, phase_b: dict, phase_c: dict) -> float:
+def compute_learning_score(baseline: dict, evaluation: dict,
+                           learning_stats: dict) -> float:
     """Compute composite learning score (0.0 - 1.0).
 
     Weights:
-    - 35%: Study learning (Phase B - Phase A win rate delta)
-    - 30%: Experience learning (Phase C 2nd half - 1st half improvement)
-    - 25%: Final performance (Phase C last half win rate)
-    - 10%: Rule comprehension (Phase A legal move rate)
+    - 50%: Study delta (Eval ELO - Baseline ELO, normalized to 0-1)
+    - 25%: Absolute eval performance (eval win rate)
+    - 15%: Rule comprehension (legal move rate across all scored games)
+    - 10%: Study quality (did notes lead to improvement?)
+
+    The ELO delta is normalized: 0 ELO delta = 0.0, +400 delta = 1.0.
+    Negative deltas are clamped to 0.
     """
-    # Study delta: did studying examples help?
-    study_delta = max(0.0, phase_b["win_rate"] - phase_a["win_rate"])
+    # Study delta: eval ELO - baseline ELO, normalized by 400 (max expected)
+    elo_delta = evaluation["elo_estimate"] - baseline["elo_estimate"]
+    study_delta = max(0.0, min(1.0, elo_delta / 400.0))
 
-    # Experience delta: did the agent improve across Phase C games?
-    c_results = phase_c["results"]
-    mid = len(c_results) // 2
-    first_half = c_results[:mid]
-    second_half = c_results[mid:]
+    # Absolute eval performance
+    eval_performance = evaluation["win_rate"]
 
-    first_wr = sum(1 for r in first_half if r["result"] == "win") / len(first_half) if first_half else 0
-    second_wr = sum(1 for r in second_half if r["result"] == "win") / len(second_half) if second_half else 0
-    exp_delta = max(0.0, second_wr - first_wr)
+    # Rule comprehension: average legal move rate across both scored phases
+    all_legal_rates = []
+    for r in baseline["results"] + evaluation["results"]:
+        if r["legal_move_rate"] > 0:
+            all_legal_rates.append(r["legal_move_rate"])
+    legal_move_rate = (sum(all_legal_rates) / len(all_legal_rates)
+                       if all_legal_rates else 0.0)
 
-    # Final performance
-    final_perf = second_wr
-
-    # Rule comprehension
-    legal_rate = phase_a["legal_move_rate"]
+    # Study quality: did the agent actually improve from study?
+    # If eval win rate > baseline win rate and notes exist, credit quality
+    wr_improvement = max(0.0, evaluation["win_rate"] - baseline["win_rate"])
+    has_notes = learning_stats.get("strategy_notes_chars", 0) > 100
+    study_quality = min(1.0, wr_improvement * 2.0) if has_notes else 0.0
 
     score = (
-        0.35 * study_delta +
-        0.30 * exp_delta +
-        0.25 * final_perf +
-        0.10 * legal_rate
+        0.50 * study_delta +
+        0.25 * eval_performance +
+        0.15 * legal_move_rate +
+        0.10 * study_quality
     )
 
     return min(1.0, score)
@@ -995,15 +1043,14 @@ def davechess_learning_benchmark(llm) -> float:
     """Measure an AI system's ability to learn a novel strategic game.
 
     DaveChess is a custom board game absent from all training data.
-    This benchmark tests three dimensions of learning:
+    This benchmark tests learning through a 3-phase design:
 
-    Phase A - Baseline: Play with only rule knowledge (no examples)
-    Study:   Analyze 200 expert games using tools (files, Python, etc.)
-    Phase B - Post-study: Play after studying (can consult notes)
-    Phase C - Experience: Play + reflect loop (iterative improvement)
+    Phase 1 - Baseline:   Play scored games with rules only (no study)
+    Phase 2 - Learning:   Free period to study, practice, and reflect (NOT scored)
+    Phase 3 - Evaluation: Play scored games with strategy notes available
 
-    The agent has access to general-purpose tools and can build any
-    memory structures it finds useful. Better learners = higher scores.
+    Score = learning delta (eval ELO - baseline ELO) + bonuses.
+    Better learners = higher scores.
 
     Returns a learning score from 0.0 to 1.0.
     """
@@ -1012,66 +1059,57 @@ def davechess_learning_benchmark(llm) -> float:
         shutil.rmtree(AGENT_WORKSPACE)
     os.makedirs(AGENT_WORKSPACE, exist_ok=True)
 
-    # Phase A: Baseline (rules only)
-    phase_a = play_phase_a(llm)
+    # Phase 1: Baseline (rules only, SCORED)
+    baseline = play_baseline(llm)
 
-    # Study period: agent uses tools to learn from GM games
-    study_phase(llm, budget=STUDY_BUDGET)
+    # Phase 2: Learning (study + practice + reflect, NOT scored)
+    learning_stats = learning_phase(llm, study_budget=STUDY_BUDGET,
+                                    practice_games=PRACTICE_GAMES)
 
-    # Phase B: Post-study play (can consult memory)
-    phase_b = play_phase_b(llm)
-
-    # Phase C: Experience learning (play + reflect + improve)
-    phase_c = play_phase_c(llm)
+    # Phase 3: Evaluation (with strategy notes, SCORED)
+    evaluation = play_evaluation(llm)
 
     # Compute learning score
-    learning_score = compute_learning_score(phase_a, phase_b, phase_c)
+    learning_score = compute_learning_score(baseline, evaluation, learning_stats)
 
     # === Assertions for leaderboard ===
 
     kbench.assertions.assert_true(
-        phase_a["legal_move_rate"] > 0.3,
+        baseline["legal_move_rate"] > 0.3,
         expectation=(
-            f"Rule comprehension: {phase_a['legal_move_rate']:.0%} legal moves on first attempt "
-            f"(Phase A). Expect >30% to show basic rule understanding."
+            f"Rule comprehension: {baseline['legal_move_rate']:.0%} legal moves "
+            f"on first attempt (Baseline). Expect >30% for basic rule understanding."
+        ),
+    )
+
+    elo_delta = evaluation["elo_estimate"] - baseline["elo_estimate"]
+    kbench.assertions.assert_true(
+        evaluation["win_rate"] >= baseline["win_rate"],
+        expectation=(
+            f"Learning from study: Eval win rate ({evaluation['win_rate']:.0%}) "
+            f"should meet or exceed Baseline ({baseline['win_rate']:.0%}). "
+            f"ELO delta: {elo_delta:+d}."
         ),
     )
 
     kbench.assertions.assert_true(
-        phase_b["win_rate"] > phase_a["win_rate"],
-        expectation=(
-            f"Learning from study: Phase B win rate ({phase_b['win_rate']:.0%}) should exceed "
-            f"Phase A baseline ({phase_a['win_rate']:.0%}). "
-            f"Delta: {phase_b['win_rate'] - phase_a['win_rate']:+.0%}."
-        ),
-    )
-
-    # Phase C improvement
-    c_results = phase_c["results"]
-    mid = len(c_results) // 2
-    first_wr = sum(1 for r in c_results[:mid] if r["result"] == "win") / mid if mid > 0 else 0
-    second_wr = sum(1 for r in c_results[mid:] if r["result"] == "win") / (len(c_results) - mid) if len(c_results) > mid else 0
-
-    kbench.assertions.assert_true(
-        second_wr >= first_wr,
-        expectation=(
-            f"Learning from experience: Phase C 2nd half win rate ({second_wr:.0%}) "
-            f"should improve over 1st half ({first_wr:.0%}). "
-            f"Delta: {second_wr - first_wr:+.0%}."
-        ),
-    )
-
-    kbench.assertions.assert_true(
-        learning_score > 0.15,
+        learning_score > 0.10,
         expectation=(
             f"Overall learning score: {learning_score:.3f}. "
-            f"Expect >0.15 for meaningful learning. "
-            f"Breakdown: study_delta={phase_b['win_rate'] - phase_a['win_rate']:.2f}, "
-            f"exp_delta={second_wr - first_wr:.2f}, "
-            f"final_perf={second_wr:.2f}, "
-            f"legal_rate={phase_a['legal_move_rate']:.2f}."
+            f"Expect >0.10 for meaningful learning. "
+            f"Breakdown: study_delta_norm={max(0, elo_delta)/400:.2f}, "
+            f"eval_perf={evaluation['win_rate']:.2f}, "
+            f"legal_rate={baseline['legal_move_rate']:.2f}. "
+            f"ELO: baseline={baseline['elo_estimate']}, "
+            f"eval={evaluation['elo_estimate']}, delta={elo_delta:+d}."
         ),
     )
+
+    _post_status(
+        f"[FINAL] Score: {learning_score:.3f} | "
+        f"Baseline ELO: {baseline['elo_estimate']} | "
+        f"Eval ELO: {evaluation['elo_estimate']} | "
+        f"Delta: {elo_delta:+d}")
 
     return learning_score
 
