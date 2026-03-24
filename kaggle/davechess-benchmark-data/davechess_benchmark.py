@@ -155,18 +155,13 @@ from davechess_engine import (
 )
 from rules_text import get_rules_prompt, build_game_state_message
 
-# Load NN opponent — fail loudly if missing
-# Temperature + blunder rate control strength:
-#   temp=0.1, blunder=0.0  → strongest (always picks NN's top move)
-#   temp=1.5, blunder=0.15 → moderate (samples from policy, 15% random)
-#   temp=3.0, blunder=0.3  → weak (flat policy, 30% random)
-_NN_TEMP = 4.0       # Policy temperature (higher = weaker, 0.1 = strongest)
-from nn_opponent import load_nn_opponent
-weights_path = os.path.join(DATASET_DIR, "model_weights.npz")
-if not os.path.isfile(weights_path):
-    raise FileNotFoundError(f"model_weights.npz not found at {weights_path}")
-_nn_opponent = load_nn_opponent(weights_path, temperature=_NN_TEMP, num_simulations=0)
-print(f"[INFO] Neural network opponent loaded (temp={_NN_TEMP})")
+# Opponent: MCTSLite with random rollouts
+# NN opponent was too strong even at high temperature — policy priors are too good.
+# MCTSLite at 150 sims gives Gemini ~40-60% baseline win rate, leaving room for
+# learning improvement. Each MCTSLite move is fast (~0.5s at 150 sims).
+_OPPONENT_SIMS = 150
+_nn_opponent = MCTSLite(num_simulations=_OPPONENT_SIMS)
+print(f"[INFO] MCTSLite opponent loaded ({_OPPONENT_SIMS} sims)")
 
 # %%
 # === Configuration ===
@@ -969,7 +964,7 @@ def _aggregate_results(results: list[dict], phase_name: str) -> dict:
 
     # Estimate ELO relative to opponent (NN-10 = 1000)
     import math
-    OPPONENT_ELO = 1000
+    OPPONENT_ELO = 800  # MCTSLite-150 estimated ELO
     if win_rate >= 1.0:
         elo_estimate = OPPONENT_ELO + 400
     elif win_rate <= 0.0:
