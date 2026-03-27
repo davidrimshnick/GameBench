@@ -159,7 +159,7 @@ from rules_text import get_rules_prompt, build_game_state_message
 # NN opponent was too strong even at high temperature — policy priors are too good.
 # MCTSLite at 150 sims gives Gemini ~40-60% baseline win rate, leaving room for
 # learning improvement. Each MCTSLite move is fast (~0.5s at 150 sims).
-_OPPONENT_SIMS = 150
+_OPPONENT_SIMS = 50
 _nn_opponent = MCTSLite(num_simulations=_OPPONENT_SIMS)
 print(f"[INFO] MCTSLite opponent loaded ({_OPPONENT_SIMS} sims)")
 
@@ -167,7 +167,7 @@ print(f"[INFO] MCTSLite opponent loaded ({_OPPONENT_SIMS} sims)")
 # === Configuration ===
 MCTS_SIMS = 100         # Unused — kept for reference
 MAX_GAME_TURNS = 200    # Hard cap (native draw at turn 100)
-GAME_TIME_LIMIT = 600   # 10 minutes per game — lose on timeout (like chess clock)
+GAME_TIME_LIMIT = 900   # 15 minutes per game — lose on timeout (like chess clock)
 MAX_RETRIES = 3         # Illegal move retries before forfeit
 BASELINE_GAMES = 7      # Phase 1: baseline games (scored)
 EVAL_GAMES = 7          # Phase 3: evaluation games (scored)
