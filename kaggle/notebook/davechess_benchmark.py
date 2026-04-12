@@ -159,7 +159,7 @@ from rules_text import get_rules_prompt, build_game_state_message
 # NN opponent was too strong even at high temperature — policy priors are too good.
 # MCTSLite at 150 sims gives Gemini ~40-60% baseline win rate, leaving room for
 # learning improvement. Each MCTSLite move is fast (~0.5s at 150 sims).
-_OPPONENT_SIMS = 50
+_OPPONENT_SIMS = 20
 _nn_opponent = MCTSLite(num_simulations=_OPPONENT_SIMS)
 print(f"[INFO] MCTSLite opponent loaded ({_OPPONENT_SIMS} sims)")
 
